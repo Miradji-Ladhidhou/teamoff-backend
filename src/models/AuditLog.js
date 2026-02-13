@@ -28,6 +28,16 @@ module.exports = (sequelize) =>
     },
     {
       tableName: 'audit_log',
-      timestamps: false,
+      timestamps: true,
+      createAt: 'created_at',
+      updatedAt: false,
+      indexes: [
+        {
+          fields: ['entreprise_id'],
+        },
+        {
+          fields: ['utilisateur_id'],
+        },
+      ],
     }
   );

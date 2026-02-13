@@ -1,4 +1,5 @@
 const { DataTypes } = require('sequelize');
+const bcrypt = require('bcrypt');
 
 module.exports = (sequelize) =>
   sequelize.define(
@@ -50,5 +51,17 @@ module.exports = (sequelize) =>
         { fields: ['entreprise_id'] },
         { fields: ['entreprise_id', 'role'] },
       ],
+      hooks: {
+        beforeCreate: async (utilisateur) => {
+          if (utilisateur.password_hash) {
+            utilisateur.password_hash = await bcrypt.hash(utilisateur.password_hash, 10);
+          }
+        },
+        beforeUpdate: async (utilisateur) => {
+          if (utilisateur.changed('password_hash')) {
+            utilisateur.password_hash = await bcrypt.hash(utilisateur.password_hash, 10);
+          }
+        },
+      },
     }
   );
