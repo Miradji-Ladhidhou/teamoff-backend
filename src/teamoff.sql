@@ -1,24 +1,40 @@
 /* ============================================================
    EXTENSIONS
-   ============================================================ */
+============================================================ */
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 ---
 
 /* ============================================================
-   ENUMS MÉTIER
-   ============================================================ */
-CREATE TYPE entreprise_statut AS ENUM ('active','inactive','suspendue');
-CREATE TYPE utilisateur_role AS ENUM ('super_admin','admin_entreprise','manager','employe');
-CREATE TYPE utilisateur_statut AS ENUM ('actif','inactif','en_attente');
-CREATE TYPE conge_statut AS ENUM ('en_attente_manager','valide_manager','refuse_manager','valide_final','refuse_final');
-CREATE TYPE demi_journee AS ENUM ('matin','apres_midi');
+   ENUMS
+============================================================ */
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'entreprise_statut') THEN
+    CREATE TYPE entreprise_statut AS ENUM ('active','inactive','suspendue');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'utilisateur_role') THEN
+    CREATE TYPE utilisateur_role AS ENUM ('super_admin','admin_entreprise','manager','employe');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'utilisateur_statut') THEN
+    CREATE TYPE utilisateur_statut AS ENUM ('actif','inactif','en_attente');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'conge_statut') THEN
+    CREATE TYPE conge_statut AS ENUM ('en_attente_manager','valide_manager','refuse_manager','valide_final','refuse_final');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'demi_journee') THEN
+    CREATE TYPE demi_journee AS ENUM ('matin','apres_midi');
+  END IF;
+END $$;
 
 ---
 
 /* ============================================================
    FUNCTION updated_at
-   ============================================================ */
+============================================================ */
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -31,8 +47,8 @@ $$ LANGUAGE plpgsql;
 
 /* ============================================================
    TABLE entreprise
-   ============================================================ */
-CREATE TABLE entreprise (
+============================================================ */
+CREATE TABLE IF NOT EXISTS entreprise (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   nom VARCHAR(255) NOT NULL,
   logo VARCHAR(255),
@@ -43,6 +59,7 @@ CREATE TABLE entreprise (
   updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+DROP TRIGGER IF EXISTS trg_entreprise_updated_at ON entreprise;
 CREATE TRIGGER trg_entreprise_updated_at
 BEFORE UPDATE ON entreprise
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -51,23 +68,25 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 /* ============================================================
    TABLE utilisateur
-   ============================================================ */
-CREATE TABLE utilisateur (
+============================================================ */
+CREATE TABLE IF NOT EXISTS utilisateur (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   entreprise_id UUID NOT NULL REFERENCES entreprise(id) ON DELETE CASCADE,
   nom VARCHAR(255) NOT NULL,
-  email VARCHAR(255) NOT NULL UNIQUE,
+  email VARCHAR(255) NOT NULL,
   role utilisateur_role NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   statut utilisateur_statut NOT NULL DEFAULT 'en_attente',
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  UNIQUE (entreprise_id, email),
   UNIQUE (id, entreprise_id)
 );
 
-CREATE INDEX idx_utilisateur_entreprise ON utilisateur(entreprise_id);
-CREATE INDEX idx_utilisateur_role ON utilisateur(entreprise_id, role);
+CREATE INDEX IF NOT EXISTS idx_utilisateur_entreprise ON utilisateur(entreprise_id);
+CREATE INDEX IF NOT EXISTS idx_utilisateur_role ON utilisateur(entreprise_id, role);
 
+DROP TRIGGER IF EXISTS trg_utilisateur_updated_at ON utilisateur;
 CREATE TRIGGER trg_utilisateur_updated_at
 BEFORE UPDATE ON utilisateur
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -76,19 +95,23 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 /* ============================================================
    TABLE conge_type
-   ============================================================ */
-CREATE TABLE conge_type (
+============================================================ */
+CREATE TABLE IF NOT EXISTS conge_type (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   entreprise_id UUID NOT NULL REFERENCES entreprise(id) ON DELETE CASCADE,
   code VARCHAR(20) NOT NULL,
   libelle VARCHAR(255) NOT NULL,
-  quota_annuel NUMERIC,
+  quota_annuel NUMERIC(5,2),
   demi_journee_autorisee BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  UNIQUE (entreprise_id, code)
+  UNIQUE (entreprise_id, code),
+  UNIQUE (id, entreprise_id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_conge_type_entreprise ON conge_type(entreprise_id);
+
+DROP TRIGGER IF EXISTS trg_conge_type_updated_at ON conge_type;
 CREATE TRIGGER trg_conge_type_updated_at
 BEFORE UPDATE ON conge_type
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -97,18 +120,27 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 /* ============================================================
    TABLE compteur_conges
-   ============================================================ */
-CREATE TABLE compteur_conges (
+============================================================ */
+CREATE TABLE IF NOT EXISTS compteur_conges (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  utilisateur_id UUID NOT NULL REFERENCES utilisateur(id) ON DELETE CASCADE,
-  conge_type_id UUID NOT NULL REFERENCES conge_type(id),
-  annee INTEGER NOT NULL,
-  jours_pris NUMERIC NOT NULL DEFAULT 0,
+  entreprise_id UUID NOT NULL,
+  utilisateur_id UUID NOT NULL,
+  conge_type_id UUID NOT NULL,
+  annee INTEGER NOT NULL CHECK (annee >= 2000),
+  jours_acquis NUMERIC(5,2) NOT NULL DEFAULT 0,
+  jours_pris NUMERIC(5,2) NOT NULL DEFAULT 0,
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  UNIQUE (utilisateur_id, conge_type_id, annee)
+  CONSTRAINT uq_compteur UNIQUE (entreprise_id, utilisateur_id, conge_type_id, annee),
+  CONSTRAINT fk_compteur_user FOREIGN KEY (utilisateur_id, entreprise_id) REFERENCES utilisateur(id, entreprise_id) ON DELETE CASCADE,
+  CONSTRAINT fk_compteur_type FOREIGN KEY (conge_type_id, entreprise_id) REFERENCES conge_type(id, entreprise_id) ON DELETE CASCADE
 );
 
+CREATE INDEX IF NOT EXISTS idx_compteur_user_annee ON compteur_conges (entreprise_id, utilisateur_id, annee);
+CREATE INDEX IF NOT EXISTS idx_compteur_entreprise_annee ON compteur_conges (entreprise_id, annee);
+CREATE INDEX IF NOT EXISTS idx_compteur_type ON compteur_conges (entreprise_id, conge_type_id);
+
+DROP TRIGGER IF EXISTS trg_compteur_updated_at ON compteur_conges;
 CREATE TRIGGER trg_compteur_updated_at
 BEFORE UPDATE ON compteur_conges
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -116,32 +148,13 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 ---
 
 /* ============================================================
-   TABLE jours_feries
-   ============================================================ */
-CREATE TABLE jours_feries (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  entreprise_id UUID NOT NULL REFERENCES entreprise(id) ON DELETE CASCADE,
-  date DATE NOT NULL,
-  libelle VARCHAR(255) NOT NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  UNIQUE (entreprise_id, date)
-);
-
-CREATE TRIGGER trg_jours_feries_updated_at
-BEFORE UPDATE ON jours_feries
-FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
----
-
-/* ============================================================
    TABLE conge
-   ============================================================ */
-CREATE TABLE conge (
+============================================================ */
+CREATE TABLE IF NOT EXISTS conge (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  utilisateur_id UUID NOT NULL,
   entreprise_id UUID NOT NULL,
-  conge_type_id UUID NOT NULL REFERENCES conge_type(id),
+  utilisateur_id UUID NOT NULL,
+  conge_type_id UUID NOT NULL,
   date_debut DATE NOT NULL,
   date_fin DATE NOT NULL,
   debut_demi_journee demi_journee NOT NULL DEFAULT 'matin',
@@ -152,14 +165,16 @@ CREATE TABLE conge (
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
   CHECK (date_fin >= date_debut),
-  FOREIGN KEY (utilisateur_id, entreprise_id)
-    REFERENCES utilisateur(id, entreprise_id)
-    ON DELETE CASCADE
+  CONSTRAINT fk_conge_user FOREIGN KEY (utilisateur_id, entreprise_id) REFERENCES utilisateur(id, entreprise_id) ON DELETE CASCADE,
+  CONSTRAINT fk_conge_type FOREIGN KEY (conge_type_id, entreprise_id) REFERENCES conge_type(id, entreprise_id) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_conge_user ON conge(utilisateur_id);
-CREATE INDEX idx_conge_entreprise_statut ON conge(entreprise_id, statut);
+CREATE INDEX IF NOT EXISTS idx_conge_user ON conge(entreprise_id, utilisateur_id);
+CREATE INDEX IF NOT EXISTS idx_conge_statut ON conge(entreprise_id, statut);
+CREATE INDEX IF NOT EXISTS idx_conge_type ON conge(entreprise_id, conge_type_id);
+CREATE INDEX IF NOT EXISTS idx_conge_overlap_fast ON conge (entreprise_id, utilisateur_id, date_debut, date_fin);
 
+DROP TRIGGER IF EXISTS trg_conge_updated_at ON conge;
 CREATE TRIGGER trg_conge_updated_at
 BEFORE UPDATE ON conge
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -168,24 +183,19 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 /* ============================================================
    TRIGGER ANTI-CHEVAUCHEMENT
-   ============================================================ */
+============================================================ */
+DROP TRIGGER IF EXISTS trg_conge_overlap ON conge;
 CREATE OR REPLACE FUNCTION check_conge_overlap()
 RETURNS TRIGGER AS $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM conge c
-    WHERE c.utilisateur_id = NEW.utilisateur_id
+    WHERE c.entreprise_id = NEW.entreprise_id
+      AND c.utilisateur_id = NEW.utilisateur_id
+      AND c.id <> COALESCE(NEW.id, gen_random_uuid())
       AND c.statut IN ('en_attente_manager','valide_manager','valide_final')
-      AND (
-        (c.date_debut + CASE c.debut_demi_journee WHEN 'apres_midi' THEN 0.5 ELSE 0 END)
-        <
-        (NEW.date_fin + CASE NEW.fin_demi_journee WHEN 'apres_midi' THEN 0.5 ELSE 0 END)
-      )
-      AND (
-        (NEW.date_debut + CASE NEW.debut_demi_journee WHEN 'apres_midi' THEN 0.5 ELSE 0 END)
-        <
-        (c.date_fin + CASE c.fin_demi_journee WHEN 'apres_midi' THEN 0.5 ELSE 0 END)
-      )
+      AND c.date_debut <= NEW.date_fin
+      AND c.date_fin >= NEW.date_debut
   ) THEN
     RAISE EXCEPTION 'Chevauchement de congés détecté';
   END IF;
@@ -200,9 +210,78 @@ FOR EACH ROW EXECUTE FUNCTION check_conge_overlap();
 ---
 
 /* ============================================================
+   TRIGGER MISE À JOUR COMPTEUR (UPSERT + demi-journée)
+============================================================ */
+DROP TRIGGER IF EXISTS trg_update_compteur ON conge;
+CREATE OR REPLACE FUNCTION update_compteur_on_validation()
+RETURNS TRIGGER AS $$
+DECLARE
+  jours NUMERIC(5,2);
+BEGIN
+  IF NEW.statut = 'valide_final' AND OLD.statut <> 'valide_final' THEN
+    jours := (NEW.date_fin - NEW.date_debut + 1);
+
+    IF NEW.debut_demi_journee = 'apres_midi' THEN
+      jours := jours - 0.5;
+    END IF;
+
+    IF NEW.fin_demi_journee = 'matin' THEN
+      jours := jours - 0.5;
+    END IF;
+
+    INSERT INTO compteur_conges (
+      entreprise_id,
+      utilisateur_id,
+      conge_type_id,
+      annee,
+      jours_pris
+    )
+    VALUES (
+      NEW.entreprise_id,
+      NEW.utilisateur_id,
+      NEW.conge_type_id,
+      EXTRACT(YEAR FROM NEW.date_debut),
+      jours
+    )
+    ON CONFLICT (entreprise_id, utilisateur_id, conge_type_id, annee)
+    DO UPDATE SET
+      jours_pris = compteur_conges.jours_pris + EXCLUDED.jours_pris,
+      updated_at = NOW();
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_update_compteur
+AFTER UPDATE ON conge
+FOR EACH ROW EXECUTE FUNCTION update_compteur_on_validation();
+
+---
+
+/* ============================================================
+   TABLE jours_feries
+============================================================ */
+CREATE TABLE IF NOT EXISTS jours_feries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  entreprise_id UUID NOT NULL REFERENCES entreprise(id) ON DELETE CASCADE,
+  date DATE NOT NULL,
+  libelle VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  UNIQUE (entreprise_id, date)
+);
+
+DROP TRIGGER IF EXISTS trg_jours_feries_updated_at ON jours_feries;
+CREATE TRIGGER trg_jours_feries_updated_at
+BEFORE UPDATE ON jours_feries
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+---
+
+/* ============================================================
    TABLE audit_log
-   ============================================================ */
-CREATE TABLE audit_log (
+============================================================ */
+CREATE TABLE IF NOT EXISTS audit_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   entreprise_id UUID NOT NULL REFERENCES entreprise(id) ON DELETE CASCADE,
   utilisateur_id UUID REFERENCES utilisateur(id) ON DELETE SET NULL,
@@ -215,8 +294,8 @@ CREATE TABLE audit_log (
 
 /* ============================================================
    TABLE notification
-   ============================================================ */
-CREATE TABLE notification (
+============================================================ */
+CREATE TABLE IF NOT EXISTS notification (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   utilisateur_id UUID NOT NULL REFERENCES utilisateur(id) ON DELETE CASCADE,
   entreprise_id UUID NOT NULL REFERENCES entreprise(id) ON DELETE CASCADE,
@@ -231,8 +310,8 @@ CREATE TABLE notification (
 
 /* ============================================================
    VUE CALENDRIER
-   ============================================================ */
-CREATE VIEW v_conge_calendrier AS
+============================================================ */
+CREATE OR REPLACE VIEW v_conge_calendrier AS
 SELECT
   c.id AS conge_id,
   c.utilisateur_id,
@@ -249,5 +328,3 @@ FROM conge c
 JOIN conge_type ct ON ct.id = c.conge_type_id
 JOIN LATERAL generate_series(c.date_debut, c.date_fin, interval '1 day') d(jour)
 ON TRUE;
-
----

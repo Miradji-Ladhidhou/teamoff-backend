@@ -6,3 +6,4 @@ node_modules
 keys/
 test/
 /generated/prisma
+/scripts/createSuperAdmin.js

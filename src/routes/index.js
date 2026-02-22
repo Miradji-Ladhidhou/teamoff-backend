@@ -24,7 +24,17 @@ router.use('/auth', require('./auth'));
 // ------------------------------
 // Users routes
 // ------------------------------
-router.use('/users', require('./users'));
+router.use('/users', authJwt, require('./users'));
+
+// ------------------------------
+// Entreprise routes
+// ------------------------------
+router.use('/entreprises', authJwt, require('./entrepriseRoutes'));
+
+// ------------------------------
+// Congés routes
+// ------------------------------
+router.use('/conges', authJwt, require('./congeRoutes'));
 
 // ------------------------------
 // Route utilisateur connecté
@@ -34,7 +44,7 @@ router.get('/me', authJwt, (req, res) => {
 });
 
 // ------------------------------
-// Route super_admin uniquement
+// Route réservée aux super_admin uniquement
 // ------------------------------
 router.get(
   '/admin_only',
@@ -46,16 +56,13 @@ router.get(
 );
 
 // ------------------------------
-// Multi-tenant : dashboard entreprise
+// Dashboard entreprise
 // Accessible par super_admin ou admin_entreprise
 // ------------------------------
 router.get(
   '/company-dashboard/:entreprise_id',
   authJwt,
-  authorizeRole(
-    ['super_admin', 'admin_entreprise'],
-    req => req.params.entreprise_id // vérifie que l'admin ne sort pas de sa boîte
-  ),
+  authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.entreprise_id),
   (req, res) => {
     res.json({
       message: 'Dashboard entreprise',
@@ -65,16 +72,13 @@ router.get(
 );
 
 // ------------------------------
-// Multi-tenant : dashboard manager
+// Dashboard manager
 // Accessible par super_admin, admin_entreprise, manager
 // ------------------------------
 router.get(
   '/manager-dashboard/:entreprise_id',
   authJwt,
-  authorizeRole(
-    ['super_admin', 'admin_entreprise', 'manager'],
-    req => req.params.entreprise_id
-  ),
+  authorizeRole(['super_admin', 'admin_entreprise', 'manager'], req => req.params.entreprise_id),
   (req, res) => {
     res.json({
       message: 'Dashboard manager',
@@ -84,16 +88,13 @@ router.get(
 );
 
 // ------------------------------
-// Multi-tenant : dashboard employé
+// Dashboard employé
 // Accessible par super_admin, admin_entreprise, employe
 // ------------------------------
 router.get(
   '/employee-dashboard/:entreprise_id',
   authJwt,
-  authorizeRole(
-    ['super_admin', 'admin_entreprise', 'employe'],
-    req => req.params.entreprise_id
-  ),
+  authorizeRole(['super_admin', 'admin_entreprise', 'employe'], req => req.params.entreprise_id),
   (req, res) => {
     res.json({
       message: 'Dashboard employé',

@@ -3,8 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
-const { Utilisateur } = require('../models');
-
+const { Utilisateur, Entreprise } = require('../models');
 require('dotenv').config();
 
 // -------------------------------
@@ -12,8 +11,8 @@ require('dotenv').config();
 // -------------------------------
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // Limite à 5 tentatives par IP
-  standardHeaders: true, // Retourne info rate-limit dans headers
+  max: 5,
+  standardHeaders: true,
   legacyHeaders: false,
   message: {
     message: 'Trop de tentatives. Réessayez dans 15 minutes.'
@@ -25,24 +24,23 @@ router.post('/login', loginLimiter, async (req, res) => {
   const { email, password, entreprise_id } = req.body;
 
   try {
-    const user = await Utilisateur.findOne({ where: { email } });
+    // Recherche utilisateur avec multi-tenant (optionnel)
+    const whereClause = entreprise_id ? { email, entreprise_id } : { email };
+    const user = await Utilisateur.findOne({ where: whereClause });
     if (!user) return res.status(401).json({ message: 'Utilisateur non trouvé' });
 
-    // Multi-tenant check (optionnel)
-    if (entreprise_id && user.entreprise_id !== entreprise_id) {
-      return res.status(403).json({ message: 'Accès interdit : entreprise différente' });
+    // Vérification que l'entreprise est active
+    const entreprise = await Entreprise.findByPk(user.entreprise_id);
+    if (!entreprise || entreprise.statut !== 'active') {
+      return res.status(403).json({ message: 'Entreprise inactive ou suspendue.' });
     }
 
-    // Gestion des status 
-    switch (user.statut) {
-      case 'en_attente':
-        return res.status(403).json({ message: 'Votre compte est en attente de validation.' });
-      case 'inactif':
-        return res.status(403).json({ message: 'Votre compte est désactivé. Contactez l\'administrateur.' });
-      case 'actif':
-        break; 
-      default:
-        return res.status(403).json({ message: 'Statut utilisateur inconnu.' });
+    // Gestion des statuts utilisateurs
+    if (user.statut === 'en_attente') {
+      return res.status(403).json({ message: 'Votre compte est en attente de validation.' });
+    }
+    if (user.statut === 'inactif') {
+      return res.status(403).json({ message: 'Votre compte est désactivé. Contactez l\'administrateur.' });
     }
 
     // Vérification du mot de passe
@@ -55,9 +53,19 @@ router.post('/login', loginLimiter, async (req, res) => {
       expiresIn: process.env.JWT_EXPIRES_IN || '1d',
     });
 
-    res.json({ token, utilisateur: { id: user.id, nom: user.nom, email: user.email, role: user.role } });
+    // Retour sécurisé
+    res.json({
+      token,
+      utilisateur: {
+        id: user.id,
+        nom: user.nom,
+        email: user.email,
+        role: user.role,
+        entreprise_id: user.entreprise_id
+      }
+    });
   } catch (err) {
-    console.error(err);
+    console.error('Login error:', err);
     res.status(500).json({ message: 'Erreur serveur' });
   }
 });
