@@ -2,9 +2,54 @@ const express = require('express');
 const router = express.Router();
 const { Op } = require('sequelize');
 const authJwt = require('../middlewares/authJwt');
-const authorizeRole = require('../middlewares/roles');
+const authorizeRole = require('../middlewares/authorizeRole');
 const { Utilisateur, CompteurConges, CongeType, Conge, Entreprise } = require('../models');
-const { getPolitiqueType, peutPoser } = require('../utils/politiqueConges');
+const { getPolitiqueType } = require('../services/politiqueConges');
+const joursFeriesService = require('../services/joursFeriesService');
+const { peutPoser, calculerSolde } = require('../services/congesService');
+
+// Calcul des jours de congé en excluant weekends et jours fériés
+async function calcJoursConges(
+  entrepriseId,
+  dateDebut,
+  dateFin,
+  debut_demi,
+  fin_demi
+) {
+
+  const joursFeries =
+    await joursFeriesService.getJoursFeriesEntreprise(entrepriseId);
+
+  let total = 0;
+  let current = new Date(dateDebut);
+  const fin = new Date(dateFin);
+
+  while (current <= fin) {
+
+    const jourSemaine = current.getDay();
+    const isWeekend = jourSemaine === 0 || jourSemaine === 6;
+
+    const dateStr = current.toISOString().split('T')[0];
+
+    const isFerie = joursFeriesService.estJourFerie(
+      dateStr,
+      joursFeries
+    );
+
+    if (!isWeekend && !isFerie) {
+      total += 1;
+    }
+
+    current.setDate(current.getDate() + 1);
+  }
+
+  if (total > 0) {
+    if (debut_demi === 'apres_midi') total -= 0.5;
+    if (fin_demi === 'matin') total -= 0.5;
+  }
+
+  return total;
+}
 
 /* ======================================
    POST /conges/demande
@@ -16,36 +61,101 @@ router.post(
   authorizeRole(['employe', 'manager', 'admin_entreprise', 'super_admin']),
   async (req, res) => {
     try {
-      const { conge_type_id, jours, date_debut, date_fin, debut_demi_journee, fin_demi_journee } = req.body;
 
-      const utilisateur = await Utilisateur.findByPk(req.user.id, { include: ['entreprise'] });
-      if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
+      const {
+        conge_type_id,
+        date_debut,
+        date_fin,
+        debut_demi_journee,
+        fin_demi_journee
+      } = req.body;
 
-      const congeType = await CongeType.findOne({ where: { id: conge_type_id, entreprise_id: utilisateur.entreprise_id } });
-      if (!congeType) return res.status(404).json({ message: 'Type de congé introuvable pour cette entreprise' });
-
-      const politique = getPolitiqueType(utilisateur.entreprise, congeType.code);
-
-      // Vérifier solde
-      const annee = new Date().getFullYear();
-      const compteur = await CompteurConges.findOne({
-        where: { utilisateur_id: utilisateur.id, conge_type_id, annee }
+      const utilisateur = await Utilisateur.findByPk(req.user.id, {
+        include: ['entreprise']
       });
-      const solde = (compteur?.jours_acquis ?? 0) - (compteur?.jours_pris ?? 0);
-      if (!peutPoser(solde, jours, politique)) {
-        return res.status(400).json({ message: 'Solde insuffisant selon la politique entreprise' });
+
+      if (!utilisateur) {
+        return res.status(404).json({ message: 'Utilisateur introuvable' });
       }
 
-      // Vérifier chevauchement
+      const congeType = await CongeType.findOne({
+        where: {
+          id: conge_type_id,
+          entreprise_id: utilisateur.entreprise_id
+        }
+      });
+
+      if (!congeType) {
+        return res.status(404).json({
+          message: 'Type de congé introuvable pour cette entreprise'
+        });
+      }
+
+      const politique = getPolitiqueType(
+        utilisateur.entreprise,
+        congeType.code
+      );
+
+      /* ==========================
+         CALCUL JOURS (weekend + fériés exclus)
+      ========================== */
+
+      const jours = await calcJoursConges(
+        utilisateur.entreprise_id,
+        date_debut,
+        date_fin,
+        debut_demi_journee,
+        fin_demi_journee
+      );
+
+      /* ==========================
+         VERIFICATION SOLDE
+      ========================== */
+
+      const annee = new Date().getFullYear();
+
+      const compteur = await CompteurConges.findOne({
+        where: {
+          utilisateur_id: utilisateur.id,
+          conge_type_id,
+          annee
+        }
+      });
+
+      const solde = calculerSolde(compteur);
+
+      if (!peutPoser(solde, jours, politique)) {
+        return res.status(400).json({
+          message: 'Solde insuffisant selon la politique entreprise'
+        });
+      }
+
+      /* ==========================
+         CHEVAUCHEMENT
+      ========================== */
+
       const chevauche = await Conge.findOne({
         where: {
           utilisateur_id: utilisateur.id,
-          statut: ['en_attente_manager', 'valide_manager', 'valide_final'],
+          statut: [
+            'en_attente_manager',
+            'valide_manager',
+            'valide_final'
+          ],
           date_debut: { [Op.lte]: date_fin },
           date_fin: { [Op.gte]: date_debut }
         }
       });
-      if (chevauche) return res.status(400).json({ message: 'Chevauchement de congés détecté' });
+
+      if (chevauche) {
+        return res.status(400).json({
+          message: 'Chevauchement de congés détecté'
+        });
+      }
+
+      /* ==========================
+         CREATION CONGE
+      ========================== */
 
       const conge = await Conge.create({
         utilisateur_id: utilisateur.id,
@@ -55,13 +165,23 @@ router.post(
         date_fin,
         debut_demi_journee,
         fin_demi_journee,
-        statut: 'en_attente_manager',
+        statut: 'en_attente_manager'
       });
 
-      res.status(201).json({ conge, message: 'Demande créée avec succès' });
+      res.status(201).json({
+        conge,
+        jours_calcules: jours,
+        message: 'Demande créée avec succès'
+      });
+
     } catch (err) {
+
       console.error('Erreur création congé:', err);
-      res.status(500).json({ message: 'Erreur serveur', error: err.message });
+
+      res.status(500).json({
+        message: 'Erreur serveur',
+        error: err.message
+      });
     }
   }
 );

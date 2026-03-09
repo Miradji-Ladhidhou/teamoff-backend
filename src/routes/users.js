@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const { Utilisateur, Entreprise } = require('../models');
 const authJwt = require('../middlewares/authJwt');
-const authorizeRole = require('../middlewares/roles');
+const authorizeRole = require('../middlewares/authorizeRole');
 
 // ============================
 // CREATE utilisateur

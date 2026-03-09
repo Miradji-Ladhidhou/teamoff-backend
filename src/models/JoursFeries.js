@@ -10,15 +10,17 @@ module.exports = (sequelize) => {
     entreprise_id: { type: DataTypes.UUID, allowNull: false },
     date: { type: DataTypes.DATEONLY, allowNull: false },
     libelle: { type: DataTypes.STRING(255), allowNull: false },
+    recurrent: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   }, {
     tableName: 'jours_feries',
     timestamps: true,
     createdAt: 'created_at',
     updatedAt: 'updated_at',
-    uniqueKeys: {
-      unique_ferie: {
-        fields: ['entreprise_id','date'],
-      },
-    },
+    indexes: [
+      {
+        unique: true,
+        fields: ['entreprise_id', 'date']
+      }
+    ]
   });
 };
