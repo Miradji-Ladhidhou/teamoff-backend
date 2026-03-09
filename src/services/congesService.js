@@ -1,8 +1,12 @@
+// services/congesService.js
 const { Conge, CompteurConges, CongeType, Utilisateur, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { getJoursFeriesEntreprise, estJourFerie } = require('./joursFeriesService');
 const { getPolitiqueType, calculSoldeAvecReport, peutPoser } = require('./politiqueConges');
 
+/**
+ * Calcul des jours de congé hors weekend et jours fériés
+ */
 async function calcJoursConges(entrepriseId, dateDebut, dateFin, debut_demi, fin_demi) {
   if (new Date(dateFin) < new Date(dateDebut)) throw new Error("date_fin invalide");
 
@@ -27,6 +31,9 @@ async function calcJoursConges(entrepriseId, dateDebut, dateFin, debut_demi, fin
   return total;
 }
 
+/**
+ * Crée un congé et met à jour le compteur
+ */
 async function creerConge({
   utilisateur_id, conge_type_id, date_debut, date_fin, debut_demi_journee, fin_demi_journee, reqUser
 }) {
@@ -60,6 +67,7 @@ async function creerConge({
       }, { transaction: t });
     }
 
+    // Vérification chevauchement
     const chevauche = await Conge.findOne({
       where: {
         utilisateur_id,

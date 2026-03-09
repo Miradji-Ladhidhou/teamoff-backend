@@ -10,6 +10,7 @@ module.exports = (sequelize) => {
     entreprise_id: {
       type: DataTypes.UUID,
       allowNull: false,
+      field: 'entreprise_id',
     },
     nom: {
       type: DataTypes.STRING(255),

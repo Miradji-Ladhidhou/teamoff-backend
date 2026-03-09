@@ -1,12 +1,16 @@
 function errorHandler(err, req, res, next) {
+  console.error(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  if (req.user) console.error(`Utilisateur: ${req.user.id} | Role: ${req.user.role}`);
   console.error(err);
 
-  if (err.message.includes('introuvable')) return res.status(404).json({ message: err.message });
-  if (err.message.includes('Chevauchement')) return res.status(400).json({ message: err.message });
-  if (err.message.includes('Solde insuffisant')) return res.status(403).json({ message: err.message });
-  if (err.message.includes('Accès interdit')) return res.status(403).json({ message: err.message });
+  const message = err.message || 'Erreur serveur';
 
-  res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  if (message.includes('introuvable')) return res.status(404).json({ message });
+  if (message.includes('Chevauchement')) return res.status(400).json({ message });
+  if (message.includes('Solde insuffisant')) return res.status(403).json({ message });
+  if (message.includes('Accès interdit')) return res.status(403).json({ message });
+
+  res.status(500).json({ message: 'Erreur serveur', error: message });
 }
 
 module.exports = errorHandler;
