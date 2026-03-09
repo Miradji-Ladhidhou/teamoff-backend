@@ -17,7 +17,10 @@ router.post(
     if (!nom) return res.status(400).json({ message: 'Nom requis' });
 
     try {
-      const entreprise = await Entreprise.create({ nom, logo });
+      const entreprise = await Entreprise.create(
+        { nom, logo },
+        { userId: req.user.id }
+      );
       res.status(201).json(entreprise);
     } catch (err) {
       console.error('Erreur création entreprise:', err);
@@ -35,7 +38,7 @@ router.get(
   authorizeRole(['super_admin']),
   async (req, res) => {
     try {
-      const entreprises = await Entreprise.findAll({ order: [['nom','ASC']] });
+      const entreprises = await Entreprise.findAll({ order: [['nom', 'ASC']] });
       res.json(entreprises);
     } catch (err) {
       console.error('Erreur récupération entreprises:', err);
@@ -50,7 +53,7 @@ router.get(
 router.get(
   '/:id',
   authJwt,
-  authorizeRole(['super_admin','admin_entreprise'], req => req.params.id),
+  authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id),
   async (req, res) => {
     try {
       const entreprise = await Entreprise.findByPk(req.params.id);
@@ -75,7 +78,9 @@ router.put(
       const entreprise = await Entreprise.findByPk(req.params.id);
       if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
 
-      await entreprise.update(req.body);
+      await entreprise.update(req.body, {
+        userId: req.user.id
+      });
       res.json(entreprise);
     } catch (err) {
       console.error('Erreur mise à jour entreprise:', err);
@@ -96,7 +101,9 @@ router.delete(
       const entreprise = await Entreprise.findByPk(req.params.id);
       if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
 
-      await entreprise.destroy();
+      await entreprise.destroy({
+  userId: req.user.id
+});
       res.json({ message: 'Entreprise supprimée' });
     } catch (err) {
       console.error('Erreur suppression entreprise:', err);
@@ -114,14 +121,17 @@ router.patch(
   authorizeRole(['super_admin']),
   async (req, res) => {
     const { statut } = req.body;
-    const allowed = ['active','inactive','suspendue'];
+    const allowed = ['active', 'inactive', 'suspendue'];
     if (!allowed.includes(statut)) return res.status(400).json({ message: 'Statut invalide' });
 
     try {
       const entreprise = await Entreprise.findByPk(req.params.id);
       if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
 
-      await entreprise.update({ statut });
+      await entreprise.update(
+        { statut },
+        { userId: req.user.id }
+      );
       res.json({ message: 'Statut entreprise mis à jour', entreprise });
     } catch (err) {
       console.error('Erreur mise à jour statut:', err);
@@ -136,7 +146,7 @@ router.patch(
 router.get(
   '/:id/politique',
   authJwt,
-  authorizeRole(['super_admin','admin_entreprise'], req => req.user.entreprise_id),
+  authorizeRole(['super_admin', 'admin_entreprise'], req => req.user.entreprise_id),
   async (req, res) => {
     try {
       const entreprise = await Entreprise.findByPk(req.params.id);
@@ -156,7 +166,7 @@ router.get(
 router.put(
   '/:id/politique',
   authJwt,
-  authorizeRole(['super_admin','admin_entreprise'], req => req.user.entreprise_id),
+  authorizeRole(['super_admin', 'admin_entreprise'], req => req.user.entreprise_id),
   body('politique_conges').isObject().withMessage('Politique_conges doit être un objet JSON'),
   async (req, res) => {
     try {
@@ -167,7 +177,9 @@ router.put(
       if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
 
       entreprise.politique_conges = { ...entreprise.politique_conges, ...req.body.politique_conges };
-      await entreprise.save();
+      await entreprise.save({
+  userId: req.user.id
+});
 
       res.json({ message: 'Politique de congés mise à jour', politique_conges: entreprise.politique_conges });
     } catch (err) {
