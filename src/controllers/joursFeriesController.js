@@ -1,5 +1,6 @@
 const { JoursFeries } = require('../models');
 const joursFeriesService = require('../services/joursFeriesService');
+const { auditFerie } = require('../services/auditHelper');
 
 // ----------------------------
 // Liste tous les jours fériés
@@ -25,6 +26,10 @@ async function creerJourFerie(req, res) {
       libelle,
       recurrent: !!recurrent
     });
+
+    // === Audit ===
+    await auditFerie.created(jourFerie, req.user, req);
+
     res.status(201).json(jourFerie);
   } catch (err) {
     if (err.name === 'SequelizeUniqueConstraintError') {
@@ -60,7 +65,13 @@ async function updateJourFerie(req, res) {
     });
     if (!jourFerie) return res.status(404).json({ message: "Jour férié introuvable" });
 
+    const oldData = { libelle: jourFerie.libelle, date: jourFerie.date, recurrent: jourFerie.recurrent };
+
     await jourFerie.update({ date, libelle, recurrent: !!recurrent });
+
+    // === Audit ===
+    await auditFerie.updated(jourFerie, req.user, req, { oldData, updates: { date, libelle, recurrent } });
+
     res.json(jourFerie);
   } catch (err) {
     if (err.name === 'SequelizeUniqueConstraintError') {
@@ -81,6 +92,10 @@ async function supprimerJourFerie(req, res) {
     if (!jourFerie) return res.status(404).json({ message: "Jour férié introuvable" });
 
     await jourFerie.destroy();
+
+    // === Audit ===
+    await auditFerie.deleted(jourFerie, req.user, req);
+
     res.status(204).send();
   } catch (err) {
     res.status(500).json({ message: "Erreur serveur", error: err.message });

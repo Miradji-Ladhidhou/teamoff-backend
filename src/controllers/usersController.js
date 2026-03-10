@@ -2,6 +2,7 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const { Utilisateur } = require('../models');
 const sendEmail = require('../services/emailService');
+const { auditUser } = require('../services/auditHelper');
 
 async function createUser(req, res) {
   const { nom, email, role, entreprise_id } = req.body;
@@ -16,7 +17,7 @@ async function createUser(req, res) {
   }
 
   try {
-    const tempPassword = crypto.randomBytes(6).toString('hex'); // 12 caractères hex
+    const tempPassword = crypto.randomBytes(6).toString('hex');
     const hash = await bcrypt.hash(tempPassword, 10);
 
     const newUser = await Utilisateur.create({
@@ -33,6 +34,9 @@ async function createUser(req, res) {
       subject: 'Votre compte TeamOff',
       text: `Bonjour ${nom},\n\nVotre compte a été créé.\nMot de passe temporaire : ${tempPassword}\nMerci de le changer à votre première connexion.`
     });
+
+    // === Audit ===
+    await auditUser.created(newUser, req.user, req);
 
     res.status(201).json({
       id: newUser.id,
@@ -69,7 +73,7 @@ async function getUserById(req, res) {
     const utilisateur = await Utilisateur.findByPk(req.params.id);
     if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
-    if (['admin_entreprise','manager','employe'].includes(req.user.role) &&
+    if (['admin_entreprise', 'manager', 'employe'].includes(req.user.role) &&
         utilisateur.entreprise_id !== req.user.entreprise_id &&
         req.user.role !== 'super_admin') {
       return res.status(403).json({ message: 'Accès interdit : entreprise différente' });
@@ -97,15 +101,55 @@ async function updateUser(req, res) {
       return res.status(403).json({ message: 'Vous ne pouvez attribuer que manager ou employe' });
     }
 
+    const oldData = utilisateur.toJSON();
+
     if (password) {
       utilisateur.password_hash = await bcrypt.hash(password, 10);
     }
 
     await utilisateur.update({ nom, email, role, statut });
 
+    // === Audit général ===
+    await auditUser.updated(utilisateur, req.user, req);
+
+    // === Audit spécifique changement de rôle ===
+    if (role && role !== oldData.role) {
+      await auditUser.roleChanged(utilisateur, oldData.role, role, req.user, req);
+    }
+
     res.json(utilisateur);
   } catch (err) {
     console.error('Erreur mise à jour utilisateur:', err);
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+}
+
+async function changeUserRole(req, res) {
+  try {
+    const utilisateur = await Utilisateur.findByPk(req.params.id);
+    if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
+
+    if (req.user.role === 'admin_entreprise' && utilisateur.entreprise_id !== req.user.entreprise_id) {
+      return res.status(403).json({ message: 'Vous ne pouvez modifier que les utilisateurs de votre entreprise' });
+    }
+
+    const { role } = req.body;
+
+    if (req.user.role === 'admin_entreprise' && role && !['manager', 'employe'].includes(role)) {
+      return res.status(403).json({ message: 'Vous ne pouvez attribuer que manager ou employe' });
+    }
+
+    const oldRole = utilisateur.role;
+    await utilisateur.update({ role });
+
+    // === Audit spécifique changement de rôle ===
+    if (role !== oldRole) {
+      await auditUser.roleChanged(utilisateur, oldRole, role, req.user, req);
+    }
+
+    res.json(utilisateur);
+  } catch (err) {
+    console.error('Erreur changement de rôle utilisateur:', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -120,6 +164,10 @@ async function deleteUser(req, res) {
     }
 
     await utilisateur.destroy();
+
+    // === Audit ===
+    await auditUser.deleted(utilisateur, req.user, req);
+
     res.json({ message: 'Utilisateur supprimé avec succès' });
   } catch (err) {
     console.error('Erreur suppression utilisateur:', err);
@@ -132,5 +180,6 @@ module.exports = {
   getAllUsers,
   getUserById,
   updateUser,
-  deleteUser
+  deleteUser,
+  changeUserRole
 };

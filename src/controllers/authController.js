@@ -1,4 +1,5 @@
 const authService = require('../services/authService');
+const { auditAuth } = require('../services/auditHelper');
 
 // ---------------------------
 // Login
@@ -6,14 +7,22 @@ const authService = require('../services/authService');
 async function login(req, res) {
   try {
     const data = await authService.loginUtilisateur(req.body);
+
+    // === Audit succès ===
+    await auditAuth.loginSuccess(data.user, req);
+
     res.json(data);
   } catch (err) {
+    // === Audit échec login ===
     if (err.message.includes('Utilisateur non trouvé') || err.message.includes('Mot de passe incorrect')) {
+      await auditAuth.loginFailed(req.body.email, req);
       return res.status(401).json({ message: err.message });
     }
+
     if (err.message.includes('Entreprise inactive') || err.message.includes('attente') || err.message.includes('désactivé')) {
       return res.status(403).json({ message: err.message });
     }
+
     console.error('Login error:', err);
     res.status(500).json({ message: 'Erreur serveur' });
   }
@@ -24,7 +33,11 @@ async function login(req, res) {
 // ---------------------------
 async function logout(req, res) {
   try {
-    authService.logoutUtilisateur(); // éventuellement passer le token
+    await authService.logoutUtilisateur(); // éventuellement passer le token
+
+    // === Audit ===
+    await auditAuth.logout(req.user, req);
+
     res.json({ message: 'Déconnexion réussie' });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur' });
@@ -37,7 +50,11 @@ async function logout(req, res) {
 async function forgotPassword(req, res) {
   try {
     const token = await authService.forgotPassword(req.body.email);
-    res.json({ message: 'Email de réinitialisation envoyé', resetToken: token }); // resetToken pour dev/test
+
+    // === Audit demande reset ===
+    await auditAuth.passwordResetRequest(req.body.email, req);
+
+    res.json({ message: 'Email de réinitialisation envoyé', resetToken: token });
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
@@ -48,7 +65,11 @@ async function forgotPassword(req, res) {
 // ---------------------------
 async function resetPassword(req, res) {
   try {
-    await authService.resetPassword(req.body.token, req.body.newPassword);
+    const user = await authService.resetPassword(req.body.token, req.body.newPassword);
+
+    // === Audit succès reset ===
+    await auditAuth.passwordResetSuccess(user, req);
+
     res.json({ message: 'Mot de passe réinitialisé avec succès' });
   } catch (err) {
     res.status(400).json({ message: err.message });

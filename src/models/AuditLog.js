@@ -1,20 +1,21 @@
-const { DataTypes } = require('sequelize');
+const { Model, DataTypes } = require('sequelize');
+
+class AuditLog extends Model {}
 
 module.exports = (sequelize) => {
-  return sequelize.define('AuditLog', {
-    id: {
-      type: DataTypes.UUID,
-      primaryKey: true,
-      defaultValue: DataTypes.UUIDV4,
-    },
-    entreprise_id: { type: DataTypes.UUID, allowNull: false },
-    utilisateur_id: { type: DataTypes.UUID, allowNull: true },
-    action: { type: DataTypes.STRING(255), allowNull: false },
-    meta: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },
+  AuditLog.init({
+    action: DataTypes.STRING,
+    entity: DataTypes.STRING,
+    entity_id: DataTypes.INTEGER,
+    user_id: DataTypes.INTEGER,
+    entreprise_id: DataTypes.INTEGER,
+    ip_address: DataTypes.STRING,
+    user_agent: DataTypes.STRING,
+    metadata: DataTypes.JSON
   }, {
-    tableName: 'audit_log',
-    timestamps: true,
-    createdAt: 'created_at',
-    updatedAt: false,
+    sequelize,
+    modelName: 'AuditLog',
+    tableName: 'audit_logs'
   });
+  return AuditLog;
 };

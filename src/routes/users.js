@@ -38,6 +38,14 @@ router.put(
   usersController.updateUser
 );
 
+// Changer le rôle d'un utilisateur
+router.put(
+  '/:id/role',
+  authJwt,
+  authorizeRole(['super_admin']),
+  usersController.changeUserRole
+);
+
 // Supprimer un utilisateur
 router.delete(
   '/:id',
