@@ -76,6 +76,27 @@ router.put(
 );
 
 // ----------------------------
+// historique des congés (audit)
+// ----------------------------
+router.get(
+  '/:id/audit',
+  authJwt,
+  authorizeRole(['employe', 'manager', 'admin_entreprise', 'super_admin']),
+  async (req, res, next) => {
+    try {
+      const conge = await Conge.findOne({ 
+        where: { id: req.params.id, entreprise_id: req.user.entreprise_id } 
+      });
+      if (!conge) return res.status(404).json({ message: 'Congé introuvable' });
+
+      // Récupérer les logs d'audit liés à ce congé
+      const audits = await getAuditLogsForConge(conge.id);
+      res.json(audits);
+    } catch (err) { next(err); }
+  }
+);
+
+// ----------------------------
 // Supprimer / annuler un congé
 // ----------------------------
 router.delete(

@@ -1,26 +1,26 @@
+// /controllers/congeController.js
 const { Op } = require('sequelize');
-const { Utilisateur, CompteurConges, CongeType, Conge } = require('../models');
-const { getPolitiqueType } = require('../services/politiqueConges');
-const joursFeriesService = require('../services/joursFeriesService');
-const { validateConge } = require('../utils/validate');
-const { peutPoser, calculerSolde } = require('../services/congesService');
+const { sequelize, Utilisateur, CompteurConges, CongeType, Conge, JoursFeries } = require('../models');
 const { auditConge } = require('../services/auditHelper');
 const { auditActions } = require('../services/auditActions');
+const { getPolitiqueType, peutPoser } = require('../services/politiqueConges');
 
+/* Helper pour calcul jours ouvrés */
+async function calcJoursConges(entrepriseId, dateDebut, dateFin, debut_demi='matin', fin_demi='apres_midi') {
+  const joursFeries = await JoursFeries.findAll({
+    where: { entreprise_id: entrepriseId, date: { [Op.between]: [dateDebut, dateFin] } },
+    attributes: ['date']
+  });
+  const jfSet = new Set(joursFeries.map(jf => jf.date.toISOString().slice(0,10)));
 
-/* Helper pour calcul jours congés */
-async function calcJoursConges(entrepriseId, dateDebut, dateFin, debut_demi, fin_demi) {
-  const joursFeries = await joursFeriesService.getJoursFeriesEntreprise(entrepriseId);
   let total = 0;
   let current = new Date(dateDebut);
   const fin = new Date(dateFin);
 
   while (current <= fin) {
-    const jourSemaine = current.getDay();
-    const isWeekend = jourSemaine === 0 || jourSemaine === 6;
-    const dateStr = current.toISOString().split('T')[0];
-    const isFerie = joursFeriesService.estJourFerie(dateStr, joursFeries);
-    if (!isWeekend && !isFerie) total += 1;
+    const day = current.getDay();
+    const strDate = current.toISOString().slice(0,10);
+    if (day !== 0 && day !== 6 && !jfSet.has(strDate)) total += 1;
     current.setDate(current.getDate() + 1);
   }
 
@@ -31,85 +31,88 @@ async function calcJoursConges(entrepriseId, dateDebut, dateFin, debut_demi, fin
   return total;
 }
 
-/* CRUD Congés */
-async function createConge(req, res) {
-  try {
-    validateConge(req.body);
-    const { conge_type_id, date_debut, date_fin, debut_demi_journee, fin_demi_journee } = req.body;
+/* CREATE Congé */
+async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin, debut_demi_journee, fin_demi_journee, reqUser }) {
+  return sequelize.transaction(async (t) => {
+    const utilisateur = await Utilisateur.findByPk(utilisateur_id, { include: ['entreprise'], transaction: t });
+    if (!utilisateur) throw new Error('Utilisateur introuvable');
+    if (reqUser.role !== 'super_admin' && reqUser.entreprise_id !== utilisateur.entreprise_id)
+      throw new Error('Accès interdit : entreprise différente');
 
-    const utilisateur = await Utilisateur.findByPk(req.user.id, { include: ['entreprise'] });
-    if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
-
-    const congeType = await CongeType.findOne({ where: { id: conge_type_id, entreprise_id: utilisateur.entreprise_id } });
-    if (!congeType) return res.status(404).json({ message: 'Type de congé introuvable' });
+    const congeType = await CongeType.findByPk(conge_type_id, { transaction: t });
+    if (!congeType || congeType.entreprise_id !== utilisateur.entreprise_id)
+      throw new Error('Type de congé invalide');
 
     const politique = getPolitiqueType(utilisateur.entreprise, congeType.code);
-    const jours = await calcJoursConges(utilisateur.entreprise_id, date_debut, date_fin, debut_demi_journee, fin_demi_journee);
+    const annee = new Date(date_debut).getFullYear();
 
-    const annee = new Date().getFullYear();
-    const compteur = await CompteurConges.findOne({ where: { utilisateur_id: utilisateur.id, conge_type_id, annee } });
-    const solde = calculerSolde(compteur);
-
-    if (!peutPoser(solde, jours, politique)) {
-      return res.status(400).json({ message: 'Solde insuffisant selon la politique entreprise' });
+    let compteur = await CompteurConges.findOne({
+      where: { utilisateur_id, conge_type_id, annee },
+      transaction: t,
+      lock: t.LOCK.UPDATE
+    });
+    if (!compteur) {
+      compteur = await CompteurConges.create({
+        utilisateur_id,
+        entreprise_id: utilisateur.entreprise_id,
+        conge_type_id,
+        annee,
+        jours_acquis: congeType.quota_annuel ?? 0,
+        jours_pris: 0,
+        jours_reportes: 0,
+        jours_reserves: 0
+      }, { transaction: t });
     }
 
     const chevauche = await Conge.findOne({
       where: {
-        utilisateur_id: utilisateur.id,
-        statut: ['en_attente_manager', 'valide_manager', 'valide_final'],
+        utilisateur_id,
+        statut: ['en_attente_manager','valide_manager','valide_final'],
         date_debut: { [Op.lte]: date_fin },
         date_fin: { [Op.gte]: date_debut }
-      }
+      },
+      transaction: t
     });
-    if (chevauche) return res.status(400).json({ message: 'Chevauchement de congés détecté' });
+    if (chevauche) throw new Error('Chevauchement de congé détecté');
+
+    const jours_a_prendre = await calcJoursConges(utilisateur.entreprise_id, date_debut, date_fin, debut_demi_journee, fin_demi_journee);
+
+    const solde_total = compteur.getSoldeDisponible();
+    if (!peutPoser(solde_total, jours_a_prendre, politique)) throw new Error('Solde insuffisant');
 
     const conge = await Conge.create({
-      utilisateur_id: utilisateur.id,
+      utilisateur_id,
       entreprise_id: utilisateur.entreprise_id,
       conge_type_id,
       date_debut,
       date_fin,
       debut_demi_journee,
       fin_demi_journee,
-      statut: 'en_attente_manager'
-    });
+      statut: 'en_attente_manager',
+      jours_calcules: jours_a_prendre
+    }, { transaction: t });
 
-    // === Audit ===
-    await auditConge(
-      auditActions.CONGE_CREATED,
-      conge.id,
-      req.user.id,
-      { dates: `${conge.date_debut} au ${conge.date_fin}`, type_conge: congeType.code }
-    );
+    compteur.jours_reserves = parseFloat(compteur.jours_reserves) + parseFloat(jours_a_prendre);
+    await compteur.save({ transaction: t });
 
-    res.status(201).json({ conge, jours_calcules: jours, message: 'Demande créée avec succès' });
-
-  } catch (err) {
-    if (err.message.includes('invalide') || err.message.includes('Dates invalides')) {
-      return res.status(400).json({ message: err.message });
-    }
-    console.error('Erreur création congé:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
+    return conge;
+  });
 }
 
+/* UPDATE Congé */
 async function updateConge(req, res) {
+  const t = await sequelize.transaction();
   try {
-    const conge = await Conge.findByPk(req.params.id, { include: ['utilisateur', 'entreprise', 'conge_type'] });
-    if (!conge) return res.status(404).json({ message: 'Congé introuvable' });
-
-    if (req.user.role !== 'super_admin' && req.user.entreprise_id !== conge.entreprise_id) {
-      return res.status(403).json({ message: 'Accès interdit : entreprise différente' });
-    }
+    const conge = await Conge.findByPk(req.params.id, { include: ['utilisateur','conge_type'], transaction: t });
+    if (!conge) throw new Error('Congé introuvable');
 
     const { statut, commentaire_manager, commentaire_admin } = req.body;
     const oldStatut = conge.statut;
 
-    if (req.user.role === 'manager' && ['valide_manager', 'refuse_manager'].includes(statut)) {
+    if (req.user.role === 'manager' && ['valide_manager','refuse_manager'].includes(statut)) {
       conge.statut = statut;
       conge.commentaire_manager = commentaire_manager;
-    } else if (req.user.role === 'admin_entreprise' && ['valide_final', 'refuse_final'].includes(statut)) {
+    } else if (req.user.role === 'admin_entreprise' && ['valide_final','refuse_final'].includes(statut)) {
       conge.statut = statut;
       conge.commentaire_admin = commentaire_admin;
     } else if (req.user.role === 'super_admin') {
@@ -117,80 +120,123 @@ async function updateConge(req, res) {
       conge.commentaire_manager = commentaire_manager;
       conge.commentaire_admin = commentaire_admin;
     } else {
-      return res.status(403).json({ message: 'Action non autorisée pour votre rôle' });
+      throw new Error('Action non autorisée pour votre rôle');
     }
 
-    await conge.save();
+    await conge.save({ transaction: t });
 
-    // === Audit ===
     if (oldStatut !== conge.statut) {
-      await auditConge(
-        auditActions.CONGE_APPROVED,
-        conge.id,
-        req.user.id,
-        { oldStatut, newStatut: conge.statut }
-      );
+      await auditConge(auditActions.CONGE_APPROVED, conge.id, req.user.id, { oldStatut, newStatut: conge.statut });
     }
 
+    await t.commit();
     res.json({ conge, message: 'Congé mis à jour avec succès' });
   } catch (err) {
-    console.error('Erreur mise à jour congé:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    await t.rollback();
+    res.status(400).json({ message: err.message });
   }
 }
 
+/* DELETE Congé */
 async function deleteConge(req, res) {
+  const t = await sequelize.transaction();
   try {
-    const conge = await Conge.findByPk(req.params.id);
-    if (!conge) return res.status(404).json({ message: 'Congé introuvable' });
+    const conge = await Conge.findByPk(req.params.id, { transaction: t });
+    if (!conge) throw new Error('Congé introuvable');
 
-    if (req.user.role !== 'super_admin' && req.user.entreprise_id !== conge.entreprise_id) {
-      return res.status(403).json({ message: 'Accès interdit : entreprise différente' });
+    const compteur = await CompteurConges.findOne({
+      where: { utilisateur_id: conge.utilisateur_id, conge_type_id: conge.conge_type_id, annee: new Date(conge.date_debut).getFullYear() },
+      transaction: t,
+      lock: t.LOCK.UPDATE
+    });
+
+    if (conge.statut === 'valide_final') {
+      compteur.jours_pris = parseFloat(compteur.jours_pris) - parseFloat(conge.jours_calcules);
+    } else {
+      compteur.jours_reserves = parseFloat(compteur.jours_reserves) - parseFloat(conge.jours_calcules);
     }
+    await compteur.save({ transaction: t });
 
-    await conge.destroy();
+    await conge.destroy({ transaction: t });
 
-    // === Audit ===
-    await auditConge(
-      auditActions.CONGE_DELETED,
-      conge.id,
-      req.user.id,
-      { dates: `${conge.date_debut} au ${conge.date_fin}`, type_conge: conge.conge_type_id }
-    );
+    await auditConge(auditActions.CONGE_DELETED, conge.id, req.user.id, {
+      dates: `${conge.date_debut} au ${conge.date_fin}`,
+      type_conge: conge.conge_type_id
+    });
 
+    await t.commit();
     res.json({ message: 'Congé supprimé avec succès' });
   } catch (err) {
-    console.error('Erreur suppression congé:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    await t.rollback();
+    res.status(400).json({ message: err.message });
   }
 }
 
+/* GET Congés */
 async function getConges(req, res) {
   try {
     const where = {};
-    switch (req.user.role) {
-      case 'admin_entreprise':
-        where.entreprise_id = req.user.entreprise_id;
-        break;
-      case 'manager':
-      case 'employe':
-        where.utilisateur_id = req.user.id;
-        break;
-    }
+    if (req.user.role === 'admin_entreprise') where.entreprise_id = req.user.entreprise_id;
+    else if (['manager','employe'].includes(req.user.role)) where.utilisateur_id = req.user.id;
 
     const conges = await Conge.findAll({
       where,
       include: [
-        { model: Utilisateur, as: 'utilisateur', attributes: ['id', 'nom', 'email', 'role'] },
-        { model: CongeType, as: 'conge_type', attributes: ['id', 'libelle', 'code'] }
+        { model: Utilisateur, as: 'utilisateur', attributes: ['id','nom','email','role'] },
+        { model: CongeType, as: 'conge_type', attributes: ['id','libelle','code'] }
       ],
-      order: [['date_debut', 'DESC']]
+      order: [['date_debut','DESC']]
     });
 
     res.json(conges);
   } catch (err) {
-    console.error('Erreur récupération congés:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    res.status(500).json({ message: err.message });
+  }
+}
+
+/* Valider Congé */
+async function validerConge(req, res) {
+  const t = await sequelize.transaction();
+  try {
+    const conge = await Conge.findByPk(req.params.id, { transaction: t });
+    if (!conge) throw new Error("Congé introuvable");
+
+    const compteur = await CompteurConges.findOne({
+      where: { utilisateur_id: conge.utilisateur_id, conge_type_id: conge.conge_type_id, annee: new Date(conge.date_debut).getFullYear() },
+      transaction: t,
+      lock: t.LOCK.UPDATE
+    });
+
+    const jours = conge.jours_calcules;
+    compteur.jours_reserves -= jours;
+    compteur.jours_pris += jours;
+    await compteur.save({ transaction: t });
+
+    conge.statut = "valide_final";
+    await conge.save({ transaction: t });
+
+    await t.commit();
+    res.json(conge);
+  } catch (err) {
+    await t.rollback();
+    res.status(400).json({ error: err.message });
+  }
+}
+
+/* GET Historique Congés d'un Utilisateur */
+async function getHistoriqueUtilisateur(req, res) {
+  try {
+    const userId = req.params.userId;
+    const conges = await Conge.findAll({
+      where: { utilisateur_id: userId },
+      include: [
+        { model: CongeType, as: 'conge_type', attributes: ['libelle','code'] }
+      ],
+      order: [['date_debut','DESC']]
+    });
+    res.json(conges);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 }
 
@@ -199,5 +245,7 @@ module.exports = {
   updateConge,
   deleteConge,
   getConges,
-  calcJoursConges
+  calcJoursConges,
+  validerConge,
+  getHistoriqueUtilisateur
 };

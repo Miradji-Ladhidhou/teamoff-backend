@@ -1,13 +1,16 @@
-const { JoursFeries } = require('../models');
-const joursFeriesService = require('../services/joursFeriesService');
+// controllers/joursFeriesController.js
+const { JoursFeries, sequelize } = require('../models');
 const { auditFerie } = require('../services/auditHelper');
 
 // ----------------------------
-// Liste tous les jours fériés
+// Lister tous les jours fériés
 // ----------------------------
 async function listerJoursFeries(req, res) {
   try {
-    const joursFeries = await joursFeriesService.getJoursFeriesEntreprise(req.user.entreprise_id);
+    const joursFeries = await JoursFeries.findAll({
+      where: { entreprise_id: req.user.entreprise_id },
+      order: [['date', 'ASC']]
+    });
     res.json(joursFeries);
   } catch (err) {
     res.status(500).json({ message: "Erreur serveur", error: err.message });
@@ -18,20 +21,22 @@ async function listerJoursFeries(req, res) {
 // Création d'un jour férié
 // ----------------------------
 async function creerJourFerie(req, res) {
-  const { date, libelle, recurrent } = req.body;
+  const t = await sequelize.transaction();
   try {
+    const { date, libelle } = req.body;
+
     const jourFerie = await JoursFeries.create({
       entreprise_id: req.user.entreprise_id,
       date,
-      libelle,
-      recurrent: !!recurrent
-    });
+      libelle
+    }, { transaction: t });
 
-    // === Audit ===
-    await auditFerie.created(jourFerie, req.user, req);
+    await auditFerie.created(jourFerie, req.user, req, { transaction: t });
 
+    await t.commit();
     res.status(201).json(jourFerie);
   } catch (err) {
+    await t.rollback();
     if (err.name === 'SequelizeUniqueConstraintError') {
       return res.status(409).json({ message: "Jour férié déjà existant" });
     }
@@ -58,22 +63,26 @@ async function getJourFerie(req, res) {
 // Mise à jour d'un jour férié
 // ----------------------------
 async function updateJourFerie(req, res) {
-  const { date, libelle, recurrent } = req.body;
+  const t = await sequelize.transaction();
   try {
+    const { date, libelle } = req.body;
+
     const jourFerie = await JoursFeries.findOne({
-      where: { id: req.params.id, entreprise_id: req.user.entreprise_id }
+      where: { id: req.params.id, entreprise_id: req.user.entreprise_id },
+      transaction: t
     });
-    if (!jourFerie) return res.status(404).json({ message: "Jour férié introuvable" });
+    if (!jourFerie) throw new Error("Jour férié introuvable");
 
-    const oldData = { libelle: jourFerie.libelle, date: jourFerie.date, recurrent: jourFerie.recurrent };
+    const oldData = { libelle: jourFerie.libelle, date: jourFerie.date };
 
-    await jourFerie.update({ date, libelle, recurrent: !!recurrent });
+    await jourFerie.update({ date, libelle }, { transaction: t });
 
-    // === Audit ===
-    await auditFerie.updated(jourFerie, req.user, req, { oldData, updates: { date, libelle, recurrent } });
+    await auditFerie.updated(jourFerie, req.user, req, { oldData, updates: { date, libelle }, transaction: t });
 
+    await t.commit();
     res.json(jourFerie);
   } catch (err) {
+    await t.rollback();
     if (err.name === 'SequelizeUniqueConstraintError') {
       return res.status(409).json({ message: "Jour férié déjà existant" });
     }
@@ -85,19 +94,22 @@ async function updateJourFerie(req, res) {
 // Suppression d'un jour férié
 // ----------------------------
 async function supprimerJourFerie(req, res) {
+  const t = await sequelize.transaction();
   try {
     const jourFerie = await JoursFeries.findOne({
-      where: { id: req.params.id, entreprise_id: req.user.entreprise_id }
+      where: { id: req.params.id, entreprise_id: req.user.entreprise_id },
+      transaction: t
     });
-    if (!jourFerie) return res.status(404).json({ message: "Jour férié introuvable" });
+    if (!jourFerie) throw new Error("Jour férié introuvable");
 
-    await jourFerie.destroy();
+    await jourFerie.destroy({ transaction: t });
 
-    // === Audit ===
-    await auditFerie.deleted(jourFerie, req.user, req);
+    await auditFerie.deleted(jourFerie, req.user, req, { transaction: t });
 
+    await t.commit();
     res.status(204).send();
   } catch (err) {
+    await t.rollback();
     res.status(500).json({ message: "Erreur serveur", error: err.message });
   }
 }

@@ -7,11 +7,14 @@ module.exports = (sequelize) => {
       primaryKey: true,
       defaultValue: DataTypes.UUIDV4,
     },
+
     entreprise_id: { type: DataTypes.UUID, allowNull: false },
     utilisateur_id: { type: DataTypes.UUID, allowNull: false },
     conge_type_id: { type: DataTypes.UUID, allowNull: false },
+
     date_debut: { type: DataTypes.DATEONLY, allowNull: false },
     date_fin: { type: DataTypes.DATEONLY, allowNull: false },
+
     debut_demi_journee: {
       type: DataTypes.ENUM('matin','apres_midi'),
       allowNull: false,
@@ -22,22 +25,44 @@ module.exports = (sequelize) => {
       allowNull: false,
       defaultValue: 'apres_midi',
     },
+
     statut: {
       type: DataTypes.ENUM('en_attente_manager','valide_manager','refuse_manager','valide_final','refuse_final'),
       allowNull: false,
       defaultValue: 'en_attente_manager',
     },
+
     commentaire_manager: { type: DataTypes.TEXT },
     commentaire_admin: { type: DataTypes.TEXT },
+
   }, {
     tableName: 'conge',
     timestamps: true,
     createdAt: 'created_at',
     updatedAt: 'updated_at',
+
     indexes: [
       { fields: ['entreprise_id', 'utilisateur_id'] },
       { fields: ['entreprise_id', 'statut'] },
       { fields: ['entreprise_id', 'conge_type_id'] },
+      { fields: ['entreprise_id', 'utilisateur_id', 'date_debut', 'date_fin'] } // utile pour overlap
     ],
+
+    validate: {
+      date_fin_after_debut() {
+        if (this.date_fin < this.date_debut) {
+          throw new Error('date_fin doit être >= date_debut');
+        }
+      },
+      demi_journee_coherente() {
+        if (
+          this.date_debut === this.date_fin &&
+          this.debut_demi_journee === 'apres_midi' &&
+          this.fin_demi_journee === 'matin'
+        ) {
+          throw new Error('Demi-journée incohérente sur une seule journée');
+        }
+      }
+    }
   });
 };

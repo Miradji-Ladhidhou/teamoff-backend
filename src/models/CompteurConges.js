@@ -1,6 +1,7 @@
 const { DataTypes } = require('sequelize');
 
 module.exports = (sequelize) => {
+
   const CompteurConges = sequelize.define('CompteurConges', {
 
     id: {
@@ -27,10 +28,7 @@ module.exports = (sequelize) => {
     annee: {
       type: DataTypes.INTEGER,
       allowNull: false,
-      validate: {
-        min: 2000,
-        max: 2100
-      }
+      validate: { min: 2000, max: 2100 }
     },
 
     jours_acquis: {
@@ -49,6 +47,24 @@ module.exports = (sequelize) => {
       type: DataTypes.DECIMAL(5,2),
       allowNull: false,
       defaultValue: 0
+    },
+
+    jours_reserves: {
+      type: DataTypes.DECIMAL(5,2),
+      allowNull: false,
+      defaultValue: 0
+    },
+
+    solde_disponible: {
+      type: DataTypes.VIRTUAL,
+      get() {
+        const acquis = parseFloat(this.jours_acquis || 0);
+        const reportes = parseFloat(this.jours_reportes || 0);
+        const reserves = parseFloat(this.jours_reserves || 0);
+        const pris = parseFloat(this.jours_pris || 0);
+
+        return acquis + reportes - reserves - pris;
+      }
     }
 
   }, {
@@ -56,34 +72,27 @@ module.exports = (sequelize) => {
     tableName: 'compteur_conges',
 
     timestamps: true,
-
     createdAt: 'created_at',
     updatedAt: 'updated_at',
 
     indexes: [
-      {
-        fields: ['entreprise_id', 'utilisateur_id', 'annee']
-      },
-      {
-        fields: ['entreprise_id', 'annee']
-      },
-      {
-        fields: ['entreprise_id', 'conge_type_id']
-      }
+      { fields: ['entreprise_id', 'utilisateur_id', 'annee'] },
+      { fields: ['utilisateur_id', 'conge_type_id', 'annee'] },
+      { fields: ['entreprise_id', 'annee'] },
+      { fields: ['entreprise_id', 'conge_type_id'] }
     ],
 
     uniqueKeys: {
       compteur_unique: {
-        fields: [
-          'entreprise_id',
-          'utilisateur_id',
-          'conge_type_id',
-          'annee'
-        ]
+        fields: ['entreprise_id', 'utilisateur_id', 'conge_type_id', 'annee']
       }
     }
 
   });
+
+  CompteurConges.prototype.getSoldeDisponible = function () {
+    return this.solde_disponible;
+  };
 
   return CompteurConges;
 };

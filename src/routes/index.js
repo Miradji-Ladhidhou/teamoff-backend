@@ -56,10 +56,16 @@ router.get('/me', authJwt, (req, res) => {
 });
 
 // ------------------------------
-// Exemple route super_admin only
+// route super_admin only
 // ------------------------------
 router.get('/admin_only', authJwt, authorizeRole(['super_admin']), (req, res) => {
   res.json({ message: 'Zone réservée aux super_admins' });
 });
+
+// ------------------------------
+// Quotas routes (auth requis)
+// ------------------------------
+const quotasRoutes = require('./quotas'); 
+router.use('/quotas', authJwt, quotasRoutes);
 
 module.exports = router;

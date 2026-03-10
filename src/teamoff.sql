@@ -133,7 +133,9 @@ CREATE TABLE IF NOT EXISTS compteur_conges (
   updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_compteur UNIQUE (entreprise_id, utilisateur_id, conge_type_id, annee),
   CONSTRAINT fk_compteur_user FOREIGN KEY (utilisateur_id, entreprise_id) REFERENCES utilisateur(id, entreprise_id) ON DELETE CASCADE,
-  CONSTRAINT fk_compteur_type FOREIGN KEY (conge_type_id, entreprise_id) REFERENCES conge_type(id, entreprise_id) ON DELETE CASCADE
+  CONSTRAINT fk_compteur_type FOREIGN KEY (conge_type_id, entreprise_id) REFERENCES conge_type(id, entreprise_id) ON DELETE CASCADE,
+  CONSTRAINT check_jours_pris_non_negatif CHECK (jours_pris >= 0),
+  CONSTRAINT check_jours_acquis_non_negatif CHECK (jours_acquis >= 0)
 );
 
 CREATE INDEX IF NOT EXISTS idx_compteur_user_annee ON compteur_conges (entreprise_id, utilisateur_id, annee);
@@ -165,6 +167,13 @@ CREATE TABLE IF NOT EXISTS conge (
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
   CHECK (date_fin >= date_debut),
+  CHECK (
+    NOT (
+      date_debut = date_fin
+      AND debut_demi_journee = 'apres_midi'
+      AND fin_demi_journee = 'matin'
+    )
+  ),
   CONSTRAINT fk_conge_user FOREIGN KEY (utilisateur_id, entreprise_id) REFERENCES utilisateur(id, entreprise_id) ON DELETE CASCADE,
   CONSTRAINT fk_conge_type FOREIGN KEY (conge_type_id, entreprise_id) REFERENCES conge_type(id, entreprise_id) ON DELETE CASCADE
 );
@@ -210,51 +219,103 @@ FOR EACH ROW EXECUTE FUNCTION check_conge_overlap();
 ---
 
 /* ============================================================
-   TRIGGER MISE À JOUR COMPTEUR (UPSERT + demi-journée)
+   FONCTION CALCUL JOURS OUVRÉS
+============================================================ */
+CREATE OR REPLACE FUNCTION calcul_jours_ouvres(
+    start_date DATE,
+    end_date DATE,
+    entreprise UUID,
+    debut_demi demi_journee,
+    fin_demi demi_journee
+) RETURNS NUMERIC AS $$
+DECLARE
+    total_days NUMERIC := 0;
+    current_date DATE;
+BEGIN
+    FOR current_date IN SELECT generate_series(start_date, end_date, interval '1 day')::date LOOP
+        IF EXTRACT(DOW FROM current_date) NOT IN (0,6) THEN
+            IF NOT EXISTS (
+                SELECT 1 FROM jours_feries jf
+                WHERE jf.entreprise_id = entreprise
+                  AND jf.date = current_date
+            ) THEN
+                total_days := total_days + 1;
+            END IF;
+        END IF;
+    END LOOP;
+
+    IF start_date = end_date THEN
+        IF debut_demi = 'apres_midi' AND fin_demi = 'matin' THEN
+            total_days := 0;
+        ELSIF debut_demi = 'apres_midi' OR fin_demi = 'matin' THEN
+            total_days := total_days - 0.5;
+        END IF;
+    ELSE
+        IF debut_demi = 'apres_midi' THEN total_days := total_days - 0.5; END IF;
+        IF fin_demi = 'matin' THEN total_days := total_days - 0.5; END IF;
+    END IF;
+
+    RETURN total_days;
+END;
+$$ LANGUAGE plpgsql;
+
+---
+
+/* ============================================================
+   TRIGGER MISE À JOUR COMPTEUR (JOURS OUVRÉS)
 ============================================================ */
 DROP TRIGGER IF EXISTS trg_update_compteur ON conge;
-CREATE OR REPLACE FUNCTION update_compteur_on_validation()
+CREATE OR REPLACE FUNCTION update_compteur_on_conge()
 RETURNS TRIGGER AS $$
 DECLARE
-  jours NUMERIC(5,2);
+    old_jours NUMERIC(5,2) := 0;
+    new_jours NUMERIC(5,2) := 0;
 BEGIN
-  IF NEW.statut = 'valide_final' AND OLD.statut <> 'valide_final' THEN
-    jours := (NEW.date_fin - NEW.date_debut + 1);
-
-    IF NEW.debut_demi_journee = 'apres_midi' THEN
-      jours := jours - 0.5;
+    IF OLD.statut = 'valide_final' THEN
+        old_jours := calcul_jours_ouvres(OLD.date_debut, OLD.date_fin, OLD.entreprise_id, OLD.debut_demi_journee, OLD.fin_demi_journee);
     END IF;
 
-    IF NEW.fin_demi_journee = 'matin' THEN
-      jours := jours - 0.5;
+    IF NEW.statut = 'valide_final' THEN
+        new_jours := calcul_jours_ouvres(NEW.date_debut, NEW.date_fin, NEW.entreprise_id, NEW.debut_demi_journee, NEW.fin_demi_journee);
     END IF;
 
-    INSERT INTO compteur_conges (
-      entreprise_id,
-      utilisateur_id,
-      conge_type_id,
-      annee,
-      jours_pris
-    )
-    VALUES (
-      NEW.entreprise_id,
-      NEW.utilisateur_id,
-      NEW.conge_type_id,
-      EXTRACT(YEAR FROM NEW.date_debut),
-      jours
-    )
-    ON CONFLICT (entreprise_id, utilisateur_id, conge_type_id, annee)
-    DO UPDATE SET
-      jours_pris = compteur_conges.jours_pris + EXCLUDED.jours_pris,
-      updated_at = NOW();
-  END IF;
-  RETURN NEW;
+    IF old_jours > 0 THEN
+        UPDATE compteur_conges
+        SET jours_pris = GREATEST(jours_pris - old_jours,0), updated_at = NOW()
+        WHERE entreprise_id = OLD.entreprise_id
+          AND utilisateur_id = OLD.utilisateur_id
+          AND conge_type_id = OLD.conge_type_id
+          AND annee = EXTRACT(YEAR FROM OLD.date_debut);
+    END IF;
+
+    IF new_jours > 0 THEN
+        INSERT INTO compteur_conges (
+            entreprise_id,
+            utilisateur_id,
+            conge_type_id,
+            annee,
+            jours_pris
+        )
+        VALUES (
+            NEW.entreprise_id,
+            NEW.utilisateur_id,
+            NEW.conge_type_id,
+            EXTRACT(YEAR FROM NEW.date_debut),
+            new_jours
+        )
+        ON CONFLICT (entreprise_id, utilisateur_id, conge_type_id, annee)
+        DO UPDATE SET
+            jours_pris = compteur_conges.jours_pris + EXCLUDED.jours_pris,
+            updated_at = NOW();
+    END IF;
+
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_update_compteur
-AFTER UPDATE ON conge
-FOR EACH ROW EXECUTE FUNCTION update_compteur_on_validation();
+AFTER INSERT OR UPDATE ON conge
+FOR EACH ROW EXECUTE FUNCTION update_compteur_on_conge();
 
 ---
 
@@ -287,6 +348,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
   utilisateur_id UUID REFERENCES utilisateur(id) ON DELETE SET NULL,
   action VARCHAR(255) NOT NULL,
   meta JSONB NOT NULL DEFAULT '{}',
+  entity_type VARCHAR(50),
+  entity_id UUID,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
@@ -303,6 +366,7 @@ CREATE TABLE IF NOT EXISTS notification (
   message TEXT NOT NULL,
   url VARCHAR(255),
   lu BOOLEAN NOT NULL DEFAULT FALSE,
+  lu_at TIMESTAMP,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
