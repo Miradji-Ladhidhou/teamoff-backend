@@ -392,3 +392,24 @@ FROM conge c
 JOIN conge_type ct ON ct.id = c.conge_type_id
 JOIN LATERAL generate_series(c.date_debut, c.date_fin, interval '1 day') d(jour)
 ON TRUE;
+
+
+/* ============================================================
+   VUE CALENDRIER CONGÉS
+============================================================ */
+CREATE OR REPLACE VIEW vue_calendrier_conges AS
+SELECT 
+    c.id AS conge_id,
+    u.id AS utilisateur_id,
+    u.nom AS utilisateur_nom,
+    u.email AS utilisateur_email,
+    ct.id AS conge_type_id,
+    ct.libelle AS conge_type,
+    c.date_debut,
+    c.date_fin,
+    c.debut_demi_journee,
+    c.fin_demi_journee,
+    c.statut
+FROM conge c
+JOIN utilisateur u ON c.utilisateur_id = u.id
+JOIN conge_type ct ON c.conge_type_id = ct.id;

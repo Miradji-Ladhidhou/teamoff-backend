@@ -68,4 +68,10 @@ router.get('/admin_only', authJwt, authorizeRole(['super_admin']), (req, res) =>
 const quotasRoutes = require('./quotas'); 
 router.use('/quotas', authJwt, quotasRoutes);
 
+// ------------------------------
+// Calendrier des congés routes (auth requis)
+// ------------------------------
+const calendrierRoutes = require('./calendrier');
+router.use('/calendrier-conges', authJwt, calendrierRoutes);
+
 module.exports = router;
