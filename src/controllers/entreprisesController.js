@@ -6,19 +6,28 @@ const { auditEntreprise } = require('../services/auditHelper');
 // Création d'une entreprise
 // ----------------------------
 async function createEntreprise(req, res) {
-  const { nom, logo } = req.body;
+
+  const { nom, logo, politique_conges, parametres, statut } = req.body;
+
   if (!nom) return res.status(400).json({ message: 'Nom requis' });
 
   try {
+
     const entreprise = await Entreprise.create(
-      { nom, logo },
+      {
+        nom,
+        logo,
+        politique_conges,
+        parametres,
+        statut
+      },
       { userId: req.user.id }
     );
 
-    // === Audit ===
     await auditEntreprise.created(entreprise, req.user, req);
 
     res.status(201).json(entreprise);
+
   } catch (err) {
     console.error('Erreur création entreprise:', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });

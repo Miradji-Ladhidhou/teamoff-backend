@@ -1,11 +1,14 @@
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const { Utilisateur } = require('../models');
-const sendEmail = require('../services/emailService');
+const emailService = require('../services/emailService'); 
 const { auditUser } = require('../services/auditHelper');
 
+/**
+ * Création utilisateur
+ */
 async function createUser(req, res) {
-  const { nom, email, role, entreprise_id } = req.body;
+  const { nom, prenom, email, role, entreprise_id } = req.body;
   const user = req.user;
 
   // Vérifications hiérarchiques
@@ -22,6 +25,7 @@ async function createUser(req, res) {
 
     const newUser = await Utilisateur.create({
       nom,
+      prenom,
       email,
       role,
       entreprise_id,
@@ -29,11 +33,12 @@ async function createUser(req, res) {
       statut: 'en_attente',
     });
 
-    await sendEmail({
-      to: email,
-      subject: 'Votre compte TeamOff',
-      text: `Bonjour ${nom},\n\nVotre compte a été créé.\nMot de passe temporaire : ${tempPassword}\nMerci de le changer à votre première connexion.`
-    });
+    // --- Envoi email via EmailService
+    await emailService.sendWelcomeEmail(
+      newUser,
+      { nom: 'EntrepriseX' }, // Remplacer par l'entreprise réelle si disponible
+      tempPassword
+    );
 
     // === Audit ===
     await auditUser.created(newUser, req.user, req);
@@ -41,6 +46,7 @@ async function createUser(req, res) {
     res.status(201).json({
       id: newUser.id,
       nom: newUser.nom,
+      prenom: newUser.prenom,
       email: newUser.email,
       role: newUser.role,
       entreprise_id: newUser.entreprise_id,
@@ -53,6 +59,9 @@ async function createUser(req, res) {
   }
 }
 
+/**
+ * Récupération de tous les utilisateurs
+ */
 async function getAllUsers(req, res) {
   try {
     let where = {};
@@ -68,6 +77,9 @@ async function getAllUsers(req, res) {
   }
 }
 
+/**
+ * Récupération utilisateur par ID
+ */
 async function getUserById(req, res) {
   try {
     const utilisateur = await Utilisateur.findByPk(req.params.id);
@@ -86,6 +98,9 @@ async function getUserById(req, res) {
   }
 }
 
+/**
+ * Mise à jour utilisateur
+ */
 async function updateUser(req, res) {
   try {
     const utilisateur = await Utilisateur.findByPk(req.params.id);
@@ -95,7 +110,7 @@ async function updateUser(req, res) {
       return res.status(403).json({ message: 'Vous ne pouvez modifier que les utilisateurs de votre entreprise' });
     }
 
-    const { nom, email, role, statut, password } = req.body;
+    const { nom, prenom, email, role, statut, password } = req.body;
 
     if (req.user.role === 'admin_entreprise' && role && !['manager', 'employe'].includes(role)) {
       return res.status(403).json({ message: 'Vous ne pouvez attribuer que manager ou employe' });
@@ -105,9 +120,11 @@ async function updateUser(req, res) {
 
     if (password) {
       utilisateur.password_hash = await bcrypt.hash(password, 10);
+      // --- Envoi email de changement de mot de passe
+      await emailService.sendPasswordResetConfirmation(email);
     }
 
-    await utilisateur.update({ nom, email, role, statut });
+    await utilisateur.update({ nom, prenom, email, role, statut });
 
     // === Audit général ===
     await auditUser.updated(utilisateur, req.user, req);
@@ -124,6 +141,9 @@ async function updateUser(req, res) {
   }
 }
 
+/**
+ * Changement de rôle utilisateur
+ */
 async function changeUserRole(req, res) {
   try {
     const utilisateur = await Utilisateur.findByPk(req.params.id);
@@ -154,6 +174,9 @@ async function changeUserRole(req, res) {
   }
 }
 
+/**
+ * Suppression utilisateur
+ */
 async function deleteUser(req, res) {
   try {
     const utilisateur = await Utilisateur.findByPk(req.params.id);

@@ -1,4 +1,26 @@
+// src/services/auditHelper.js
+const { AuditLog } = require('../models'); // ton modèle AuditLog
 const auditActions = require('./auditActions');
+
+/**
+ * Fonction interne pour créer un audit dans la base
+ */
+async function logAudit({ action, entity, entity_id, user_id, entreprise_id, ip, userAgent, metadata }) {
+  try {
+    await AuditLog.create({
+      action,
+      entity,
+      entity_id,
+      user_id,
+      entreprise_id,
+      ip,
+      user_agent: userAgent,
+      metadata
+    });
+  } catch (err) {
+    console.error('Erreur logAudit:', err);
+  }
+}
 
 /**
  * Helper générique pour auditer une action

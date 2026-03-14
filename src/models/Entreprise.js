@@ -1,4 +1,5 @@
 const { DataTypes } = require('sequelize');
+const { logAction } = require('../services/auditLogger');
 
 module.exports = (sequelize) => {
 
@@ -43,13 +44,10 @@ module.exports = (sequelize) => {
     updatedAt: 'updated_at',
   });
 
-  /**
-   * Hook création
-   */
   Entreprise.afterCreate(async (entreprise, options) => {
     await logAction({
       entrepriseId: entreprise.id,
-      utilisateurId: options.userId || null,
+      utilisateurId: options?.userId || null,
       action: 'entreprise_created',
       meta: {
         new: entreprise.toJSON()
@@ -57,9 +55,6 @@ module.exports = (sequelize) => {
     });
   });
 
-  /**
-   * Hook modification
-   */
   Entreprise.afterUpdate(async (entreprise, options) => {
 
     const changedFields = entreprise.changed() || [];
@@ -71,7 +66,7 @@ module.exports = (sequelize) => {
 
     await logAction({
       entrepriseId: entreprise.id,
-      utilisateurId: options.userId || null,
+      utilisateurId: options?.userId || null,
       action: 'entreprise_updated',
       meta: {
         changed_fields: changedFields,
@@ -81,13 +76,10 @@ module.exports = (sequelize) => {
     });
   });
 
-  /**
-   * Hook suppression
-   */
   Entreprise.afterDestroy(async (entreprise, options) => {
     await logAction({
       entrepriseId: entreprise.id,
-      utilisateurId: options.userId || null,
+      utilisateurId: options?.userId || null,
       action: 'entreprise_deleted',
       meta: {
         old: entreprise.toJSON()

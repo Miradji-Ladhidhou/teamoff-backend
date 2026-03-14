@@ -6,6 +6,7 @@ const usersRoutes = require('./users');
 const entrepriseRoutes = require('./entreprises');
 const joursFeriesRoutes = require('./joursFeries');
 const congesRoutes = require('./conge');
+const notificationRoutes = require('./notification');
 
 const authJwt = require('../middlewares/authJwt');
 const authorizeRole = require('../middlewares/authorizeRole');
@@ -73,5 +74,10 @@ router.use('/quotas', authJwt, quotasRoutes);
 // ------------------------------
 const calendrierRoutes = require('./calendrier');
 router.use('/calendrier-conges', authJwt, calendrierRoutes);
+
+// ------------------------------
+// Notifications routes (auth requis)
+// ------------------------------
+router.use('/notifications', authJwt, notificationRoutes);
 
 module.exports = router;

@@ -1,6 +1,6 @@
 const { AuditLog } = require('../models');
 
-async function logAudit({ action, entity, entity_id, user_id, entreprise_id, ip, userAgent, metadata }) {
+async function logAction({ action, entity, entity_id, user_id, entreprise_id, ip, userAgent, metadata }) {
   try {
     await AuditLog.create({
       action,
@@ -17,4 +17,4 @@ async function logAudit({ action, entity, entity_id, user_id, entreprise_id, ip,
   }
 }
 
-module.exports = { logAudit };
+module.exports = { logAction };
