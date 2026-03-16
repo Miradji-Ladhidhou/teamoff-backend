@@ -10,7 +10,7 @@ router.get('/', authJwt, authorizeRole(['employe','manager','admin_entreprise','
 router.get('/:id', authJwt, authorizeRole(['employe','manager','admin_entreprise','super_admin']), congeController.get);
 router.put('/:id', authJwt, authorizeRole(['employe','manager','admin_entreprise','super_admin']), congeController.update);
 router.delete('/:id', authJwt, authorizeRole(['employe','manager','admin_entreprise','super_admin']), congeController.remove);
-router.post('/:id/validate', authJwt, authorizeRole(['manager','admin_entreprise']), congeController.validate);
-router.post('/:id/reject', authJwt, authorizeRole(['manager','admin_entreprise']), congeController.reject);
+router.post('/:id/validate', authJwt, authorizeRole(['manager','admin_entreprise','super_admin']), congeController.validate);
+router.post('/:id/reject', authJwt, authorizeRole(['manager','admin_entreprise','super_admin']), congeController.reject);
 
 module.exports = router;

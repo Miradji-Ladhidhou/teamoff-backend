@@ -8,6 +8,7 @@ const joursFeriesRoutes = require('./joursFeries');
 const congesRoutes = require('./conge');
 const notificationRoutes = require('./notification');
 const congeTypesRoutes = require('./congeTypes');
+const settingsRoutes = require('./settings');
 
 const authJwt = require('../middlewares/authJwt');
 const authorizeRole = require('../middlewares/authorizeRole');
@@ -97,5 +98,16 @@ router.use('/conge-types', authJwt, congeTypesRoutes);
 // ------------------------------
 const exportRoutes = require('./exports');
 router.use('/exports', authJwt, exportRoutes);
+
+// ------------------------------
+// Audit logs routes (super_admin uniquement)
+// ------------------------------
+const auditRoutes = require('./audit');
+router.use('/audit', authJwt, auditRoutes);
+
+// ------------------------------
+// System settings routes (super_admin uniquement)
+// ------------------------------
+router.use('/settings', authJwt, settingsRoutes);
 
 module.exports = router;

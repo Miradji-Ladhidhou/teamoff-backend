@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "NODE_ENV=development nodemon src/index.js",
     "start": "NODE_ENV=production node src/index.js",
-    "test": "jest"
+    "test": "jest",
+    "verify:settings": "node scripts/verifySettings.js",
+    "verify:conges-core": "node scripts/verifyCongeCoreFlow.js",
+    "verify:conges-approval": "node scripts/verifyCongeApprovalFlow.js"
   },
   "keywords": [],
   "author": "",
@@ -23,6 +26,7 @@
     "express-validator": "^7.3.1",
     "json2csv": "^6.0.0-alpha.2",
     "jsonwebtoken": "^9.0.3",
+    "node-cron": "^4.2.1",
     "nodemailer": "^8.0.1",
     "pdfkit": "^0.18.0",
     "pg": "^8.18.0",

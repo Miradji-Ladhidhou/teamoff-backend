@@ -2,23 +2,207 @@ const { Parser } = require('json2csv');
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
-const { Conge, Utilisateur, Entreprise, AuditLog, CompteurConges } = require('../models');
+const { Conge, Utilisateur, Entreprise, AuditLog, CongeType } = require('../models');
 const { Op } = require('sequelize');
 
+function buildCongeWhereClause(entrepriseId, filters = {}) {
+  const whereClause = { entreprise_id: entrepriseId };
+  const statutRaw = filters.statut || filters.status;
+  const statutMap = {
+    en_attente: ['en_attente_manager'],
+    approuve: ['valide_manager', 'valide_final'],
+    refuse: ['refuse_manager', 'refuse_final'],
+    annule: ['annule'],
+  };
+
+  if (statutRaw && statutRaw !== 'all') {
+    const mapped = statutMap[statutRaw];
+    if (mapped && mapped.length > 0) {
+      whereClause.statut = { [Op.in]: mapped };
+    } else {
+      whereClause.statut = statutRaw;
+    }
+  }
+
+  if (filters.dateDebut || filters.dateFin) {
+    whereClause.date_debut = {};
+    if (filters.dateDebut) {
+      whereClause.date_debut[Op.gte] = filters.dateDebut;
+    }
+    if (filters.dateFin) {
+      whereClause.date_debut[Op.lte] = filters.dateFin;
+    }
+  }
+
+  if (filters.utilisateur && filters.utilisateur !== 'all' && filters.utilisateur !== 'me') {
+    whereClause.utilisateur_id = filters.utilisateur;
+  }
+  if (filters.utilisateurId && filters.utilisateurId !== 'all') {
+    whereClause.utilisateur_id = filters.utilisateurId;
+  }
+
+  return whereClause;
+}
+
 class ExportService {
+  static async getCongesPreview(entrepriseId, filters = {}, limit = 50) {
+    const whereClause = buildCongeWhereClause(entrepriseId, filters);
+    const conges = await Conge.findAll({
+      where: whereClause,
+      include: [
+        {
+          model: Utilisateur,
+          as: 'utilisateur',
+          attributes: ['prenom', 'nom', 'email'],
+          required: false
+        },
+        {
+          model: CongeType,
+          as: 'conge_type',
+          attributes: ['libelle'],
+          required: false
+        }
+      ],
+      order: [['created_at', 'DESC']],
+      limit,
+    });
+
+    const rows = conges.map(conge => ({
+      id: conge.id,
+      employe: conge.utilisateur ? `${conge.utilisateur.prenom || ''} ${conge.utilisateur.nom || ''}`.trim() : 'Utilisateur supprimé',
+      email: conge.utilisateur?.email || 'N/A',
+      type_conge: conge.conge_type?.libelle || 'Type supprimé',
+      date_debut: conge.date_debut,
+      date_fin: conge.date_fin,
+      jours: conge.jours_calcules,
+      statut: conge.statut,
+      cree_le: conge.created_at,
+    }));
+
+    return {
+      columns: ['id', 'employe', 'email', 'type_conge', 'date_debut', 'date_fin', 'jours', 'statut', 'cree_le'],
+      rows,
+      count: rows.length,
+      limitedTo: limit,
+    };
+  }
+
+  static async getUtilisateursPreview(entrepriseId, limit = 50) {
+    const utilisateurs = await Utilisateur.findAll({
+      where: { entreprise_id: entrepriseId },
+      attributes: ['id', 'prenom', 'nom', 'email', 'role', 'statut', 'created_at'],
+      order: [['nom', 'ASC']],
+      limit,
+    });
+
+    const rows = utilisateurs.map(user => ({
+      id: user.id,
+      prenom: user.prenom,
+      nom: user.nom,
+      email: user.email,
+      role: user.role,
+      statut: user.statut,
+      inscrit_le: user.created_at,
+    }));
+
+    return {
+      columns: ['id', 'prenom', 'nom', 'email', 'role', 'statut', 'inscrit_le'],
+      rows,
+      count: rows.length,
+      limitedTo: limit,
+    };
+  }
+
+  static async getAuditPreview(entrepriseId, filters = {}, limit = 50) {
+    const whereClause = { entreprise_id: entrepriseId };
+
+    if (filters.dateDebut || filters.dateFin) {
+      whereClause.createdAt = {};
+      if (filters.dateDebut) {
+        whereClause.createdAt[Op.gte] = new Date(filters.dateDebut);
+      }
+      if (filters.dateFin) {
+        const fin = new Date(filters.dateFin);
+        fin.setHours(23, 59, 59, 999);
+        whereClause.createdAt[Op.lte] = fin;
+      }
+    }
+    if (filters.action) whereClause.action = filters.action;
+    if (filters.utilisateurId) whereClause.user_id = filters.utilisateurId;
+
+    const logs = await AuditLog.findAll({
+      where: whereClause,
+      include: [
+        {
+          model: Utilisateur,
+          as: 'utilisateur',
+          attributes: ['prenom', 'nom', 'email'],
+          required: false,
+        }
+      ],
+      order: [['createdAt', 'DESC']],
+      limit,
+    });
+
+    const rows = logs.map(log => ({
+      date: log.createdAt,
+      utilisateur: log.utilisateur ? `${log.utilisateur.prenom || ''} ${log.utilisateur.nom || ''}`.trim() : 'Système',
+      email: log.utilisateur?.email || '',
+      action: log.action,
+      entite: log.entity || '',
+      ip: log.ip_address || '',
+    }));
+
+    return {
+      columns: ['date', 'utilisateur', 'email', 'action', 'entite', 'ip'],
+      rows,
+      count: rows.length,
+      limitedTo: limit,
+    };
+  }
+
+  static async getUsagePreview(entrepriseId) {
+    const UsageService = require('./usageService');
+    const report = await UsageService.getUsageReport(entrepriseId);
+
+    const rows = [
+      { metrique: 'Congés ce mois', valeur: report.congesThisMonth },
+      { metrique: 'Utilisateurs actifs', valeur: report.activeUsers },
+      { metrique: 'Jours fériés configurés', valeur: report.joursFeries },
+      { metrique: 'Limite utilisateurs', valeur: report.limits.maxUsers === -1 ? 'Illimité' : report.limits.maxUsers },
+      { metrique: 'Limite congés/mois', valeur: report.limits.maxCongesParMois === -1 ? 'Illimité' : report.limits.maxCongesParMois },
+      { metrique: 'Limite jours fériés', valeur: report.limits.maxJoursFeries === -1 ? 'Illimité' : report.limits.maxJoursFeries },
+    ];
+
+    return {
+      columns: ['metrique', 'valeur'],
+      rows,
+      count: rows.length,
+      limitedTo: rows.length,
+    };
+  }
+
+  static async getPreview(type, entrepriseId, filters = {}, limit = 50) {
+    if (type === 'conges') {
+      return this.getCongesPreview(entrepriseId, filters, limit);
+    }
+    if (type === 'utilisateurs') {
+      return this.getUtilisateursPreview(entrepriseId, limit);
+    }
+    if (type === 'audit') {
+      return this.getAuditPreview(entrepriseId, filters, limit);
+    }
+    if (type === 'usage' || type === 'statistiques') {
+      return this.getUsagePreview(entrepriseId);
+    }
+
+    throw new Error('Type de prévisualisation non supporté');
+  }
+
   // Générer CSV des congés
   static async generateCongesCSV(entrepriseId, filters = {}) {
     try {
-      const whereClause = { entreprise_id: entrepriseId };
-
-      // Appliquer les filtres
-      if (filters.status) whereClause.statut = filters.status;
-      if (filters.dateDebut && filters.dateFin) {
-        whereClause.date_debut = {
-          [Op.between]: [filters.dateDebut, filters.dateFin]
-        };
-      }
-      if (filters.utilisateurId) whereClause.utilisateur_id = filters.utilisateurId;
+      const whereClause = buildCongeWhereClause(entrepriseId, filters);
 
       const conges = await Conge.findAll({
         where: whereClause,
@@ -26,22 +210,24 @@ class ExportService {
           {
             model: Utilisateur,
             as: 'utilisateur',
-            attributes: ['prenom', 'nom', 'email']
+            attributes: ['prenom', 'nom', 'email'],
+            required: false // LEFT JOIN pour éviter les erreurs si utilisateur supprimé
           },
           {
-            model: CompteurConges,
+            model: CongeType,
             as: 'conge_type',
-            attributes: ['libelle']
+            attributes: ['libelle'],
+            required: false // LEFT JOIN pour éviter les erreurs si type supprimé
           }
         ],
-        order: [['createdAt', 'DESC']]
+        order: [['created_at', 'DESC']]
       });
 
       const data = conges.map(conge => ({
         'ID Congé': conge.id,
-        'Employé': `${conge.utilisateur.prenom} ${conge.utilisateur.nom}`,
-        'Email': conge.utilisateur.email,
-        'Type de congé': conge.conge_type.libelle,
+        'Employé': conge.utilisateur ? `${conge.utilisateur.prenom || ''} ${conge.utilisateur.nom || ''}`.trim() : 'Utilisateur supprimé',
+        'Email': conge.utilisateur ? conge.utilisateur.email : 'N/A',
+        'Type de congé': conge.conge_type ? conge.conge_type.libelle : 'Type supprimé',
         'Date début': conge.date_debut,
         'Date fin': conge.date_fin,
         'Jours calculés': conge.jours_calcules,
@@ -49,8 +235,8 @@ class ExportService {
         'Commentaire employé': conge.commentaire_employe || '',
         'Commentaire manager': conge.commentaire_manager || '',
         'Commentaire admin': conge.commentaire_admin || '',
-        'Date de création': conge.createdAt,
-        'Dernière modification': conge.updatedAt
+        'Date de création': conge.created_at,
+        'Dernière modification': conge.updated_at
       }));
 
       const fields = [
@@ -72,7 +258,7 @@ class ExportService {
     try {
       const utilisateurs = await Utilisateur.findAll({
         where: { entreprise_id: entrepriseId },
-        attributes: ['id', 'prenom', 'nom', 'email', 'role', 'is_active', 'createdAt', 'last_login'],
+        attributes: ['id', 'prenom', 'nom', 'email', 'role', 'statut', 'created_at', 'updated_at'],
         order: [['nom', 'ASC']]
       });
 
@@ -82,12 +268,12 @@ class ExportService {
         'Nom': user.nom,
         'Email': user.email,
         'Rôle': user.role,
-        'Actif': user.is_active ? 'Oui' : 'Non',
-        'Date d\'inscription': user.createdAt,
-        'Dernière connexion': user.last_login || 'Jamais'
+        'Statut': user.statut,
+        'Date d\'inscription': user.created_at,
+        'Dernière modification': user.updated_at
       }));
 
-      const fields = ['ID', 'Prénom', 'Nom', 'Email', 'Rôle', 'Actif', 'Date d\'inscription', 'Dernière connexion'];
+      const fields = ['ID', 'Prénom', 'Nom', 'Email', 'Rôle', 'Statut', 'Date d\'inscription', 'Dernière modification'];
 
       const json2csvParser = new Parser({ fields });
       return json2csvParser.parse(data);
@@ -97,18 +283,62 @@ class ExportService {
     }
   }
 
+  // Générer CSV des entreprises (super_admin)
+  static async generateEntreprisesCSV() {
+    try {
+      const entreprises = await Entreprise.findAll({
+        attributes: ['id', 'nom', 'statut', 'logo', 'created_at', 'updated_at'],
+        order: [['nom', 'ASC']]
+      });
+
+      const data = entreprises.map(entreprise => ({
+        'ID': entreprise.id,
+        'Nom': entreprise.nom,
+        'Statut': entreprise.statut,
+        'Logo': entreprise.logo || '',
+        'Date de creation': entreprise.created_at,
+        'Derniere modification': entreprise.updated_at
+      }));
+
+      const fields = ['ID', 'Nom', 'Statut', 'Logo', 'Date de creation', 'Derniere modification'];
+
+      const json2csvParser = new Parser({ fields });
+      return json2csvParser.parse(data);
+    } catch (error) {
+      console.error('Erreur lors de la génération du CSV des entreprises:', error);
+      throw error;
+    }
+  }
+
   // Générer CSV des logs d'audit
   static async generateAuditLogsCSV(entrepriseId, filters = {}) {
     try {
       const whereClause = { entreprise_id: entrepriseId };
 
-      if (filters.dateDebut && filters.dateFin) {
-        whereClause.timestamp = {
-          [Op.between]: [filters.dateDebut, filters.dateFin]
-        };
+      if (filters.dateDebut || filters.dateFin) {
+        whereClause.createdAt = {};
+        if (filters.dateDebut) {
+          whereClause.createdAt[Op.gte] = new Date(filters.dateDebut);
+        }
+        if (filters.dateFin) {
+          const fin = new Date(filters.dateFin);
+          fin.setHours(23, 59, 59, 999);
+          whereClause.createdAt[Op.lte] = fin;
+        }
       }
       if (filters.action) whereClause.action = filters.action;
-      if (filters.utilisateurId) whereClause.utilisateur_id = filters.utilisateurId;
+      if (filters.utilisateurId) whereClause.user_id = filters.utilisateurId;
+
+      if (filters.search) {
+        whereClause[Op.or] = [
+          { action: { [Op.iLike]: `%${filters.search}%` } },
+          { entity: { [Op.iLike]: `%${filters.search}%` } },
+          { ip_address: { [Op.iLike]: `%${filters.search}%` } },
+          { '$utilisateur.prenom$': { [Op.iLike]: `%${filters.search}%` } },
+          { '$utilisateur.nom$': { [Op.iLike]: `%${filters.search}%` } },
+          { '$utilisateur.email$': { [Op.iLike]: `%${filters.search}%` } },
+        ];
+      }
 
       const logs = await AuditLog.findAll({
         where: whereClause,
@@ -116,23 +346,26 @@ class ExportService {
           {
             model: Utilisateur,
             as: 'utilisateur',
-            attributes: ['prenom', 'nom', 'email']
+            attributes: ['prenom', 'nom', 'email'],
+            required: false,
           }
         ],
-        order: [['timestamp', 'DESC']],
+        order: [['createdAt', 'DESC']],
         limit: 1000 // Limiter pour éviter les exports trop volumineux
       });
 
       const data = logs.map(log => ({
-        'Date': log.timestamp,
-        'Utilisateur': log.utilisateur ? `${log.utilisateur.prenom} ${log.utilisateur.nom}` : 'Système',
+        'Date': log.createdAt,
+        'Utilisateur': log.utilisateur ? `${log.utilisateur.prenom || ''} ${log.utilisateur.nom || ''}`.trim() : 'Système',
+        'Email': log.utilisateur?.email || '',
         'Action': log.action,
-        'Détails': log.details,
+        'Entité': log.entity || '',
+        'Détails': JSON.stringify(log.metadata || {}),
         'IP': log.ip_address,
         'User Agent': log.user_agent
       }));
 
-      const fields = ['Date', 'Utilisateur', 'Action', 'Détails', 'IP', 'User Agent'];
+      const fields = ['Date', 'Utilisateur', 'Email', 'Action', 'Entité', 'Détails', 'IP', 'User Agent'];
 
       const json2csvParser = new Parser({ fields });
       return json2csvParser.parse(data);
@@ -147,15 +380,7 @@ class ExportService {
     return new Promise(async (resolve, reject) => {
       try {
         const entreprise = await Entreprise.findByPk(entrepriseId);
-        const whereClause = { entreprise_id: entrepriseId };
-
-        // Appliquer les filtres
-        if (filters.status) whereClause.statut = filters.status;
-        if (filters.dateDebut && filters.dateFin) {
-          whereClause.date_debut = {
-            [Op.between]: [filters.dateDebut, filters.dateFin]
-          };
-        }
+        const whereClause = buildCongeWhereClause(entrepriseId, filters);
 
         const conges = await Conge.findAll({
           where: whereClause,
@@ -166,12 +391,12 @@ class ExportService {
               attributes: ['prenom', 'nom', 'email']
             },
             {
-              model: CompteurConges,
+              model: CongeType,
               as: 'conge_type',
               attributes: ['libelle']
             }
           ],
-          order: [['createdAt', 'DESC']]
+          order: [['created_at', 'DESC']]
         });
 
         // Créer le document PDF
@@ -193,9 +418,9 @@ class ExportService {
         // Statistiques
         const stats = {
           total: conges.length,
-          en_attente: conges.filter(c => c.statut === 'en_attente').length,
-          valide: conges.filter(c => c.statut === 'valide').length,
-          refuse: conges.filter(c => c.statut === 'refuse').length
+          en_attente: conges.filter(c => c.statut === 'en_attente_manager').length,
+          valide: conges.filter(c => ['valide_manager', 'valide_final'].includes(c.statut)).length,
+          refuse: conges.filter(c => ['refuse_manager', 'refuse_final'].includes(c.statut)).length
         };
 
         doc.fontSize(14).text('Statistiques', { underline: true });
@@ -239,7 +464,7 @@ class ExportService {
     return new Promise(async (resolve, reject) => {
       try {
         const entreprise = await Entreprise.findByPk(entrepriseId);
-        const { UsageService } = require('./usageService');
+        const UsageService = require('./usageService');
         const report = await UsageService.getUsageReport(entrepriseId);
 
         const doc = new PDFDocument();

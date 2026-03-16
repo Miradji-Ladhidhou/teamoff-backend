@@ -1,8 +1,9 @@
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
-const { Utilisateur } = require('../models');
+const { Utilisateur, Entreprise } = require('../models');
 const emailService = require('../services/emailService'); 
 const { auditUser } = require('../services/auditHelper');
+const { validatePasswordPolicy } = require('../services/authService');
 
 /**
  * Création utilisateur
@@ -33,10 +34,14 @@ async function createUser(req, res) {
       statut: 'en_attente',
     });
 
+    const entreprise = entreprise_id
+      ? await Entreprise.findByPk(entreprise_id)
+      : null;
+
     // --- Envoi email via EmailService
     await emailService.sendWelcomeEmail(
       newUser,
-      { nom: 'EntrepriseX' }, // Remplacer par l'entreprise réelle si disponible
+      entreprise,
       tempPassword
     );
 
@@ -119,6 +124,7 @@ async function updateUser(req, res) {
     const oldData = utilisateur.toJSON();
 
     if (password) {
+      await validatePasswordPolicy(password);
       utilisateur.password_hash = await bcrypt.hash(password, 10);
       // --- Envoi email de changement de mot de passe
       await emailService.sendPasswordResetConfirmation(email);

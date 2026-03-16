@@ -11,6 +11,7 @@ module.exports = (sequelize) => {
     date: { type: DataTypes.DATEONLY, allowNull: false },
     libelle: { type: DataTypes.STRING(255), allowNull: false },
     recurrent: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    est_travail: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   }, {
     tableName: 'jours_feries',
     timestamps: true,

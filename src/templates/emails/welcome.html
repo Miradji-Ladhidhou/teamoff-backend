@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bienvenue sur {{app_name}}</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: #f4f6fb;
+        font-family: Arial, sans-serif;
+        color: #1f2937;
+      }
+
+      .wrapper {
+        width: 100%;
+        padding: 24px 0;
+      }
+
+      .card {
+        max-width: 640px;
+        margin: 0 auto;
+        background: #ffffff;
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: 0 8px 30px rgba(15, 23, 42, 0.08);
+      }
+
+      .header {
+        background: linear-gradient(135deg, #0f766e, #0ea5e9);
+        color: #ffffff;
+        padding: 32px;
+      }
+
+      .content {
+        padding: 32px;
+      }
+
+      .credentials {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px;
+        margin: 24px 0;
+      }
+
+      .button {
+        display: inline-block;
+        margin-top: 8px;
+        padding: 14px 24px;
+        background: #0f766e;
+        color: #ffffff !important;
+        text-decoration: none;
+        border-radius: 10px;
+        font-weight: bold;
+      }
+
+      .footer {
+        padding: 0 32px 32px;
+        color: #64748b;
+        font-size: 13px;
+      }
+
+      p {
+        margin: 0 0 16px;
+      }
+
+      strong {
+        color: #0f172a;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrapper">
+      <div class="card">
+        <div class="header">
+          <h1 style="margin: 0; font-size: 28px;">Bienvenue sur {{app_name}}</h1>
+          <p style="margin: 12px 0 0; opacity: 0.95;">Votre compte a été créé avec succès.</p>
+        </div>
+        <div class="content">
+          <p>Bonjour {{prenom}} {{nom}},</p>
+          <p>Votre accès à la plateforme {{app_name}} est prêt{{entreprise_suffix}}.</p>
+          <p>Vous pouvez vous connecter avec les identifiants temporaires ci-dessous :</p>
+
+          <div class="credentials">
+            <p><strong>Email :</strong> {{email}}</p>
+            <p><strong>Mot de passe temporaire :</strong> {{password_temporaire}}</p>
+            <p><strong>Entreprise :</strong> {{entreprise_nom}}</p>
+          </div>
+
+          <p>Pour des raisons de sécurité, modifiez votre mot de passe dès votre première connexion.</p>
+          <a class="button" href="{{login_url}}">Se connecter</a>
+        </div>
+        <div class="footer">
+          <p>Si le bouton ne fonctionne pas, utilisez ce lien : {{login_url}}</p>
+          <p>© {{year}} {{app_name}}</p>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

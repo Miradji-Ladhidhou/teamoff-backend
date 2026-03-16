@@ -1,174 +1,162 @@
-const { exec } = require('child_process');
-const fs = require('fs').promises;
+const fs = require('fs');
 const path = require('path');
+const { execFile } = require('child_process');
 const { promisify } = require('util');
-const execAsync = promisify(exec);
 
-class BackupService {
-  constructor() {
-    this.backupDir = path.join(__dirname, '../../backups');
-    this.retentionDays = 30; // Garder les sauvegardes 30 jours
-  }
+const execFileAsync = promisify(execFile);
+const backupsDir = path.resolve(__dirname, '..', '..', 'backups');
 
-  // Créer une sauvegarde complète de la base de données
-  async createDatabaseBackup() {
-    try {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const filename = `backup-${timestamp}.sql`;
-      const filepath = path.join(this.backupDir, filename);
+function ensureBackupDirectory() {
+  fs.mkdirSync(backupsDir, { recursive: true });
+}
 
-      // S'assurer que le répertoire de sauvegarde existe
-      await fs.mkdir(this.backupDir, { recursive: true });
+function buildBackupFilename() {
+  const now = new Date();
+  const stamp = now.toISOString().replace(/[:.]/g, '-');
+  return `teamoff_backup_${stamp}.sql`;
+}
 
-      // Commande pg_dump pour PostgreSQL
-      const dbConfig = {
-        host: process.env.DB_HOST || 'localhost',
-        port: process.env.DB_PORT || 5432,
-        database: process.env.DB_NAME,
-        username: process.env.DB_USER,
-        password: process.env.DB_PASSWORD
-      };
+function getPgDumpCandidates() {
+  const candidates = [
+    process.env.PG_DUMP_BIN,
+    '/Applications/Postgres.app/Contents/Versions/latest/bin/pg_dump',
+    '/Applications/Postgres.app/Contents/Versions/17/bin/pg_dump',
+    '/opt/homebrew/bin/pg_dump',
+    '/usr/local/bin/pg_dump',
+    'pg_dump',
+  ].filter(Boolean);
 
-      const dumpCommand = `pg_dump -h ${dbConfig.host} -p ${dbConfig.port} -U ${dbConfig.username} -d ${dbConfig.database} -f ${filepath}`;
-
-      // Exécuter la commande de sauvegarde
-      await execAsync(dumpCommand, {
-        env: { ...process.env, PGPASSWORD: dbConfig.password }
-      });
-
-      console.log(`✅ Sauvegarde créée: ${filename}`);
-
-      // Compresser le fichier
-      await this.compressBackup(filepath);
-
-      // Nettoyer les anciennes sauvegardes
-      await this.cleanupOldBackups();
-
-      return { success: true, filename, filepath };
-
-    } catch (error) {
-      console.error('❌ Erreur lors de la création de la sauvegarde:', error);
-      throw error;
+  return [...new Set(candidates)].filter((binPath) => {
+    if (binPath === 'pg_dump') {
+      return true;
     }
+    return fs.existsSync(binPath);
+  });
+}
+
+async function runDatabaseBackup() {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    const error = new Error('DATABASE_URL est manquante.');
+    error.statusCode = 500;
+    throw error;
   }
 
-  // Compresser une sauvegarde
-  async compressBackup(filepath) {
-    try {
-      const compressedPath = `${filepath}.gz`;
-      await execAsync(`gzip ${filepath}`);
-      console.log(`📦 Sauvegarde compressée: ${path.basename(compressedPath)}`);
-      return compressedPath;
-    } catch (error) {
-      console.warn('⚠️ Erreur lors de la compression:', error.message);
-      return filepath; // Retourner le fichier non compressé
+  ensureBackupDirectory();
+
+  const filename = buildBackupFilename();
+  const filePath = path.join(backupsDir, filename);
+
+  try {
+    const parsedUrl = new URL(databaseUrl);
+    const databaseName = parsedUrl.pathname.replace(/^\//, '');
+    const username = decodeURIComponent(parsedUrl.username || '');
+    const password = decodeURIComponent(parsedUrl.password || '');
+    const host = parsedUrl.hostname;
+    const port = parsedUrl.port || '5432';
+
+    if (!databaseName || !username || !host) {
+      throw new Error('DATABASE_URL invalide pour pg_dump.');
     }
-  }
 
-  // Restaurer une sauvegarde
-  async restoreDatabaseBackup(filename) {
-    try {
-      const filepath = path.join(this.backupDir, filename);
-
-      // Vérifier que le fichier existe
-      await fs.access(filepath);
-
-      const dbConfig = {
-        host: process.env.DB_HOST || 'localhost',
-        port: process.env.DB_PORT || 5432,
-        database: process.env.DB_NAME,
-        username: process.env.DB_USER,
-        password: process.env.DB_PASSWORD
-      };
-
-      // Commande de restauration
-      const restoreCommand = `psql -h ${dbConfig.host} -p ${dbConfig.port} -U ${dbConfig.username} -d ${dbConfig.database} -f ${filepath}`;
-
-      await execAsync(restoreCommand, {
-        env: { ...process.env, PGPASSWORD: dbConfig.password }
-      });
-
-      console.log(`✅ Sauvegarde restaurée: ${filename}`);
-      return { success: true };
-
-    } catch (error) {
-      console.error('❌ Erreur lors de la restauration:', error);
-      throw error;
-    }
-  }
-
-  // Lister les sauvegardes disponibles
-  async listBackups() {
-    try {
-      const files = await fs.readdir(this.backupDir);
-      const backups = files
-        .filter(file => file.startsWith('backup-') && (file.endsWith('.sql') || file.endsWith('.sql.gz')))
-        .map(file => {
-          const stats = fs.statSync(path.join(this.backupDir, file));
-          return {
-            filename: file,
-            size: stats.size,
-            createdAt: stats.birthtime,
-            compressed: file.endsWith('.gz')
-          };
-        })
-        .sort((a, b) => b.createdAt - a.createdAt);
-
-      return backups;
-    } catch (error) {
-      console.error('Erreur lors de la liste des sauvegardes:', error);
-      return [];
-    }
-  }
-
-  // Nettoyer les anciennes sauvegardes
-  async cleanupOldBackups() {
-    try {
-      const backups = await this.listBackups();
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - this.retentionDays);
-
-      const oldBackups = backups.filter(backup => backup.createdAt < cutoffDate);
-
-      for (const backup of oldBackups) {
-        const filepath = path.join(this.backupDir, backup.filename);
-        await fs.unlink(filepath);
-        console.log(`🗑️ Ancienne sauvegarde supprimée: ${backup.filename}`);
-      }
-
-    } catch (error) {
-      console.error('Erreur lors du nettoyage des sauvegardes:', error);
-    }
-  }
-
-  // Programmer des sauvegardes automatiques
-  scheduleAutomaticBackups() {
-    // Sauvegarde quotidienne à 2h du matin
-    const scheduleDailyBackup = () => {
-      const now = new Date();
-      const nextBackup = new Date(now);
-      nextBackup.setHours(2, 0, 0, 0);
-
-      if (nextBackup <= now) {
-        nextBackup.setDate(nextBackup.getDate() + 1);
-      }
-
-      const timeUntilBackup = nextBackup - now;
-
-      setTimeout(async () => {
-        try {
-          await this.createDatabaseBackup();
-        } catch (error) {
-          console.error('Erreur sauvegarde automatique:', error);
-        }
-        // Reprogrammer pour le lendemain
-        scheduleDailyBackup();
-      }, timeUntilBackup);
+    const childEnv = {
+      ...process.env,
+      PGPASSWORD: password,
     };
 
-    scheduleDailyBackup();
-    console.log('🔄 Sauvegardes automatiques programmées');
+    const sslMode = parsedUrl.searchParams.get('sslmode');
+    if (sslMode) {
+      childEnv.PGSSLMODE = sslMode;
+    }
+
+    const pgDumpArgs = [
+      '--format=plain',
+      '--no-owner',
+      '--no-privileges',
+      '--host',
+      host,
+      '--port',
+      String(port),
+      '--username',
+      username,
+      '--dbname',
+      databaseName,
+      '--file',
+      filePath,
+    ];
+
+    const candidates = getPgDumpCandidates();
+    let lastError = null;
+
+    for (const pgDumpBin of candidates) {
+      try {
+        await execFileAsync(pgDumpBin, pgDumpArgs, { env: childEnv });
+        lastError = null;
+        break;
+      } catch (execError) {
+        lastError = execError;
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+
+    const stats = fs.statSync(filePath);
+
+    return {
+      filename,
+      filePath,
+      sizeBytes: stats.size,
+      createdAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    const detail = (error.stderr || error.message || '').toString().trim();
+    const mapped = new Error(`Echec de la sauvegarde PostgreSQL: ${detail || 'Erreur inconnue.'}`);
+    mapped.statusCode = 500;
+    throw mapped;
   }
 }
 
-module.exports = new BackupService();
+function getBackupPathByFilename(filename) {
+  const safeName = path.basename(filename || '');
+  if (!safeName || safeName !== filename) {
+    return null;
+  }
+
+  return path.join(backupsDir, safeName);
+}
+
+/**
+ * Supprime les fichiers de backup plus vieux que retentionDays jours.
+ * @param {number} retentionDays
+ * @returns {{ deleted: string[], kept: number }}
+ */
+function cleanupOldBackups(retentionDays = 30) {
+  ensureBackupDirectory();
+  const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  const files = fs.readdirSync(backupsDir).filter((f) => f.endsWith('.sql'));
+  const deleted = [];
+
+  for (const file of files) {
+    const filePath = path.join(backupsDir, file);
+    try {
+      const stats = fs.statSync(filePath);
+      if (stats.mtimeMs < cutoffMs) {
+        fs.unlinkSync(filePath);
+        deleted.push(file);
+      }
+    } catch {
+      // ignorer les fichiers inaccessibles
+    }
+  }
+
+  return { deleted, kept: files.length - deleted.length };
+}
+
+module.exports = {
+  backupsDir,
+  runDatabaseBackup,
+  getBackupPathByFilename,
+  cleanupOldBackups,
+};

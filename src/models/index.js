@@ -18,6 +18,9 @@ const Conge = require('./Conge')(sequelize);
 const JoursFeries = require('./JoursFeries')(sequelize);
 const AuditLog = require('./AuditLog')(sequelize);
 const Notification = require('./Notification')(sequelize);
+const SystemSetting = require('./SystemSetting')(sequelize);
+const HolidayTemplate = require('./HolidayTemplate')(sequelize);
+const HolidayTemplateItem = require('./HolidayTemplateItem')(sequelize);
 
 // ======================
 // Associations
@@ -40,7 +43,7 @@ Entreprise.hasMany(CompteurConges, { foreignKey: 'entreprise_id', as: 'compteurs
 Utilisateur.belongsTo(Entreprise, { foreignKey: 'entreprise_id', as: 'entreprise' });
 Utilisateur.hasMany(Conge, { foreignKey: 'utilisateur_id', as: 'conges' });
 Utilisateur.hasMany(CompteurConges, { foreignKey: 'utilisateur_id', as: 'compteurs_conges' });
-Utilisateur.hasMany(AuditLog, { foreignKey: 'utilisateur_id', as: 'audit_logs' });
+Utilisateur.hasMany(AuditLog, { foreignKey: 'user_id', as: 'audit_logs' });
 Utilisateur.hasMany(Notification, { foreignKey: 'utilisateur_id', as: 'notifications' });
 
 // ----------------------
@@ -72,7 +75,7 @@ JoursFeries.belongsTo(Entreprise, { foreignKey: 'entreprise_id', as: 'entreprise
 // ----------------------
 // AuditLog relations
 // ----------------------
-AuditLog.belongsTo(Utilisateur, { foreignKey: 'utilisateur_id', as: 'utilisateur' });
+AuditLog.belongsTo(Utilisateur, { foreignKey: 'user_id', as: 'utilisateur' });
 AuditLog.belongsTo(Entreprise, { foreignKey: 'entreprise_id', as: 'entreprise' });
 
 // ----------------------
@@ -80,6 +83,14 @@ AuditLog.belongsTo(Entreprise, { foreignKey: 'entreprise_id', as: 'entreprise' }
 // ----------------------
 Notification.belongsTo(Utilisateur, { foreignKey: 'utilisateur_id', as: 'utilisateur' });
 Notification.belongsTo(Entreprise, { foreignKey: 'entreprise_id', as: 'entreprise' });
+
+// ----------------------
+// HolidayTemplate relations
+// ----------------------
+HolidayTemplate.belongsTo(Utilisateur, { foreignKey: 'created_by', as: 'creator' });
+HolidayTemplate.belongsTo(Entreprise, { foreignKey: 'source_entreprise_id', as: 'sourceEntreprise' });
+HolidayTemplate.hasMany(HolidayTemplateItem, { foreignKey: 'template_id', as: 'items', onDelete: 'CASCADE' });
+HolidayTemplateItem.belongsTo(HolidayTemplate, { foreignKey: 'template_id', as: 'template' });
 
 // ======================
 // Export
@@ -94,4 +105,7 @@ module.exports = {
   JoursFeries,
   AuditLog,
   Notification,
+  SystemSetting,
+  HolidayTemplate,
+  HolidayTemplateItem,
 };

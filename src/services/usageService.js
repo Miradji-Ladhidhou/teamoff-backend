@@ -16,7 +16,7 @@ class UsageService {
     const count = await Conge.count({
       where: {
         entreprise_id: entrepriseId,
-        createdAt: {
+        created_at: {
           [Op.between]: [startOfMonth, endOfMonth]
         }
       }
@@ -30,7 +30,7 @@ class UsageService {
     const count = await Utilisateur.count({
       where: {
         entreprise_id: entrepriseId,
-        is_active: true
+        statut: 'actif'
       }
     });
 

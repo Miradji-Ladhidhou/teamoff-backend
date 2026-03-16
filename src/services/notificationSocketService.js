@@ -2,6 +2,14 @@ const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const { Utilisateur } = require('../models');
 
+const isSocketDebug = process.env.SOCKET_DEBUG === 'true';
+
+function socketLog(...args) {
+  if (isSocketDebug) {
+    console.log(...args);
+  }
+}
+
 class NotificationService {
   constructor() {
     this.io = null;
@@ -11,7 +19,7 @@ class NotificationService {
   initialize(server) {
     this.io = new Server(server, {
       cors: {
-        origin: process.env.FRONTEND_URL || "http://localhost:3000",
+        origin: process.env.FRONTEND_URL || "http://localhost:3001",
         methods: ["GET", "POST"]
       }
     });
@@ -20,6 +28,7 @@ class NotificationService {
       try {
         const token = socket.handshake.auth.token;
         if (!token) {
+          console.warn('Socket auth failed: no token');
           return next(new Error('Authentication error'));
         }
 
@@ -27,6 +36,7 @@ class NotificationService {
         const user = await Utilisateur.findByPk(decoded.id);
 
         if (!user) {
+          console.warn('Socket auth failed: user not found', decoded);
           return next(new Error('User not found'));
         }
 
@@ -34,30 +44,31 @@ class NotificationService {
         socket.user = user;
         next();
       } catch (err) {
+        console.warn('Socket auth failed:', err.message);
         next(new Error('Authentication error'));
       }
     });
 
     this.io.on('connection', (socket) => {
-      console.log(`User ${socket.userId} connected`);
+      socketLog(`User ${socket.userId} connected`);
 
       // Stocker la connexion
       this.connectedUsers.set(socket.userId, socket.id);
 
       // Événements utilisateur
       socket.on('disconnect', () => {
-        console.log(`User ${socket.userId} disconnected`);
+        socketLog(`User ${socket.userId} disconnected`);
         this.connectedUsers.delete(socket.userId);
       });
 
       socket.on('join-room', (room) => {
         socket.join(room);
-        console.log(`User ${socket.userId} joined room: ${room}`);
+        socketLog(`User ${socket.userId} joined room: ${room}`);
       });
 
       socket.on('leave-room', (room) => {
         socket.leave(room);
-        console.log(`User ${socket.userId} left room: ${room}`);
+        socketLog(`User ${socket.userId} left room: ${room}`);
       });
     });
 

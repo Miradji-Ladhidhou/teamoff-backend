@@ -2,23 +2,57 @@ const nodemailer = require('nodemailer');
 const fs = require('fs').promises;
 const path = require('path');
 const { Utilisateur, Entreprise } = require('../models');
+const systemSettingsService = require('./systemSettingsService');
 
 class EmailService {
   constructor() {
-    this.transporter = nodemailer.createTransport({
+    this.defaultSmtpConfig = {
       host: process.env.MAIL_HOST,
-      port: process.env.MAIL_PORT,
+      port: Number(process.env.MAIL_PORT || 587),
       secure: process.env.MAIL_SECURE === 'true',
+      user: process.env.MAIL_USER,
+      pass: process.env.MAIL_PASS,
+      from: process.env.EMAIL_FROM || process.env.MAIL_USER,
+    };
+  }
+
+  createTransporter(smtpConfig) {
+    return nodemailer.createTransport({
+      host: smtpConfig.host,
+      port: Number(smtpConfig.port),
+      secure: Boolean(smtpConfig.secure),
       auth: {
-        user: process.env.MAIL_USER,
-        pass: process.env.MAIL_PASS,
+        user: smtpConfig.user,
+        pass: smtpConfig.pass,
       },
     });
+  }
+
+  async getSmtpConfig() {
+    try {
+      const settings = await systemSettingsService.getSettings();
+      return {
+        host: settings.smtpHost || this.defaultSmtpConfig.host,
+        port: Number(settings.smtpPort || this.defaultSmtpConfig.port),
+        secure: this.defaultSmtpConfig.secure,
+        user: settings.smtpUser || this.defaultSmtpConfig.user,
+        pass: settings.smtpPassword || this.defaultSmtpConfig.pass,
+        from: settings.emailFrom || this.defaultSmtpConfig.from,
+      };
+    } catch (_) {
+      return this.defaultSmtpConfig;
+    }
   }
 
   // Méthode générique d'envoi d'email
   async sendEmail(to, subject, templateName, data = {}) {
     try {
+      const smtpConfig = await this.getSmtpConfig();
+
+      if (!smtpConfig.host || !smtpConfig.user || !smtpConfig.pass) {
+        throw new Error('Configuration SMTP incomplete (host/user/pass requis).');
+      }
+
       let html;
       try {
         const templatePath = path.join(__dirname, '../templates/emails', `${templateName}.html`);
@@ -30,19 +64,20 @@ class EmailService {
       html = this.replaceTemplateVariables(html, data);
 
       const mailOptions = {
-        from: `"${process.env.EMAIL_NAME}" <${process.env.EMAIL_FROM}>`,
+        from: `"${process.env.EMAIL_NAME}" <${smtpConfig.from || smtpConfig.user}>`,
         to,
         subject,
         html,
         text: this.htmlToText(html),
       };
 
-      if (process.env.NODE_ENV === 'development') {
+      if (process.env.MAIL_SIMULATE === 'true') {
         console.log('📧 Email simulé:', { to, subject, data });
         return { success: true, test: true };
       }
 
-      const info = await this.transporter.sendMail(mailOptions);
+      const transporter = this.createTransporter(smtpConfig);
+      const info = await transporter.sendMail(mailOptions);
       console.log(`📧 Email envoyé à ${to}: ${info.messageId}`);
       return { success: true, messageId: info.messageId };
     } catch (error) {
@@ -105,6 +140,9 @@ class EmailService {
   // ---------------------------
 
   async sendWelcomeEmail(user, entreprise, temporaryPassword) {
+    const entrepriseNom = entreprise?.nom || 'Votre entreprise';
+    const loginUrl = `${process.env.FRONTEND_URL}/login`;
+
     return this.sendEmail(
       user.email,
       `Bienvenue sur ${process.env.EMAIL_NAME} !`,
@@ -112,11 +150,46 @@ class EmailService {
       {
         prenom: user.prenom,
         nom: user.nom,
-        entreprise_nom: entreprise.nom,
+        entreprise_nom: entrepriseNom,
+        entreprise_suffix: entreprise?.nom ? ` pour ${entrepriseNom}` : '',
         email: user.email,
         password_temporaire: temporaryPassword,
-        login_url: `${process.env.FRONTEND_URL}/login`,
+        login_url: loginUrl,
         change_password_url: `${process.env.FRONTEND_URL}/reset-password`,
+        content: `
+          <p>Bonjour ${user.prenom} ${user.nom},</p>
+          <p>Votre compte ${process.env.EMAIL_NAME || 'TeamOff'} a été créé${entreprise?.nom ? ` pour ${entrepriseNom}` : ''}.</p>
+          <p><strong>Email :</strong> ${user.email}</p>
+          <p><strong>Mot de passe temporaire :</strong> ${temporaryPassword}</p>
+          <p><strong>Entreprise :</strong> ${entrepriseNom}</p>
+          <p>Connectez-vous ici : <a href="${loginUrl}">${loginUrl}</a></p>
+        `,
+      }
+    );
+  }
+
+  async sendEntrepriseCreatedEmail(user, entreprise) {
+    const prenom = user?.prenom || '';
+    const nom = user?.nom || '';
+    const nomComplet = `${prenom} ${nom}`.trim() || 'Administrateur';
+
+    return this.sendEmail(
+      user.email,
+      `Entreprise créée: ${entreprise.nom}`,
+      'entreprise-created',
+      {
+        prenom,
+        nom,
+        nom_complet: nomComplet,
+        entreprise_nom: entreprise.nom,
+        entreprise_statut: entreprise.statut,
+        created_at: new Date().toLocaleString('fr-FR'),
+        dashboard_url: `${process.env.FRONTEND_URL}/super-admin/entreprises`,
+        content: `
+          <p>Bonjour ${nomComplet},</p>
+          <p>L'entreprise <strong>${entreprise.nom}</strong> a été créée avec le statut <strong>${entreprise.statut}</strong>.</p>
+          <p>Vous pouvez la gérer depuis votre espace super administrateur.</p>
+        `,
       }
     );
   }

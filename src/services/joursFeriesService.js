@@ -16,6 +16,10 @@ function estJourFerie(date, joursFeries) {
   const [y, m, d] = date.split('-').map(Number);
 
   return joursFeries.some(jf => {
+    if (jf.est_travail) {
+      return false;
+    }
+
     const jfDate = new Date(jf.date);
     if (jf.recurrent) {
       return jfDate.getUTCDate() === d && jfDate.getUTCMonth() === (m - 1);

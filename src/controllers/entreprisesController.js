@@ -1,6 +1,7 @@
-const { Entreprise } = require('../models');
+const { Entreprise, Utilisateur } = require('../models');
 const { validationResult } = require('express-validator');
 const { auditEntreprise } = require('../services/auditHelper');
+const emailService = require('../services/emailService');
 
 // ----------------------------
 // Création d'une entreprise
@@ -25,6 +26,14 @@ async function createEntreprise(req, res) {
     );
 
     await auditEntreprise.created(entreprise, req.user, req);
+
+    const creator = await Utilisateur.findByPk(req.user.id, {
+      attributes: ['id', 'prenom', 'nom', 'email']
+    });
+
+    if (creator?.email) {
+      await emailService.sendEntrepriseCreatedEmail(creator, entreprise);
+    }
 
     res.status(201).json(entreprise);
 

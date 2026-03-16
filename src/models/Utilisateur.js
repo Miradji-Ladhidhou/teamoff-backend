@@ -12,6 +12,10 @@ module.exports = (sequelize) => {
       allowNull: false,
       field: 'entreprise_id',
     },
+    prenom: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
     nom: {
       type: DataTypes.STRING(255),
       allowNull: false,
@@ -32,6 +36,16 @@ module.exports = (sequelize) => {
       type: DataTypes.ENUM('actif', 'inactif', 'en_attente'),
       allowNull: false,
       defaultValue: 'en_attente',
+    },
+    failed_login_attempts: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    },
+    locked_until: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      defaultValue: null,
     },
   }, {
     tableName: 'utilisateur',

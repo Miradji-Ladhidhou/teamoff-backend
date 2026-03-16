@@ -72,6 +72,7 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TABLE IF NOT EXISTS utilisateur (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   entreprise_id UUID NOT NULL REFERENCES entreprise(id) ON DELETE CASCADE,
+  prenom VARCHAR(255),
   nom VARCHAR(255) NOT NULL,
   email VARCHAR(255) NOT NULL,
   role utilisateur_role NOT NULL,

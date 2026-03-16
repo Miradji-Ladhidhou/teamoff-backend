@@ -3,10 +3,10 @@ const notificationService = require('../services/notificationSocketService');
 
 async function create(req, res) {
   try {
-    const conge = await congeService.createConge({ ...req.body, reqUser: req.user });
+    const conge = await congeService.createConge({ ...req.body, reqUser: req.user, req });
 
     // Notifier les administrateurs de l'entreprise
-    notificationService.notifyCompany(req.user.entrepriseId, 'conge-created', {
+    notificationService.notifyCompany(req.user.entreprise_id, 'conge-created', {
       conge,
       user: req.user
     });
@@ -27,16 +27,16 @@ async function get(req, res) {
 }
 
 async function update(req, res) {
-  try { res.json(await congeService.updateConge(req.params.id, req.body, req.user)); }
+  try { res.json(await congeService.updateConge(req.params.id, req.body, req.user, req)); }
   catch(err) { res.status(400).json({ message: err.message }); }
 }
 
 async function remove(req, res) {
   try {
-    await congeService.deleteConge(req.params.id, req.user);
+    await congeService.deleteConge(req.params.id, req.user, req);
 
     // Notifier les administrateurs
-    notificationService.notifyCompany(req.user.entrepriseId, 'conge-deleted', {
+    notificationService.notifyCompany(req.user.entreprise_id, 'conge-deleted', {
       congeId: req.params.id,
       user: req.user
     });
@@ -48,17 +48,17 @@ async function remove(req, res) {
 
 async function validate(req, res) {
   try {
-    const conge = await congeService.validerConge(req.params.id, req.user, req.body.commentaire);
+    const conge = await congeService.validerConge(req.params.id, req.user, req.body.commentaire, req);
 
     // Notifier l'utilisateur qui a fait la demande
-    notificationService.notifyUser(conge.utilisateurId, 'conge-validated', {
+    notificationService.notifyUser(conge.utilisateur_id, 'conge-validated', {
       conge,
       validatedBy: req.user,
       commentaire: req.body.commentaire
     });
 
     // Notifier tous les administrateurs de l'entreprise
-    notificationService.notifyCompany(req.user.entrepriseId, 'conge-status-changed', {
+    notificationService.notifyCompany(req.user.entreprise_id, 'conge-status-changed', {
       conge,
       action: 'validated',
       by: req.user
@@ -71,17 +71,17 @@ async function validate(req, res) {
 
 async function reject(req, res) {
   try {
-    const conge = await congeService.rejeterConge(req.params.id, req.user, req.body.commentaire);
+    const conge = await congeService.rejeterConge(req.params.id, req.user, req.body.commentaire, req);
 
     // Notifier l'utilisateur qui a fait la demande
-    notificationService.notifyUser(conge.utilisateurId, 'conge-rejected', {
+    notificationService.notifyUser(conge.utilisateur_id, 'conge-rejected', {
       conge,
       rejectedBy: req.user,
       commentaire: req.body.commentaire
     });
 
     // Notifier tous les administrateurs de l'entreprise
-    notificationService.notifyCompany(req.user.entrepriseId, 'conge-status-changed', {
+    notificationService.notifyCompany(req.user.entreprise_id, 'conge-status-changed', {
       conge,
       action: 'rejected',
       by: req.user
