@@ -265,6 +265,34 @@ class EmailService {
       throw error;
     }
   }
+
+  async sendAlertEmail(email, alert) {
+    const severityColors = {
+      low: '#f59e0b',    // orange
+      medium: '#f97316', // orange-500
+      high: '#dc2626'    // red-600
+    };
+
+    const severityText = {
+      low: 'Faible',
+      medium: 'Moyen',
+      high: 'Élevé'
+    };
+
+    return this.sendEmail(
+      email,
+      `Alerte système - Sévérité ${severityText[alert.severity]}`,
+      'system-alert',
+      {
+        severity: severityText[alert.severity],
+        severity_color: severityColors[alert.severity],
+        alert_type: alert.type,
+        message: alert.message,
+        timestamp: new Date().toLocaleString('fr-FR'),
+        dashboard_url: `${process.env.FRONTEND_URL}/admin/dashboard`,
+      }
+    );
+  }
 }
 
 module.exports = new EmailService();

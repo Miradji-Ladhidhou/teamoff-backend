@@ -32,6 +32,7 @@ module.exports = (sequelize) => {
       defaultValue: 'en_attente_manager',
     },
 
+    commentaire_employe: { type: DataTypes.TEXT },
     commentaire_manager: { type: DataTypes.TEXT },
     commentaire_admin: { type: DataTypes.TEXT },
 

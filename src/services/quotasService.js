@@ -65,11 +65,32 @@ async function ajouterAcquisitionMensuelle(entrepriseId, annee, mois) {
  */
 async function getSoldeUtilisateur(utilisateur_id, conge_type_id, annee) {
   const compteur = await CompteurConges.findOne({ where: { utilisateur_id, conge_type_id, annee } });
-  return compteur ? compteur.getSoldeTotal() : 0;
+  return compteur ? compteur.getSoldeDisponible() : 0;
+}
+
+/**
+ * Récupère tous les soldes d'un utilisateur pour une année
+ */
+async function getSoldesUtilisateur(utilisateur_id, annee) {
+  const compteurs = await CompteurConges.findAll({
+    where: { utilisateur_id, annee },
+    include: [{ model: require('../models').CongeType, as: 'conge_type' }]
+  });
+
+  return compteurs.map(c => ({
+    conge_type_id: c.conge_type_id,
+    conge_type: c.conge_type.libelle,
+    jours_acquis: c.jours_acquis,
+    jours_pris: c.jours_pris,
+    jours_reportes: c.jours_reportes,
+    jours_reserves: c.jours_reserves,
+    solde_disponible: c.getSoldeDisponible()
+  }));
 }
 
 module.exports = {
   initQuotaAnnuel,
   ajouterAcquisitionMensuelle,
-  getSoldeUtilisateur
+  getSoldeUtilisateur,
+  getSoldesUtilisateur
 };

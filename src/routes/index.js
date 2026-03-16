@@ -7,10 +7,19 @@ const entrepriseRoutes = require('./entreprises');
 const joursFeriesRoutes = require('./joursFeries');
 const congesRoutes = require('./conge');
 const notificationRoutes = require('./notification');
+const congeTypesRoutes = require('./congeTypes');
 
 const authJwt = require('../middlewares/authJwt');
 const authorizeRole = require('../middlewares/authorizeRole');
+const { generalLimiter } = require('../middlewares/rateLimiter');
+const { metricsMiddleware, getMetrics } = require('../middlewares/metrics');
 const sequelize = require('../config/database');
+
+// Appliquer rate limiter général à toutes les routes
+router.use(generalLimiter);
+
+// Appliquer métriques à toutes les routes
+router.use(metricsMiddleware);
 
 // ------------------------------
 // Healthcheck
@@ -57,11 +66,9 @@ router.get('/me', authJwt, (req, res) => {
 });
 
 // ------------------------------
-// route super_admin only
+// Métriques (super_admin uniquement)
 // ------------------------------
-router.get('/admin_only', authJwt, authorizeRole(['super_admin']), (req, res) => {
-  res.json({ message: 'Zone réservée aux super_admins' });
-});
+router.get('/metrics', authJwt, authorizeRole(['super_admin']), getMetrics);
 
 // ------------------------------
 // Quotas routes (auth requis)
@@ -79,5 +86,16 @@ router.use('/calendrier-conges', authJwt, calendrierRoutes);
 // Notifications routes (auth requis)
 // ------------------------------
 router.use('/notifications', authJwt, notificationRoutes);
+
+// ----------------------------
+// Types de congé routes (auth requis)
+// ----------------------------
+router.use('/conge-types', authJwt, congeTypesRoutes);
+
+// ------------------------------
+// Exports routes (admin uniquement)
+// ------------------------------
+const exportRoutes = require('./exports');
+router.use('/exports', authJwt, exportRoutes);
 
 module.exports = router;

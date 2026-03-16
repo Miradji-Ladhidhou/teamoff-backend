@@ -1,5 +1,6 @@
 // controllers/quotasController.js
 const quotasService = require('../services/quotasService');
+const UsageService = require('../services/usageService');
 
 async function initQuota(req, res) {
   try {
@@ -23,4 +24,27 @@ async function getSolde(req, res) {
   }
 }
 
-module.exports = { initQuota, getSolde };
+async function getSoldes(req, res) {
+  try {
+    const { utilisateur_id } = req.params;
+    const annee = req.query.annee || new Date().getFullYear();
+    const soldes = await quotasService.getSoldesUtilisateur(utilisateur_id, annee);
+    res.json({ soldes });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+}
+
+async function getUsageReport(req, res) {
+  try {
+    const entrepriseId = req.user.entreprise_id;
+    const report = await UsageService.getUsageReport(entrepriseId);
+    res.json({ report });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+}
+
+module.exports = { initQuota, getSolde, getSoldes, getUsageReport };

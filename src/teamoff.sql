@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS conge (
   debut_demi_journee demi_journee NOT NULL DEFAULT 'matin',
   fin_demi_journee demi_journee NOT NULL DEFAULT 'apres_midi',
   statut conge_statut NOT NULL DEFAULT 'en_attente_manager',
+  commentaire_employe TEXT,
   commentaire_manager TEXT,
   commentaire_admin TEXT,
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),

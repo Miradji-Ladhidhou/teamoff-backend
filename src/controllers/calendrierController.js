@@ -12,11 +12,20 @@ async function getCalendrier(req, res) {
     let query = `SELECT * FROM vue_calendrier_conges WHERE 1=1`;
     const replacements = {};
 
-    if (req.query.entrepriseId) {
+    // Filtrage par entreprise selon le rôle
+    if (req.user.role === 'super_admin') {
+      if (req.query.entrepriseId) {
+        query += ` AND utilisateur_id IN (
+          SELECT id FROM utilisateur WHERE entreprise_id = :entrepriseId
+        )`;
+        replacements.entrepriseId = req.query.entrepriseId;
+      }
+    } else {
+      // Pour les autres rôles, filtrer par leur entreprise
       query += ` AND utilisateur_id IN (
         SELECT id FROM utilisateur WHERE entreprise_id = :entrepriseId
       )`;
-      replacements.entrepriseId = req.query.entrepriseId;
+      replacements.entrepriseId = req.user.entreprise_id;
     }
 
     if (req.query.statut) {

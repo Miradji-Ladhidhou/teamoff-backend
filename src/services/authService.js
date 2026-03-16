@@ -57,6 +57,9 @@ async function forgotPassword(email) {
   // Générer token temporaire pour reset (à sauvegarder ou envoyer par email)
   const resetToken = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
+  // TEMP: afficher le token pour tests
+  console.log("RESET TOKEN:", resetToken);
+
   // TODO: envoyer email via service mail avec resetToken
   return resetToken;
 }
@@ -82,9 +85,32 @@ async function resetPassword(token, newPassword) {
   return true;
 }
 
+// ---------------------------
+// Modifier mot de passe (pour utilisateur connecté)
+// ---------------------------
+async function changePassword(userId, currentPassword, newPassword) {
+  try {
+    const user = await Utilisateur.findByPk(userId);
+    if (!user) throw new Error('Utilisateur introuvable');
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!isMatch) throw new Error('Mot de passe actuel incorrect');
+
+    const hashed = await bcrypt.hash(newPassword, 10);
+    user.password_hash = hashed;
+    await user.save();
+
+    return true;
+  } catch (err) {
+    console.error('Erreur changement mot de passe:', err.message);
+    throw err;
+  }
+}
+
 module.exports = {
   loginUtilisateur,
   logoutUtilisateur,
   forgotPassword,
-  resetPassword
+  resetPassword,
+  changePassword
 };

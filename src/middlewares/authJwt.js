@@ -61,7 +61,7 @@ module.exports = async (req, res, next) => {
       id: user.id,
       role: user.role,
       entreprise_id: user.entreprise_id,
-      statut: user.statut,
+      statut: user.statut
     };
 
     next();
