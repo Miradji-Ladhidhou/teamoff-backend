@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS utilisateur (
   entreprise_id UUID NOT NULL REFERENCES entreprise(id) ON DELETE CASCADE,
   prenom VARCHAR(255),
   nom VARCHAR(255) NOT NULL,
+  service VARCHAR(255),
   email VARCHAR(255) NOT NULL,
   role utilisateur_role NOT NULL,
   password_hash VARCHAR(255) NOT NULL,

@@ -2,6 +2,7 @@ const { Conge, CompteurConges, CongeType, Utilisateur, Entreprise, sequelize } =
 const notificationService = require('./notificationService');
 const { auditConge } = require('./auditHelper');
 const joursFeriesService = require('./joursFeriesService');
+const { getLeaveRules } = require('./politiqueConges');
 const { Op } = require('sequelize');
 const dayjs = require('dayjs');
 const isSameOrBefore = require('dayjs/plugin/isSameOrBefore');
@@ -57,6 +58,55 @@ async function resolveCongeDays(conge) {
   );
 
   return Number.isFinite(computed) ? computed : 0;
+}
+
+async function getEntrepriseLeaveRules(entrepriseId, transaction = null) {
+  const entreprise = await Entreprise.findByPk(entrepriseId, {
+    attributes: ['id', 'politique_conges'],
+    transaction,
+  });
+
+  if (!entreprise) {
+    throw new Error('Entreprise introuvable');
+  }
+
+  return getLeaveRules(entreprise);
+}
+
+async function computeOverlapContext({ entrepriseId, utilisateurId, dateDebut, dateFin, userService = null, transaction = null }) {
+  const overlappingConges = await Conge.findAll({
+    where: {
+      entreprise_id: entrepriseId,
+      statut: { [Op.in]: ['en_attente_manager', 'valide_manager', 'valide_final'] },
+      date_debut: { [Op.lte]: dateFin },
+      date_fin: { [Op.gte]: dateDebut }
+    },
+    include: [{
+      model: Utilisateur,
+      as: 'utilisateur',
+      attributes: ['id', 'service'],
+      required: false,
+    }],
+    attributes: ['id', 'utilisateur_id'],
+    transaction,
+  });
+
+  const overlapWithSameUser = overlappingConges.some((c) => c.utilisateur_id === utilisateurId);
+  const distinctUsers = new Set(overlappingConges.map((c) => c.utilisateur_id));
+  const sameServiceUsers = userService
+    ? new Set(
+      overlappingConges
+        .filter((c) => c.utilisateur?.service && c.utilisateur.service === userService)
+        .map((c) => c.utilisateur_id)
+    )
+    : new Set();
+
+  return {
+    overlapWithSameUser,
+    overlappingCount: distinctUsers.size,
+    overlappingCountByService: sameServiceUsers.size,
+    overlappingConges,
+  };
 }
 
 // ----------------------------
@@ -128,20 +178,51 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       throw new Error('Ce type de congé n\'autorise pas les demi-journées');
     }
 
-    // Vérification chevauchement
-    const chevauche = await Conge.findOne({
-      where: {
-        utilisateur_id: utilisateurId,
-        statut: { [Op.in]: ['en_attente_manager','valide_manager','valide_final'] },
-        date_debut: { [Op.lte]: date_fin },
-        date_fin: { [Op.gte]: date_debut }
-      },
-      transaction: t
+    const leaveRules = await getEntrepriseLeaveRules(utilisateur.entreprise_id, t);
+
+    const daysUntilStart = dayjs(date_debut).startOf('day').diff(dayjs().startOf('day'), 'day');
+    if (daysUntilStart < leaveRules.minimum_notice_days) {
+      throw new Error(`Délai minimum non respecté: ${leaveRules.minimum_notice_days} jour(s) minimum`);
+    }
+
+    // Vérification chevauchement / capacité simultanée selon politique
+    const overlapContext = await computeOverlapContext({
+      entrepriseId: utilisateur.entreprise_id,
+      utilisateurId,
+      dateDebut: date_debut,
+      dateFin: date_fin,
+      userService: utilisateur.service || null,
+      transaction: t,
     });
-    if (chevauche) throw new Error('Chevauchement de congé détecté');
+
+    if (overlapContext.overlapWithSameUser) {
+      throw new Error('Chevauchement de congé détecté');
+    }
+
+    const globalLimit = leaveRules.max_employees_on_leave.global;
+    const projectedOnLeaveCount = overlapContext.overlappingCount + 1;
+    const limitReached = Number.isFinite(globalLimit) && projectedOnLeaveCount > globalLimit;
+
+    const userService = utilisateur.service || null;
+    const serviceLimitRaw = userService
+      ? leaveRules.max_employees_on_leave.by_service?.[userService]
+      : null;
+    const serviceLimit = Number(serviceLimitRaw);
+    const projectedServiceOnLeaveCount = overlapContext.overlappingCountByService + 1;
+    const serviceLimitReached = userService && Number.isFinite(serviceLimit) && serviceLimit > 0
+      ? projectedServiceOnLeaveCount > serviceLimit
+      : false;
+
+    if (leaveRules.overlap_policy === 'block' && (limitReached || serviceLimitReached)) {
+      throw new Error('Limite d\'employés en congé simultanément atteinte');
+    }
 
     const jours = await calcJoursConges(utilisateur.entreprise_id, date_debut, date_fin, debutDemiJournee, finDemiJournee);
     if (!Number.isFinite(jours) || jours <= 0) throw new Error('Nombre de jours de congé invalide');
+
+    if (jours > leaveRules.max_consecutive_days) {
+      throw new Error(`Durée maximale dépassée: ${leaveRules.max_consecutive_days} jour(s) consécutif(s) max`);
+    }
 
     // Compteur
     let compteur = await CompteurConges.findOne({
@@ -165,7 +246,12 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       throw new Error('Solde insuffisant');
     }
 
-    compteur.jours_reserves = safeNumber(compteur.jours_reserves) + safeNumber(jours);
+    const approvalWorkflow = leaveRules.approval_workflow;
+    if (approvalWorkflow === 'auto') {
+      compteur.jours_pris = safeNumber(compteur.jours_pris) + safeNumber(jours);
+    } else {
+      compteur.jours_reserves = safeNumber(compteur.jours_reserves) + safeNumber(jours);
+    }
     await compteur.save({ transaction: t });
 
     const conge = await Conge.create({
@@ -177,7 +263,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       debut_demi_journee: debutDemiJournee,
       fin_demi_journee: finDemiJournee,
       commentaire_employe,
-      statut: 'en_attente_manager',
+      statut: approvalWorkflow === 'auto' ? 'valide_final' : 'en_attente_manager',
       jours_calcules: jours
     }, { transaction: t });
 
@@ -189,7 +275,9 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       where: { entreprise_id: utilisateur.entreprise_id, role: 'admin_entreprise' }
     });
 
-    if (manager) {
+    const shouldNotifyOnCreate = leaveRules.notification_settings.on_create;
+
+    if (shouldNotifyOnCreate && manager) {
       await notificationService.sendEmail({
         to: manager.email,
         subject: `Nouvelle demande de congé de ${utilisateur.nom}`,
@@ -204,7 +292,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       });
     }
 
-    if (admin) {
+    if (shouldNotifyOnCreate && admin) {
       await notificationService.creerNotification({
         entreprise_id: utilisateur.entreprise_id,
         utilisateur_id: admin.id,
@@ -215,18 +303,30 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     }
 
     // Notification à l'employé : congé créé
-    await notificationService.sendEmail({
-      to: utilisateur.email,
-      subject: 'Votre demande de congé a été créée',
-      html: `<p>Votre demande de congé du ${date_debut} au ${date_fin} a été créée et est en attente de validation par votre manager.</p>`
-    });
-    await notificationService.creerNotification({
-      entreprise_id: utilisateur.entreprise_id,
-      utilisateur_id: utilisateur.id,
-      type: 'conge_cree',
-      message: `Votre congé du ${date_debut} au ${date_fin} est en attente de validation`,
-      url: `/conges/${conge.id}`
-    });
+    if (shouldNotifyOnCreate) {
+      await notificationService.sendEmail({
+        to: utilisateur.email,
+        subject: 'Votre demande de congé a été créée',
+        html: `<p>Votre demande de congé du ${date_debut} au ${date_fin} a été créée${approvalWorkflow === 'auto' ? ' et validée automatiquement.' : ' et est en attente de validation.'}</p>`
+      });
+      await notificationService.creerNotification({
+        entreprise_id: utilisateur.entreprise_id,
+        utilisateur_id: utilisateur.id,
+        type: 'conge_cree',
+        message: `Votre congé du ${date_debut} au ${date_fin} ${approvalWorkflow === 'auto' ? 'a été validé automatiquement' : 'est en attente de validation'}`,
+        url: `/conges/${conge.id}`
+      });
+    }
+
+    if (leaveRules.overlap_policy === 'warning' && (limitReached || serviceLimitReached)) {
+      await notificationService.creerNotification({
+        entreprise_id: utilisateur.entreprise_id,
+        utilisateur_id: reqUser.id,
+        type: 'conge_conflit_warning',
+        message: `Conflit détecté: limite simultanée dépassée pour le congé ${date_debut} - ${date_fin}`,
+        url: `/conges/${conge.id}`
+      });
+    }
 
     // Audit
     await auditConge.created(conge, reqUser, req || null);
@@ -243,15 +343,20 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
     const conge = await Conge.findByPk(congeId, { transaction: t });
     if (!conge) throw new Error('Congé introuvable');
     const joursConge = await resolveCongeDays(conge);
+    const leaveRules = await getEntrepriseLeaveRules(conge.entreprise_id, t);
 
     const utilisateur = await Utilisateur.findByPk(conge.utilisateur_id, { transaction: t });
 
     if (reqUser.role === 'manager') {
+      if (leaveRules.approval_workflow === 'auto') {
+        throw new Error('Workflow auto: aucune validation manuelle nécessaire');
+      }
+
       if (conge.statut !== 'en_attente_manager') {
         throw new Error('Impossible de valider ce congé à ce stade');
       }
 
-      conge.statut = 'valide_manager';
+      conge.statut = leaveRules.approval_workflow === 'manager' ? 'valide_final' : 'valide_manager';
       conge.commentaire_manager = commentaire;
       await conge.save({ transaction: t });
 
@@ -274,9 +379,53 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         });
       }
 
+      if (leaveRules.approval_workflow === 'manager') {
+        const compteur = await CompteurConges.findOne({
+          where: {
+            utilisateur_id: conge.utilisateur_id,
+            conge_type_id: conge.conge_type_id,
+            annee: dayjs(conge.date_debut).year()
+          },
+          transaction: t,
+          lock: t.LOCK.UPDATE
+        });
+        if (!compteur) throw new Error('Compteur de congés introuvable pour validation');
+
+        compteur.jours_pris = safeNumber(compteur.jours_pris) + safeNumber(joursConge);
+        compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
+        await compteur.save({ transaction: t });
+
+        if (leaveRules.notification_settings.on_validate) {
+          await notificationService.sendEmail({
+            to: utilisateur.email,
+            subject: 'Votre demande de congé a été approuvée',
+            html: `<p>Votre demande de congé du ${conge.date_debut} au ${conge.date_fin} a été approuvée.</p>`
+          });
+          await notificationService.creerNotification({
+            entreprise_id: conge.entreprise_id,
+            utilisateur_id: utilisateur.id,
+            type: 'conge_valide_final',
+            message: `Votre congé du ${conge.date_debut} au ${conge.date_fin} a été approuvé`,
+            url: `/conges/${conge.id}`
+          });
+        }
+      }
+
       // Audit
       await auditConge.approved(conge, reqUser, req);
     } else if (reqUser.role === 'admin_entreprise' || reqUser.role === 'super_admin') {
+      if (leaveRules.approval_workflow === 'auto') {
+        throw new Error('Workflow auto: aucune validation manuelle nécessaire');
+      }
+
+      if (leaveRules.approval_workflow === 'manager') {
+        throw new Error('Workflow manager: validation finale par manager uniquement');
+      }
+
+      if (leaveRules.approval_workflow === 'manager_admin' && conge.statut !== 'valide_manager') {
+        throw new Error('Workflow manager_admin: validation manager requise avant validation admin');
+      }
+
       if (!['en_attente_manager', 'valide_manager'].includes(conge.statut)) {
         throw new Error('Impossible de valider ce congé à ce stade');
       }
@@ -302,18 +451,20 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
       await compteur.save({ transaction: t });
 
       // Notification à l'employé
-      await notificationService.sendEmail({
-        to: utilisateur.email,
-        subject: 'Votre demande de congé a été approuvée',
-        html: `<p>Votre demande de congé du ${conge.date_debut} au ${conge.date_fin} a été approuvée.</p>`
-      });
-      await notificationService.creerNotification({
-        entreprise_id: conge.entreprise_id,
-        utilisateur_id: utilisateur.id,
-        type: 'conge_valide_final',
-        message: `Votre congé du ${conge.date_debut} au ${conge.date_fin} a été approuvé`,
-        url: `/conges/${conge.id}`
-      });
+      if (leaveRules.notification_settings.on_validate) {
+        await notificationService.sendEmail({
+          to: utilisateur.email,
+          subject: 'Votre demande de congé a été approuvée',
+          html: `<p>Votre demande de congé du ${conge.date_debut} au ${conge.date_fin} a été approuvée.</p>`
+        });
+        await notificationService.creerNotification({
+          entreprise_id: conge.entreprise_id,
+          utilisateur_id: utilisateur.id,
+          type: 'conge_valide_final',
+          message: `Votre congé du ${conge.date_debut} au ${conge.date_fin} a été approuvé`,
+          url: `/conges/${conge.id}`
+        });
+      }
 
       // Audit
       await auditConge.approved(conge, reqUser, req);
@@ -336,6 +487,7 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
     });
     if (!conge) throw new Error('Congé introuvable');
     const joursConge = await resolveCongeDays(conge);
+    const leaveRules = await getEntrepriseLeaveRules(conge.entreprise_id, t);
 
     const utilisateur = await Utilisateur.findByPk(conge.utilisateur_id, { transaction: t });
     const ancienStatut = conge.statut;
@@ -375,18 +527,20 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
     }
 
     // Notification à l'employé
-    await notificationService.sendEmail({
-      to: utilisateur.email,
-      subject: 'Votre demande de congé a été refusée',
-      html: `<p>Votre demande de congé du ${conge.date_debut} au ${conge.date_fin} a été refusée.</p>`
-    });
-    await notificationService.creerNotification({
-      entreprise_id: conge.entreprise_id,
-      utilisateur_id: utilisateur.id,
-      type: 'conge_refuse',
-      message: `Votre congé du ${conge.date_debut} au ${conge.date_fin} a été refusé`,
-      url: `/conges/${conge.id}`
-    });
+    if (leaveRules.notification_settings.on_reject) {
+      await notificationService.sendEmail({
+        to: utilisateur.email,
+        subject: 'Votre demande de congé a été refusée',
+        html: `<p>Votre demande de congé du ${conge.date_debut} au ${conge.date_fin} a été refusée.</p>`
+      });
+      await notificationService.creerNotification({
+        entreprise_id: conge.entreprise_id,
+        utilisateur_id: utilisateur.id,
+        type: 'conge_refuse',
+        message: `Votre congé du ${conge.date_debut} au ${conge.date_fin} a été refusé`,
+        url: `/conges/${conge.id}`
+      });
+    }
 
     // Audit
     await auditConge.rejected(conge, reqUser, req);

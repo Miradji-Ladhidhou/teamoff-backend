@@ -9,7 +9,7 @@ const { validatePasswordPolicy } = require('../services/authService');
  * Création utilisateur
  */
 async function createUser(req, res) {
-  const { nom, prenom, email, role, entreprise_id } = req.body;
+  const { nom, prenom, email, role, entreprise_id, service } = req.body;
   const user = req.user;
 
   // Vérifications hiérarchiques
@@ -29,6 +29,7 @@ async function createUser(req, res) {
       prenom,
       email,
       role,
+      service: service || null,
       entreprise_id,
       password_hash: hash,
       statut: 'en_attente',
@@ -115,7 +116,7 @@ async function updateUser(req, res) {
       return res.status(403).json({ message: 'Vous ne pouvez modifier que les utilisateurs de votre entreprise' });
     }
 
-    const { nom, prenom, email, role, statut, password } = req.body;
+    const { nom, prenom, email, role, service, statut, password } = req.body;
 
     if (req.user.role === 'admin_entreprise' && role && !['manager', 'employe'].includes(role)) {
       return res.status(403).json({ message: 'Vous ne pouvez attribuer que manager ou employe' });
@@ -130,7 +131,7 @@ async function updateUser(req, res) {
       await emailService.sendPasswordResetConfirmation(email);
     }
 
-    await utilisateur.update({ nom, prenom, email, role, statut });
+    await utilisateur.update({ nom, prenom, email, role, service, statut });
 
     // === Audit général ===
     await auditUser.updated(utilisateur, req.user, req);

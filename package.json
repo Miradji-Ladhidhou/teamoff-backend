@@ -9,7 +9,9 @@
     "test": "jest",
     "verify:settings": "node scripts/verifySettings.js",
     "verify:conges-core": "node scripts/verifyCongeCoreFlow.js",
-    "verify:conges-approval": "node scripts/verifyCongeApprovalFlow.js"
+    "verify:conges-approval": "node scripts/verifyCongeApprovalFlow.js",
+    "verify:conges-suite": "node scripts/verifyCongesSuite.js",
+    "migrate:add-service-column": "node scripts/addServiceColumn.js"
   },
   "keywords": [],
   "author": "",
