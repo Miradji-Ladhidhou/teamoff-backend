@@ -22,11 +22,31 @@ const DEFAULT_LEAVE_POLICY = {
   },
 };
 
+async function getRuntimeSecuritySettings() {
+  try {
+    const settings = await systemSettingsService.getSettings();
+    return {
+      maxLoginAttempts: Number(settings?.maxLoginAttempts ?? 5),
+      sessionTimeout: Number(settings?.sessionTimeout ?? 60),
+      passwordMinLength: Number(settings?.passwordMinLength ?? 8),
+      requireSpecialChars: Boolean(settings?.requireSpecialChars ?? true),
+    };
+  } catch (error) {
+    console.error('Impossible de charger les paramètres système, fallback par défaut:', error.message);
+    return {
+      maxLoginAttempts: Number(systemSettingsService.DEFAULT_SETTINGS?.maxLoginAttempts ?? 5),
+      sessionTimeout: Number(systemSettingsService.DEFAULT_SETTINGS?.sessionTimeout ?? 60),
+      passwordMinLength: Number(systemSettingsService.DEFAULT_SETTINGS?.passwordMinLength ?? 8),
+      requireSpecialChars: Boolean(systemSettingsService.DEFAULT_SETTINGS?.requireSpecialChars ?? true),
+    };
+  }
+}
+
 // ---------------------------
 // Validation de la politique de mot de passe
 // ---------------------------
 async function validatePasswordPolicy(password) {
-  const { passwordMinLength, requireSpecialChars } = await systemSettingsService.getSettings();
+  const { passwordMinLength, requireSpecialChars } = await getRuntimeSecuritySettings();
   if (!password || password.length < passwordMinLength) {
     throw new Error(`Le mot de passe doit contenir au moins ${passwordMinLength} caractère(s).`);
   }
@@ -39,7 +59,7 @@ async function validatePasswordPolicy(password) {
 // Login utilisateur
 // ---------------------------
 async function loginUtilisateur({ email, password, entreprise_id }) {
-  const { maxLoginAttempts, sessionTimeout } = await systemSettingsService.getSettings();
+  const { maxLoginAttempts, sessionTimeout } = await getRuntimeSecuritySettings();
 
   const whereClause = entreprise_id ? { email, entreprise_id } : { email };
   const user = await Utilisateur.findOne({ where: whereClause });

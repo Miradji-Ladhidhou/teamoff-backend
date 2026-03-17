@@ -241,13 +241,10 @@ async function getEntrepriseServices(req, res) {
       attributes: ['service'],
     });
 
-    const policyServiceNames = Object.keys(policy.service_policies || {});
-    const byServiceNames = Object.keys(policy.max_employees_on_leave?.by_service || {});
-    const userServiceNames = users
-      .map((u) => normalizeServiceName(u.service))
-      .filter(Boolean);
-    const serviceNames = [...new Set([...policyServiceNames, ...byServiceNames, ...userServiceNames])]
-      .sort((a, b) => a.localeCompare(b, 'fr'));
+    // Services doivent exister dans service_policies (source autoritaire)
+    const policyServiceNames = Object.keys(policy.service_policies || {}).sort((a, b) =>
+      a.localeCompare(b, 'fr')
+    );
 
     const employeesByService = users.reduce((acc, u) => {
       const service = normalizeServiceName(u.service);
@@ -256,7 +253,7 @@ async function getEntrepriseServices(req, res) {
       return acc;
     }, {});
 
-    const services = serviceNames.map((name) => ({
+    const services = policyServiceNames.map((name) => ({
       name,
       employeesCount: employeesByService[name] || 0,
       policy: normalizeServicePolicy({

@@ -247,77 +247,11 @@ async function deleteUser(req, res) {
   }
 }
 
-
-/**
- * Mise à jour du propre profil utilisateur
- */
-async function updateOwnProfile(req, res) {
-  try {
-    console.log('1. Recherche utilisateur avec ID:', req.user?.id);
-    const utilisateur = await Utilisateur.findByPk(req.user.id);
-    if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
-    console.log('2. Utilisateur trouvé:', utilisateur.email);
-
-    const { nom, prenom, email, currentPassword, newPassword } = req.body;
-    console.log('3. Données reçues - nom:', nom, 'prenom:', prenom, 'email:', email, 'newPassword:', newPassword ? 'oui' : 'non');
-
-    if (newPassword) {
-      console.log('4. Validation du mot de passe en cours...');
-      if (!currentPassword) {
-        return res.status(400).json({ message: 'Le mot de passe actuel est requis pour changer le mot de passe' });
-      }
-
-      const isPasswordValid = await bcrypt.compare(currentPassword, utilisateur.password_hash);
-      console.log('5. Mot de passe valide:', isPasswordValid);
-      if (!isPasswordValid) {
-        return res.status(400).json({ message: 'Le mot de passe actuel est incorrect' });
-      }
-
-      console.log('6. Validation de la politique de mot de passe...');
-      await validatePasswordPolicy(newPassword);
-      console.log('7. Politique validée, hashage du mot de passe...');
-      utilisateur.password_hash = await bcrypt.hash(newPassword, 10);
-      console.log('8. Mot de passe hashé');
-
-      const emailToUse = email && email !== utilisateur.email ? email : utilisateur.email;
-      console.log('9. Envoi de notification par email à:', emailToUse);
-      await emailService.sendPasswordResetConfirmation(emailToUse);
-      console.log('10. Email envoyé');
-    }
-
-    if (nom !== undefined) utilisateur.nom = nom;
-    if (prenom !== undefined) utilisateur.prenom = prenom;
-    if (email !== undefined) utilisateur.email = email;
-
-    console.log('11. Sauvegarde du profil...');
-    await utilisateur.save();
-    console.log('12. Profil sauvegardé');
-
-    console.log('13. Audit logging...');
-    await auditUser.updated(utilisateur, req.user, req);
-    console.log('14. Audit complété');
-
-    res.json({
-      id: utilisateur.id,
-      nom: utilisateur.nom,
-      prenom: utilisateur.prenom,
-      email: utilisateur.email,
-      role: utilisateur.role,
-      message: 'Profil mis à jour avec succès'
-    });
-  } catch (err) {
-    console.error('ERREUR mise à jour profil:', err);
-    console.error('Stack:', err.stack);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-}
-
 module.exports = {
   createUser,
   getAllUsers,
   getUserById,
   updateUser,
   deleteUser,
-  changeUserRole,
-  updateOwnProfile
+  changeUserRole
 };

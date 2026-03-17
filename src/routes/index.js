@@ -11,6 +11,7 @@ const congeTypesRoutes = require('./congeTypes');
 const settingsRoutes = require('./settings');
 
 const authJwt = require('../middlewares/authJwt');
+const usersController = require('../controllers/usersController');
 const authorizeRole = require('../middlewares/authorizeRole');
 const { generalLimiter } = require('../middlewares/rateLimiter');
 const { metricsMiddleware, getMetrics } = require('../middlewares/metrics');
@@ -65,6 +66,9 @@ router.use('/conges', authJwt, congesRoutes);
 router.get('/me', authJwt, (req, res) => {
   res.json({ message: 'Accès autorisé', user: req.user });
 });
+
+// Mise à jour du propre profil (tous les utilisateurs authentifiés)
+router.put('/me', authJwt, usersController.updateOwnProfile);
 
 // ------------------------------
 // Métriques (super_admin uniquement)

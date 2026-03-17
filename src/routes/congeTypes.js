@@ -6,6 +6,15 @@ const authorizeRole = require('../middlewares/authorizeRole');
 
 const { CongeType } = require('../models');
 
+function getTargetEntrepriseId(req, { allowBody = false } = {}) {
+  if (req.user?.role === 'super_admin') {
+    if (req.query?.entreprise_id) return req.query.entreprise_id;
+    if (allowBody && req.body?.entreprise_id) return req.body.entreprise_id;
+  }
+
+  return req.user?.entreprise_id || null;
+}
+
 // ----------------------------
 // Créer un type de congé
 // ----------------------------
@@ -16,10 +25,14 @@ router.post(
   authorizeRole(['super_admin','admin_entreprise']),
   async (req,res,next)=>{
     try{
+      const entrepriseId = getTargetEntrepriseId(req, { allowBody: true });
+      if (!entrepriseId) {
+        return res.status(400).json({ message: 'entreprise_id est requis' });
+      }
 
       const type = await CongeType.create({
 
-        entreprise_id: req.user.entreprise_id,
+        entreprise_id: entrepriseId,
 
         code: req.body.code,
         libelle: req.body.libelle,
@@ -44,10 +57,14 @@ router.get(
   authJwt,
   async(req,res,next)=>{
     try{
+      const entrepriseId = getTargetEntrepriseId(req);
+      if (!entrepriseId) {
+        return res.status(400).json({ message: 'entreprise_id est requis' });
+      }
 
       const types = await CongeType.findAll({
         where:{
-          entreprise_id:req.user.entreprise_id
+          entreprise_id:entrepriseId
         }
       });
 
@@ -67,11 +84,15 @@ router.get(
   authJwt,
   async(req,res,next)=>{
     try{
+      const entrepriseId = getTargetEntrepriseId(req);
+      if (!entrepriseId) {
+        return res.status(400).json({ message: 'entreprise_id est requis' });
+      }
 
       const type = await CongeType.findOne({
         where:{
           id:req.params.id,
-          entreprise_id:req.user.entreprise_id
+          entreprise_id:entrepriseId
         }
       });
 
@@ -95,11 +116,15 @@ router.put(
   authorizeRole(['super_admin','admin_entreprise']),
   async(req,res,next)=>{
     try{
+      const entrepriseId = getTargetEntrepriseId(req, { allowBody: true });
+      if (!entrepriseId) {
+        return res.status(400).json({ message: 'entreprise_id est requis' });
+      }
 
       const type = await CongeType.findOne({
         where:{
           id:req.params.id,
-          entreprise_id:req.user.entreprise_id
+          entreprise_id:entrepriseId
         }
       });
 
@@ -121,11 +146,15 @@ router.delete(
   authorizeRole(['super_admin','admin_entreprise']),
   async(req,res,next)=>{
     try{
+      const entrepriseId = getTargetEntrepriseId(req);
+      if (!entrepriseId) {
+        return res.status(400).json({ message: 'entreprise_id est requis' });
+      }
 
       const type = await CongeType.findOne({
         where:{
           id:req.params.id,
-          entreprise_id:req.user.entreprise_id
+          entreprise_id:entrepriseId
         }
       });
 

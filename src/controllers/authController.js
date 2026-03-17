@@ -59,14 +59,25 @@ async function login(req, res) {
 
     res.json(data);
   } catch (err) {
+    const message = err?.message || '';
+
     // === Audit échec login ===
-    if (err.message.includes('Utilisateur non trouvé') || err.message.includes('Mot de passe incorrect')) {
+    if (
+      message.includes('Utilisateur non trouvé')
+      || message.includes('Mot de passe incorrect')
+      || message.includes('tentative(s)')
+    ) {
       await auditAuth.loginFailed(req.body.email, req);
-      return res.status(401).json({ message: err.message });
+      return res.status(401).json({ message });
     }
 
-    if (err.message.includes('Entreprise inactive') || err.message.includes('attente') || err.message.includes('désactivé')) {
-      return res.status(403).json({ message: err.message });
+    if (message.includes('temporairement bloqué')) {
+      await auditAuth.loginFailed(req.body.email, req);
+      return res.status(423).json({ message });
+    }
+
+    if (message.includes('Entreprise inactive') || message.includes('attente') || message.includes('désactivé')) {
+      return res.status(403).json({ message });
     }
 
     console.error('Login error:', err);
