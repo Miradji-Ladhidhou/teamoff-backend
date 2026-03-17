@@ -287,7 +287,7 @@ class ExportService {
   static async generateEntreprisesCSV() {
     try {
       const entreprises = await Entreprise.findAll({
-        attributes: ['id', 'nom', 'statut', 'logo', 'created_at', 'updated_at'],
+        attributes: ['id', 'nom', 'statut', 'created_at', 'updated_at'],
         order: [['nom', 'ASC']]
       });
 
@@ -295,12 +295,11 @@ class ExportService {
         'ID': entreprise.id,
         'Nom': entreprise.nom,
         'Statut': entreprise.statut,
-        'Logo': entreprise.logo || '',
         'Date de creation': entreprise.created_at,
         'Derniere modification': entreprise.updated_at
       }));
 
-      const fields = ['ID', 'Nom', 'Statut', 'Logo', 'Date de creation', 'Derniere modification'];
+      const fields = ['ID', 'Nom', 'Statut', 'Date de creation', 'Derniere modification'];
 
       const json2csvParser = new Parser({ fields });
       return json2csvParser.parse(data);

@@ -1,47 +1,72 @@
-const { sequelize } = require('../models');
+const { Conge, CongeType, Utilisateur } = require('../models');
+const { Op } = require('sequelize');
+const dayjs = require('dayjs');
 
 /**
- * Lecture du calendrier des congés via la vue SQL
+ * Retourne les congés visibles selon le rôle de l'utilisateur.
+ * Compatible avec :
+ *  - GET /calendrier-conges            → tous les congés de l'entreprise
+ *  - GET /calendrier-conges/:year/:month → congés qui chevauchent le mois donné
+ *
  * Query params optionnels :
- *  - entrepriseId : UUID
- *  - statut : 'en_attente_manager' | 'valide_manager' | 'valide_final' | 'refuse_final'
- *  - utilisateurId : UUID
+ *  - entrepriseId : UUID  (super_admin seulement)
+ *  - statut       : ex. 'valide_final'
+ *  - utilisateurId: UUID
  */
 async function getCalendrier(req, res) {
   try {
-    let query = `SELECT * FROM vue_calendrier_conges WHERE 1=1`;
-    const replacements = {};
+    const { year, month } = req.params;
+    const { entrepriseId, statut, utilisateurId } = req.query;
 
-    // Filtrage par entreprise selon le rôle
+    // ─── filtrage par entreprise ─────────────────────────────────────────────
+    let targetEntrepriseId;
     if (req.user.role === 'super_admin') {
-      if (req.query.entrepriseId) {
-        query += ` AND utilisateur_id IN (
-          SELECT id FROM utilisateur WHERE entreprise_id = :entrepriseId
-        )`;
-        replacements.entrepriseId = req.query.entrepriseId;
-      }
+      targetEntrepriseId = entrepriseId || null; // null = toutes les entreprises si SA sans filtre
     } else {
-      // Pour les autres rôles, filtrer par leur entreprise
-      query += ` AND utilisateur_id IN (
-        SELECT id FROM utilisateur WHERE entreprise_id = :entrepriseId
-      )`;
-      replacements.entrepriseId = req.user.entreprise_id;
+      targetEntrepriseId = req.user.entreprise_id;
     }
 
-    if (req.query.statut) {
-      query += ` AND statut = :statut`;
-      replacements.statut = req.query.statut;
+    // ─── construction du where ───────────────────────────────────────────────
+    const where = {};
+
+    if (targetEntrepriseId) {
+      where.entreprise_id = targetEntrepriseId;
     }
 
-    if (req.query.utilisateurId) {
-      query += ` AND utilisateur_id = :utilisateurId`;
-      replacements.utilisateurId = req.query.utilisateurId;
+    if (statut && statut !== 'all') {
+      where.statut = statut;
     }
 
-    query += ` ORDER BY date_debut`;
+    if (utilisateurId && utilisateurId !== 'all') {
+      where.utilisateur_id = utilisateurId;
+    }
 
-    const [results] = await sequelize.query(query, { replacements });
-    res.json(results);
+    // filtre sur le mois si year/month sont fournis
+    if (year && month) {
+      const firstDay = dayjs(`${year}-${String(month).padStart(2, '0')}-01`).startOf('month').toDate();
+      const lastDay  = dayjs(`${year}-${String(month).padStart(2, '0')}-01`).endOf('month').toDate();
+      where.date_debut = { [Op.lte]: lastDay };
+      where.date_fin   = { [Op.gte]: firstDay };
+    }
+
+    const conges = await Conge.findAll({
+      where,
+      include: [
+        {
+          model: CongeType,
+          as: 'conge_type',
+          attributes: ['id', 'code', 'libelle'],
+        },
+        {
+          model: Utilisateur,
+          as: 'utilisateur',
+          attributes: ['id', 'nom', 'prenom', 'service', 'email'],
+        },
+      ],
+      order: [['date_debut', 'ASC']],
+    });
+
+    res.json(conges);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: err.message });

@@ -3,7 +3,7 @@ const rateLimit = require('express-rate-limit');
 // Rate limiter général
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'development' ? 1000 : 100, // allow more in dev
+  max: process.env.NODE_ENV === 'development' ? 10000 : 100, // allow more in dev
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => req.path.startsWith('/socket.io'), // avoid blocking socket handshake

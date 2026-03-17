@@ -15,6 +15,7 @@ const {
 	exporterModeleJoursFeriesCsv,
 	importerModeleJoursFeriesCsv,
 	appliquerModeleJoursFeries,
+	getJoursFeriesByMonth,
 } = require('../controllers/joursFeriesController');
 
 // Routes pour les jours fériés
@@ -34,6 +35,10 @@ router.post('/templates', authJwt, authorizeRole(['admin_entreprise', 'super_adm
 router.post('/templates/import/csv', authJwt, authorizeRole(['admin_entreprise', 'super_admin']), importerModeleJoursFeriesCsv);
 router.get('/templates/:id/export/csv', authJwt, authorizeRole(['admin_entreprise', 'super_admin']), exporterModeleJoursFeriesCsv);
 router.post('/templates/:id/apply', authJwt, authorizeRole(['admin_entreprise', 'super_admin']), appliquerModeleJoursFeries);
+
+// récupérer un jour férié par ID
+// jours fériés par mois — accessible à tous les rôles (page calendrier)
+router.get('/:year/:month', authJwt, getJoursFeriesByMonth);
 
 // récupérer un jour férié par ID
 router.get('/:id', authJwt, authorizeRole(['admin_entreprise', 'super_admin']), getJourFerie);

@@ -5,12 +5,32 @@ const emailService = require('../services/emailService');
 const { auditUser } = require('../services/auditHelper');
 const { validatePasswordPolicy } = require('../services/authService');
 
+function normalizeServiceName(value) {
+  return String(value || '').trim();
+}
+
+async function serviceExistsInEntreprise(entrepriseId, serviceName) {
+  const normalizedService = normalizeServiceName(serviceName);
+  if (!normalizedService || !entrepriseId) return false;
+
+  const entreprise = await Entreprise.findByPk(entrepriseId, { attributes: ['id', 'politique_conges'] });
+  if (!entreprise) return false;
+
+  const policies = entreprise.politique_conges?.service_policies || {};
+  return Object.keys(policies).some((name) => name.toLowerCase() === normalizedService.toLowerCase());
+}
+
 /**
  * Création utilisateur
  */
 async function createUser(req, res) {
   const { nom, prenom, email, role, entreprise_id, service } = req.body;
   const user = req.user;
+  const normalizedService = normalizeServiceName(service);
+
+  if (role === 'employe' && !normalizedService) {
+    return res.status(400).json({ message: 'Le service est obligatoire pour un employé' });
+  }
 
   // Vérifications hiérarchiques
   if (user.role === 'admin_entreprise' && !['manager', 'employe'].includes(role)) {
@@ -21,6 +41,13 @@ async function createUser(req, res) {
   }
 
   try {
+    if (normalizedService) {
+      const serviceExists = await serviceExistsInEntreprise(entreprise_id, normalizedService);
+      if (!serviceExists) {
+        return res.status(400).json({ message: 'Service invalide. Sélectionnez un service existant.' });
+      }
+    }
+
     const tempPassword = crypto.randomBytes(6).toString('hex');
     const hash = await bcrypt.hash(tempPassword, 10);
 
@@ -29,7 +56,7 @@ async function createUser(req, res) {
       prenom,
       email,
       role,
-      service: service || null,
+      service: normalizedService || null,
       entreprise_id,
       password_hash: hash,
       statut: 'en_attente',
@@ -118,6 +145,21 @@ async function updateUser(req, res) {
 
     const { nom, prenom, email, role, service, statut, password } = req.body;
 
+    const nextRole = role || utilisateur.role;
+    const nextService = typeof service !== 'undefined' ? service : utilisateur.service;
+    const normalizedNextService = normalizeServiceName(nextService);
+
+    if (nextRole === 'employe' && !normalizedNextService) {
+      return res.status(400).json({ message: 'Le service est obligatoire pour un employé' });
+    }
+
+    if (typeof service !== 'undefined' && normalizedNextService) {
+      const serviceExists = await serviceExistsInEntreprise(utilisateur.entreprise_id, normalizedNextService);
+      if (!serviceExists) {
+        return res.status(400).json({ message: 'Service invalide. Sélectionnez un service existant.' });
+      }
+    }
+
     if (req.user.role === 'admin_entreprise' && role && !['manager', 'employe'].includes(role)) {
       return res.status(403).json({ message: 'Vous ne pouvez attribuer que manager ou employe' });
     }
@@ -131,7 +173,7 @@ async function updateUser(req, res) {
       await emailService.sendPasswordResetConfirmation(email);
     }
 
-    await utilisateur.update({ nom, prenom, email, role, service, statut });
+    await utilisateur.update({ nom, prenom, email, role, service: normalizedNextService || null, statut });
 
     // === Audit général ===
     await auditUser.updated(utilisateur, req.user, req);

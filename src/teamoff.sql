@@ -51,7 +51,6 @@ $$ LANGUAGE plpgsql;
 CREATE TABLE IF NOT EXISTS entreprise (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   nom VARCHAR(255) NOT NULL,
-  logo VARCHAR(255),
   politique_conges JSONB NOT NULL DEFAULT '{}',
   parametres JSONB NOT NULL DEFAULT '{}',
   statut entreprise_statut NOT NULL DEFAULT 'active',

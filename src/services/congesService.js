@@ -2,7 +2,7 @@ const { Conge, CompteurConges, CongeType, Utilisateur, Entreprise, sequelize } =
 const notificationService = require('./notificationService');
 const { auditConge } = require('./auditHelper');
 const joursFeriesService = require('./joursFeriesService');
-const { getLeaveRules } = require('./politiqueConges');
+const { getLeaveRules, getEffectiveLeaveRules } = require('./politiqueConges');
 const { Op } = require('sequelize');
 const dayjs = require('dayjs');
 const isSameOrBefore = require('dayjs/plugin/isSameOrBefore');
@@ -19,16 +19,40 @@ function buildDateKey(dateValue) {
   return dayjs(dateValue).format('YYYY-MM-DD');
 }
 
-function calculateBusinessDays(conge, joursFeriesSet) {
+function shouldCountLeaveDay(current, joursFeriesSet, blockedDays) {
+  const day = current.day();
+  const dateKey = current.format('YYYY-MM-DD');
+  const weekdaysSet = new Set(Array.isArray(blockedDays?.weekdays) ? blockedDays.weekdays : []);
+  const excludeWeekends = blockedDays?.exclude_weekends !== false;
+  const excludeHolidays = blockedDays?.exclude_holidays !== false;
+  const specificDatesSet = new Set(Array.isArray(blockedDays?.specific_dates) ? blockedDays.specific_dates : []);
+
+  if (excludeWeekends && (day === 0 || day === 6)) {
+    return false;
+  }
+
+  if (weekdaysSet.has(day)) {
+    return false;
+  }
+
+  if (specificDatesSet.has(dateKey)) {
+    return false;
+  }
+
+  if (excludeHolidays && joursFeriesSet.has(dateKey)) {
+    return false;
+  }
+
+  return true;
+}
+
+function calculateBusinessDays(conge, joursFeriesSet, blockedDays) {
   let total = 0;
   let current = dayjs(conge.date_debut);
   const end = dayjs(conge.date_fin);
 
   while (current.isSameOrBefore(end, 'day')) {
-    const day = current.day();
-    const dateKey = current.format('YYYY-MM-DD');
-
-    if (day !== 0 && day !== 6 && !joursFeriesSet.has(dateKey)) {
+    if (shouldCountLeaveDay(current, joursFeriesSet, blockedDays)) {
       total += 1;
     }
 
@@ -41,6 +65,64 @@ function calculateBusinessDays(conge, joursFeriesSet) {
   }
 
   return total;
+}
+
+function calculateLeaveBreakdown(conge, joursFeriesSet, blockedDays) {
+  let joursDansPeriode = 0;
+  let joursBloques = 0;
+  let joursFeriesExclus = 0;
+  let joursPrisCalcules = 0;
+  let current = dayjs(conge.date_debut);
+  const end = dayjs(conge.date_fin);
+
+  const weekdaysSet = new Set(Array.isArray(blockedDays?.weekdays) ? blockedDays.weekdays : []);
+  const excludeWeekends = blockedDays?.exclude_weekends !== false;
+  const excludeHolidays = blockedDays?.exclude_holidays !== false;
+  const specificDatesSet = new Set(Array.isArray(blockedDays?.specific_dates) ? blockedDays.specific_dates : []);
+
+  while (current.isSameOrBefore(end, 'day')) {
+    joursDansPeriode += 1;
+    const day = current.day();
+    const dateKey = current.format('YYYY-MM-DD');
+
+    const isBlocked =
+      (excludeWeekends && (day === 0 || day === 6))
+      || weekdaysSet.has(day)
+      || specificDatesSet.has(dateKey);
+
+    if (isBlocked) {
+      joursBloques += 1;
+    } else if (excludeHolidays && joursFeriesSet.has(dateKey)) {
+      joursFeriesExclus += 1;
+    } else {
+      joursPrisCalcules += 1;
+    }
+
+    current = current.add(1, 'day');
+  }
+
+  let joursDemiJourneesDeduites = 0;
+  if (joursPrisCalcules > 0) {
+    if (conge.debut_demi_journee === 'apres_midi') {
+      joursPrisCalcules -= 0.5;
+      joursDemiJourneesDeduites += 0.5;
+    }
+    if (conge.fin_demi_journee === 'matin') {
+      joursPrisCalcules -= 0.5;
+      joursDemiJourneesDeduites += 0.5;
+    }
+  }
+
+  const joursDeduitsCalcul = (joursBloques + joursFeriesExclus + joursDemiJourneesDeduites);
+
+  return {
+    jours_dans_periode: joursDansPeriode,
+    jours_bloques: joursBloques,
+    jours_feries_exclus: joursFeriesExclus,
+    jours_demi_journees_deduites: joursDemiJourneesDeduites,
+    jours_deduits_calcul: joursDeduitsCalcul,
+    jours_pris_calcules: joursPrisCalcules,
+  };
 }
 
 async function resolveCongeDays(conge) {
@@ -116,16 +198,15 @@ async function calcJoursConges(entrepriseId, dateDebut, dateFin, debut_demi, fin
   let total = 0;
   let current = dayjs(dateDebut);
   const end = dayjs(dateFin);
+  const leaveRules = await getEntrepriseLeaveRules(entrepriseId);
+  const blockedDays = leaveRules.blocked_days || {};
 
   // Récupérer les jours fériés de l'entreprise
   const joursFeries = await joursFeriesService.getJoursFeriesEntreprise(entrepriseId);
+  const joursFeriesSet = new Set((joursFeries || []).map((jf) => buildDateKey(jf.date)));
 
   while (current.isSameOrBefore(end, 'day')) {
-    const day = current.day();
-    const dateStr = current.format('YYYY-MM-DD');
-
-    // Vérifier si c'est un jour ouvré (lundi à vendredi) et pas férié
-    if (day !== 0 && day !== 6 && !joursFeriesService.estJourFerie(dateStr, joursFeries)) {
+    if (shouldCountLeaveDay(current, joursFeriesSet, blockedDays)) {
       total++;
     }
     current = current.add(1,'day');
@@ -178,7 +259,8 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       throw new Error('Ce type de congé n\'autorise pas les demi-journées');
     }
 
-    const leaveRules = await getEntrepriseLeaveRules(utilisateur.entreprise_id, t);
+    const baseLeaveRules = await getEntrepriseLeaveRules(utilisateur.entreprise_id, t);
+    const leaveRules = getEffectiveLeaveRules(baseLeaveRules, utilisateur.service || null);
 
     const daysUntilStart = dayjs(date_debut).startOf('day').diff(dayjs().startOf('day'), 'day');
     if (daysUntilStart < leaveRules.minimum_notice_days) {
@@ -343,20 +425,27 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
     const conge = await Conge.findByPk(congeId, { transaction: t });
     if (!conge) throw new Error('Congé introuvable');
     const joursConge = await resolveCongeDays(conge);
-    const leaveRules = await getEntrepriseLeaveRules(conge.entreprise_id, t);
+    const baseLeaveRules = await getEntrepriseLeaveRules(conge.entreprise_id, t);
 
     const utilisateur = await Utilisateur.findByPk(conge.utilisateur_id, { transaction: t });
+    const leaveRules = getEffectiveLeaveRules(baseLeaveRules, utilisateur?.service || null);
 
     if (reqUser.role === 'manager') {
       if (leaveRules.approval_workflow === 'auto') {
         throw new Error('Workflow auto: aucune validation manuelle nécessaire');
       }
 
+      if (leaveRules.approval_workflow === 'admin_only') {
+        throw new Error('Workflow admin_only: validation par administrateur uniquement');
+      }
+
       if (conge.statut !== 'en_attente_manager') {
         throw new Error('Impossible de valider ce congé à ce stade');
       }
 
-      conge.statut = leaveRules.approval_workflow === 'manager' ? 'valide_final' : 'valide_manager';
+      conge.statut = ['manager', 'manager_only'].includes(leaveRules.approval_workflow)
+        ? 'valide_final'
+        : 'valide_manager';
       conge.commentaire_manager = commentaire;
       await conge.save({ transaction: t });
 
@@ -379,7 +468,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         });
       }
 
-      if (leaveRules.approval_workflow === 'manager') {
+      if (['manager', 'manager_only'].includes(leaveRules.approval_workflow)) {
         const compteur = await CompteurConges.findOne({
           where: {
             utilisateur_id: conge.utilisateur_id,
@@ -418,7 +507,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         throw new Error('Workflow auto: aucune validation manuelle nécessaire');
       }
 
-      if (leaveRules.approval_workflow === 'manager') {
+      if (['manager', 'manager_only'].includes(leaveRules.approval_workflow)) {
         throw new Error('Workflow manager: validation finale par manager uniquement');
       }
 
@@ -487,9 +576,10 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
     });
     if (!conge) throw new Error('Congé introuvable');
     const joursConge = await resolveCongeDays(conge);
-    const leaveRules = await getEntrepriseLeaveRules(conge.entreprise_id, t);
+    const baseLeaveRules = await getEntrepriseLeaveRules(conge.entreprise_id, t);
 
     const utilisateur = await Utilisateur.findByPk(conge.utilisateur_id, { transaction: t });
+    const leaveRules = getEffectiveLeaveRules(baseLeaveRules, utilisateur?.service || null);
     const ancienStatut = conge.statut;
 
     if (reqUser.role === 'manager') {
@@ -566,7 +656,7 @@ async function getConges(user) {
       {
         model: Utilisateur,
         as: 'utilisateur',
-        attributes: ['id', 'prenom', 'nom', 'email']
+        attributes: ['id', 'prenom', 'nom', 'email', 'service']
       },
       {
         model: CongeType,
@@ -588,14 +678,21 @@ async function getConges(user) {
 
   const entrepriseIds = [...new Set(conges.map((c) => c.entreprise_id).filter(Boolean))];
   const joursFeriesByEntreprise = new Map();
+  const blockedDaysByEntreprise = new Map();
+  const leaveRulesByEntreprise = new Map();
 
   await Promise.all(
     entrepriseIds.map(async (entrepriseId) => {
       try {
+        const leaveRules = await getEntrepriseLeaveRules(entrepriseId);
+        leaveRulesByEntreprise.set(entrepriseId, leaveRules);
+        blockedDaysByEntreprise.set(entrepriseId, leaveRules.blocked_days || {});
         const joursFeries = await joursFeriesService.getJoursFeriesEntreprise(entrepriseId);
         const joursFeriesSet = new Set((joursFeries || []).map((jf) => buildDateKey(jf.date)));
         joursFeriesByEntreprise.set(entrepriseId, joursFeriesSet);
       } catch (_err) {
+        leaveRulesByEntreprise.set(entrepriseId, {});
+        blockedDaysByEntreprise.set(entrepriseId, {});
         joursFeriesByEntreprise.set(entrepriseId, new Set());
       }
     })
@@ -640,10 +737,13 @@ async function getConges(user) {
     const annee = dayjs(conge.date_debut).year();
     const compteurKey = `${conge.utilisateur_id}::${conge.conge_type_id}::${annee}`;
     const joursFeriesSet = joursFeriesByEntreprise.get(conge.entreprise_id) || new Set();
+    const blockedDays = blockedDaysByEntreprise.get(conge.entreprise_id) || {};
+    const entrepriseLeaveRules = leaveRulesByEntreprise.get(conge.entreprise_id) || {};
+    const effectiveLeaveRules = getEffectiveLeaveRules(entrepriseLeaveRules, plainConge.utilisateur?.service || null);
     const joursPris = Number.parseFloat(plainConge.jours_calcules);
     const joursPrisValue = Number.isFinite(joursPris)
       ? joursPris
-      : calculateBusinessDays(conge, joursFeriesSet);
+      : calculateBusinessDays(conge, joursFeriesSet, blockedDays);
 
     return {
       ...plainConge,
@@ -652,6 +752,7 @@ async function getConges(user) {
         : null,
       entreprise_nom: plainConge.entreprise?.nom || null,
       conge_type_libelle: plainConge.conge_type?.libelle || null,
+      effective_approval_workflow: effectiveLeaveRules.approval_workflow || null,
       jours_pris: Number.isFinite(joursPrisValue) ? joursPrisValue : null,
       jours_restants: soldeByKey.has(compteurKey) ? soldeByKey.get(compteurKey) : null,
       date_demande: plainConge.created_at || plainConge.createdAt || null
@@ -665,7 +766,7 @@ async function getCongeById(id, user) {
       {
         model: Utilisateur,
         as: 'utilisateur',
-        attributes: ['id', 'prenom', 'nom', 'email']
+        attributes: ['id', 'prenom', 'nom', 'email', 'service']
       },
       {
         model: CongeType,
@@ -694,18 +795,26 @@ async function getCongeById(id, user) {
   });
 
   let joursFeriesSet = new Set();
+  let blockedDays = {};
+  let effectiveApprovalWorkflow = null;
   try {
+    const leaveRules = await getEntrepriseLeaveRules(conge.entreprise_id);
+    blockedDays = leaveRules.blocked_days || {};
+    effectiveApprovalWorkflow = getEffectiveLeaveRules(leaveRules, conge.utilisateur?.service || null)?.approval_workflow || null;
     const joursFeries = await joursFeriesService.getJoursFeriesEntreprise(conge.entreprise_id);
     joursFeriesSet = new Set((joursFeries || []).map((jf) => buildDateKey(jf.date)));
   } catch (_err) {
+    blockedDays = {};
+    effectiveApprovalWorkflow = null;
     joursFeriesSet = new Set();
   }
 
   const plainConge = conge.toJSON();
   const joursPris = Number.parseFloat(plainConge.jours_calcules);
+  const leaveBreakdown = calculateLeaveBreakdown(conge, joursFeriesSet, blockedDays);
   const joursPrisValue = Number.isFinite(joursPris)
     ? joursPris
-    : calculateBusinessDays(conge, joursFeriesSet);
+    : leaveBreakdown.jours_pris_calcules;
 
   const joursRestants = compteur
     ? parseFloat(compteur.jours_acquis || 0) +
@@ -721,6 +830,8 @@ async function getCongeById(id, user) {
       : null,
     entreprise_nom: plainConge.entreprise?.nom || null,
     conge_type_libelle: plainConge.conge_type?.libelle || null,
+    effective_approval_workflow: effectiveApprovalWorkflow,
+    calcul_details: leaveBreakdown,
     jours_pris: Number.isFinite(joursPrisValue) ? joursPrisValue : null,
     jours_restants: Number.isFinite(joursRestants) ? joursRestants : null,
     nombre_jours: Number.isFinite(joursPrisValue) ? joursPrisValue : plainConge.nombre_jours || null,

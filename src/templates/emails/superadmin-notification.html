@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nouvelle inscription entreprise</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: #f3f6fb;
+        font-family: Arial, sans-serif;
+        color: #0f172a;
+      }
+
+      .wrapper {
+        width: 100%;
+        padding: 24px 0;
+      }
+
+      .card {
+        max-width: 640px;
+        margin: 0 auto;
+        background: #ffffff;
+        border-radius: 16px;
+        overflow: hidden;
+        border: 1px solid #dbe4f0;
+      }
+
+      .header {
+        background: linear-gradient(135deg, #0f3d75, #2563eb);
+        color: #ffffff;
+        padding: 28px;
+      }
+
+      .content {
+        padding: 28px;
+      }
+
+      .meta {
+        background: #f8fbff;
+        border: 1px solid #d7e6fb;
+        border-radius: 12px;
+        padding: 18px;
+        margin: 20px 0 24px;
+      }
+
+      .button {
+        display: inline-block;
+        padding: 13px 22px;
+        background: #0f3d75;
+        color: #ffffff !important;
+        text-decoration: none;
+        border-radius: 9px;
+        font-weight: bold;
+      }
+
+      .footer {
+        color: #64748b;
+        font-size: 12px;
+        padding: 0 28px 24px;
+      }
+
+      p {
+        margin: 0 0 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrapper">
+      <div class="card">
+        <div class="header">
+          <h1 style="margin: 0;">Nouvelle inscription entreprise</h1>
+          <p style="margin: 10px 0 0; opacity: 0.95;">Une nouvelle société attend votre suivi.</p>
+        </div>
+        <div class="content">
+          <p>Bonjour,</p>
+          <p>Une nouvelle entreprise vient de s'inscrire sur {{app_name}}.</p>
+
+          <div class="meta">
+            <p><strong>Entreprise :</strong> {{entreprise_nom}}</p>
+            <p><strong>Administrateur :</strong> {{admin_nom}}</p>
+            <p><strong>Email administrateur :</strong> {{admin_email}}</p>
+            <p><strong>Date :</strong> {{created_at}}</p>
+          </div>
+
+          <a class="button" href="{{validation_url}}">Ouvrir la gestion des entreprises</a>
+        </div>
+        <div class="footer">
+          <p>Si le bouton ne fonctionne pas, utilisez ce lien : {{validation_url}}</p>
+          <p>© {{year}} {{app_name}}</p>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

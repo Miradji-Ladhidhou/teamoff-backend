@@ -7,17 +7,30 @@ const { Notification } = require('../models');
 async function getNotifications(req, res) {
   try {
     const where = { utilisateur_id: req.user.id };
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    const offset = (page - 1) * limit;
 
     if (req.query.non_lu === 'true') {
       where.lu = false;
     }
 
-    const notifications = await Notification.findAll({
+    const { rows, count } = await Notification.findAndCountAll({
       where,
+      limit,
+      offset,
       order: [['created_at', 'DESC']]
     });
 
-    res.json(notifications);
+    res.json({
+      items: rows,
+      pagination: {
+        page,
+        limit,
+        total: count,
+        totalPages: Math.max(1, Math.ceil(count / limit)),
+      },
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

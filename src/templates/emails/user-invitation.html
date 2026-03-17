@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invitation {{app_name}}</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: #f5f8f6;
+        font-family: Arial, sans-serif;
+        color: #1f2937;
+      }
+
+      .wrapper {
+        width: 100%;
+        padding: 24px 0;
+      }
+
+      .card {
+        max-width: 620px;
+        margin: 0 auto;
+        background: #ffffff;
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: 0 8px 28px rgba(15, 23, 42, 0.08);
+      }
+
+      .header {
+        background: linear-gradient(135deg, #166534, #16a34a);
+        color: #ffffff;
+        padding: 30px;
+      }
+
+      .content {
+        padding: 30px;
+      }
+
+      .credentials {
+        background: #f6fff8;
+        border: 1px solid #ccead5;
+        border-radius: 12px;
+        padding: 18px;
+        margin: 22px 0;
+      }
+
+      .button {
+        display: inline-block;
+        padding: 13px 22px;
+        background: #166534;
+        color: #ffffff !important;
+        text-decoration: none;
+        border-radius: 9px;
+        font-weight: bold;
+      }
+
+      .footer {
+        color: #64748b;
+        font-size: 12px;
+        padding: 0 30px 24px;
+      }
+
+      p {
+        margin: 0 0 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrapper">
+      <div class="card">
+        <div class="header">
+          <h1 style="margin: 0;">Vous êtes invité sur {{app_name}}</h1>
+          <p style="margin: 10px 0 0; opacity: 0.95;">Votre accès a été préparé par votre administrateur.</p>
+        </div>
+        <div class="content">
+          <p>Bonjour,</p>
+          <p>{{inviter_nom}} vous a invité à rejoindre la plateforme {{app_name}}.</p>
+
+          <div class="credentials">
+            <p><strong>Email :</strong> {{email}}</p>
+            <p><strong>Mot de passe temporaire :</strong> {{password_temporaire}}</p>
+          </div>
+
+          <p>Connectez-vous puis changez votre mot de passe dès la première utilisation.</p>
+          <a class="button" href="{{login_url}}">Se connecter</a>
+        </div>
+        <div class="footer">
+          <p>Si le bouton ne fonctionne pas, utilisez ce lien : {{login_url}}</p>
+          <p>© {{year}} {{app_name}}</p>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

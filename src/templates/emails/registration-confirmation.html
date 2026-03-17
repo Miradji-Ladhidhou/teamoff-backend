@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Confirmation d'inscription</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: #f8f5ef;
+        font-family: Arial, sans-serif;
+        color: #1f2937;
+      }
+
+      .wrapper {
+        width: 100%;
+        padding: 24px 0;
+      }
+
+      .card {
+        max-width: 680px;
+        margin: 0 auto;
+        background: #ffffff;
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow: 0 10px 35px rgba(15, 23, 42, 0.08);
+      }
+
+      .header {
+        background: linear-gradient(135deg, #8a4b14, #d97706);
+        color: #ffffff;
+        padding: 32px;
+      }
+
+      .content {
+        padding: 32px;
+      }
+
+      .summary,
+      .steps {
+        background: #fff9f0;
+        border: 1px solid #f3e2c5;
+        border-radius: 14px;
+        padding: 20px;
+        margin: 24px 0;
+      }
+
+      .button {
+        display: inline-block;
+        margin-top: 8px;
+        padding: 14px 24px;
+        background: #8a4b14;
+        color: #ffffff !important;
+        text-decoration: none;
+        border-radius: 10px;
+        font-weight: bold;
+      }
+
+      .secondary-link {
+        color: #8a4b14;
+        text-decoration: none;
+        font-weight: bold;
+      }
+
+      .footer {
+        padding: 0 32px 32px;
+        color: #64748b;
+        font-size: 13px;
+      }
+
+      p,
+      li {
+        line-height: 1.6;
+      }
+
+      p {
+        margin: 0 0 16px;
+      }
+
+      ol {
+        margin: 0;
+        padding-left: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrapper">
+      <div class="card">
+        <div class="header">
+          <h1 style="margin: 0; font-size: 28px;">Inscription confirmée</h1>
+          <p style="margin: 12px 0 0; opacity: 0.95;">Votre espace {{app_name}} est prêt pour démarrer.</p>
+        </div>
+        <div class="content">
+          <p>Bonjour {{admin_prenom}} {{admin_nom}},</p>
+          <p>Votre entreprise <strong>{{entreprise_nom}}</strong> a bien été enregistrée sur {{app_name}}.</p>
+          <p>Votre compte administrateur principal est actif avec l'adresse <strong>{{admin_email}}</strong>.</p>
+
+          <div class="summary">
+            <p><strong>Accès plateforme :</strong> <a class="secondary-link" href="{{login_url}}">{{login_url}}</a></p>
+            <p><strong>Tableau de bord :</strong> <a class="secondary-link" href="{{dashboard_url}}">{{dashboard_url}}</a></p>
+          </div>
+
+          <div class="steps">
+            <p><strong>Tutoriel recommandé :</strong></p>
+            <ol>
+              <li>Connectez-vous à votre espace administrateur.</li>
+              <li>Créez vos équipes et workflows dans <a class="secondary-link" href="{{services_url}}">Services</a>.</li>
+              <li>Réglez vos politiques dans <a class="secondary-link" href="{{policy_url}}">Politique congés</a>.</li>
+              <li>Vérifiez le calendrier RH dans <a class="secondary-link" href="{{holidays_url}}">Jours fériés</a>.</li>
+              <li>Ajoutez les collaborateurs depuis <a class="secondary-link" href="{{users_url}}">Utilisateurs</a>.</li>
+              <li>Faites une première demande test pour valider tout le circuit.</li>
+            </ol>
+          </div>
+
+          <a class="button" href="{{dashboard_url}}">Ouvrir mon espace</a>
+        </div>
+        <div class="footer">
+          <p>Si le bouton ne fonctionne pas, utilisez ce lien : {{dashboard_url}}</p>
+          <p>© {{year}} {{app_name}}</p>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

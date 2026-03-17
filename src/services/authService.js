@@ -1,8 +1,26 @@
-const { Utilisateur, Entreprise } = require('../models');
+const { Utilisateur, Entreprise, sequelize } = require('../models');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const systemSettingsService = require('./systemSettingsService');
+const emailService = require('./emailService');
 require('dotenv').config();
+
+const DEFAULT_LEAVE_POLICY = {
+  approval_workflow: 'manager_admin',
+  overlap_policy: 'block',
+  minimum_notice_days: 0,
+  max_consecutive_days: 365,
+  include_holidays_in_count: false,
+  report_autorise: false,
+  report_max_jours: 0,
+  accrual_by_type: {},
+  blocked_days: [],
+  service_policies: {},
+  max_employees_on_leave: {
+    global: 0,
+    by_service: {},
+  },
+};
 
 // ---------------------------
 // Validation de la politique de mot de passe
@@ -80,6 +98,84 @@ async function loginUtilisateur({ email, password, entreprise_id }) {
   };
 }
 
+async function registerEntreprise(payload) {
+  const {
+    entreprise_nom,
+    entreprise_adresse,
+    entreprise_telephone,
+    entreprise_email,
+    admin_prenom,
+    admin_nom,
+    admin_email,
+    admin_password,
+    admin_confirm_password,
+  } = payload;
+
+  if (!entreprise_nom?.trim()) throw new Error('Le nom de l\'entreprise est requis');
+  if (!entreprise_email?.trim()) throw new Error('L\'email de l\'entreprise est requis');
+  if (!entreprise_telephone?.trim()) throw new Error('Le téléphone de l\'entreprise est requis');
+  if (!admin_prenom?.trim()) throw new Error('Le prénom de l\'administrateur est requis');
+  if (!admin_nom?.trim()) throw new Error('Le nom de l\'administrateur est requis');
+  if (!admin_email?.trim()) throw new Error('L\'email de l\'administrateur est requis');
+  if (!admin_password) throw new Error('Le mot de passe administrateur est requis');
+  if (admin_password !== admin_confirm_password) throw new Error('Les mots de passe ne correspondent pas');
+
+  await validatePasswordPolicy(admin_password);
+
+  const emailRegex = /\S+@\S+\.\S+/;
+  if (!emailRegex.test(entreprise_email)) throw new Error('Format d\'email entreprise invalide');
+  if (!emailRegex.test(admin_email)) throw new Error('Format d\'email administrateur invalide');
+
+  const existingAdmin = await Utilisateur.findOne({ where: { email: admin_email.trim() } });
+  if (existingAdmin) {
+    throw new Error('Un utilisateur existe déjà avec cet email');
+  }
+
+  const passwordHash = await bcrypt.hash(admin_password, 10);
+
+  const result = await sequelize.transaction(async (transaction) => {
+    const entreprise = await Entreprise.create({
+      nom: entreprise_nom.trim(),
+      politique_conges: DEFAULT_LEAVE_POLICY,
+      parametres: {
+        contact: {
+          adresse: entreprise_adresse?.trim() || '',
+          telephone: entreprise_telephone.trim(),
+          email: entreprise_email.trim().toLowerCase(),
+        },
+      },
+      statut: 'active',
+    }, { transaction });
+
+    const admin = await Utilisateur.create({
+      entreprise_id: entreprise.id,
+      prenom: admin_prenom.trim(),
+      nom: admin_nom.trim(),
+      email: admin_email.trim().toLowerCase(),
+      role: 'admin_entreprise',
+      password_hash: passwordHash,
+      statut: 'actif',
+      service: null,
+    }, { transaction });
+
+    return { entreprise, admin };
+  });
+
+  try {
+    await emailService.sendRegistrationConfirmation(result.entreprise, result.admin);
+  } catch (error) {
+    console.error('Erreur email confirmation inscription entreprise:', error.message);
+  }
+
+  try {
+    await emailService.sendSuperAdminNotification(result.entreprise, result.admin);
+  } catch (error) {
+    console.error('Erreur notification inscription entreprise:', error.message);
+  }
+
+  return result;
+}
+
 // ---------------------------
 // Logout utilisateur
 // ---------------------------
@@ -154,6 +250,7 @@ async function changePassword(userId, currentPassword, newPassword) {
 
 module.exports = {
   loginUtilisateur,
+  registerEntreprise,
   logoutUtilisateur,
   forgotPassword,
   resetPassword,

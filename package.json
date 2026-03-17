@@ -11,6 +11,7 @@
     "verify:conges-core": "node scripts/verifyCongeCoreFlow.js",
     "verify:conges-approval": "node scripts/verifyCongeApprovalFlow.js",
     "verify:conges-suite": "node scripts/verifyCongesSuite.js",
+    "verify:all-roles": "node scripts/verifyAllRolesWorkflow.js",
     "migrate:add-service-column": "node scripts/addServiceColumn.js"
   },
   "keywords": [],

@@ -48,13 +48,14 @@ async function remove(req, res) {
 
 async function validate(req, res) {
   try {
-    const conge = await congeService.validerConge(req.params.id, req.user, req.body.commentaire, req);
+    const commentaire = req.body?.commentaire ?? null;
+    const conge = await congeService.validerConge(req.params.id, req.user, commentaire, req);
 
     // Notifier l'utilisateur qui a fait la demande
     notificationService.notifyUser(conge.utilisateur_id, 'conge-validated', {
       conge,
       validatedBy: req.user,
-      commentaire: req.body.commentaire
+      commentaire
     });
 
     // Notifier tous les administrateurs de l'entreprise
@@ -71,13 +72,14 @@ async function validate(req, res) {
 
 async function reject(req, res) {
   try {
-    const conge = await congeService.rejeterConge(req.params.id, req.user, req.body.commentaire, req);
+    const commentaire = req.body?.commentaire ?? null;
+    const conge = await congeService.rejeterConge(req.params.id, req.user, commentaire, req);
 
     // Notifier l'utilisateur qui a fait la demande
     notificationService.notifyUser(conge.utilisateur_id, 'conge-rejected', {
       conge,
       rejectedBy: req.user,
-      commentaire: req.body.commentaire
+      commentaire
     });
 
     // Notifier tous les administrateurs de l'entreprise

@@ -58,6 +58,9 @@ class EmailService {
         const templatePath = path.join(__dirname, '../templates/emails', `${templateName}.html`);
         html = await fs.readFile(templatePath, 'utf8');
       } catch {
+        if (!data.content) {
+          data.content = this.buildFallbackContent(templateName, subject, data);
+        }
         html = await this.getDefaultTemplate();
       }
 
@@ -103,6 +106,95 @@ class EmailService {
     });
 
     return html;
+  }
+
+  buildFallbackContent(templateName, subject, data) {
+    const fallbackByTemplate = {
+      'superadmin-notification': `
+        <p>Bonjour,</p>
+        <p>Une nouvelle entreprise vient de s'inscrire sur ${process.env.EMAIL_NAME || 'TeamOff'}.</p>
+        <p><strong>Entreprise :</strong> ${data.entreprise_nom || 'Non renseignée'}</p>
+        <p><strong>Administrateur :</strong> ${data.admin_nom || 'Non renseigné'}</p>
+        <p><strong>Email administrateur :</strong> ${data.admin_email || 'Non renseigné'}</p>
+        <p><strong>Date :</strong> ${data.created_at || 'Non renseignée'}</p>
+        <p><a href="${data.validation_url || process.env.FRONTEND_URL || '#'}">Ouvrir la gestion des entreprises</a></p>
+      `,
+      'password-reset': `
+        <p>Bonjour,</p>
+        <p>Une demande de réinitialisation de mot de passe a été effectuée.</p>
+        <p><a href="${data.reset_url || '#'}">Réinitialiser le mot de passe</a></p>
+        <p>Ce lien expire dans ${data.expiry_hours || 1} heure(s).</p>
+      `,
+      'password-reset-confirmation': `
+        <p>Bonjour,</p>
+        <p>Votre mot de passe a été mis à jour avec succès.</p>
+        <p><a href="${data.login_url || '#'}">Se connecter</a></p>
+      `,
+      'user-invitation': `
+        <p>Bonjour,</p>
+        <p>${data.inviter_nom || 'Un administrateur'} vous a invité à rejoindre ${process.env.EMAIL_NAME || 'TeamOff'}.</p>
+        <p><strong>Email :</strong> ${data.email || 'Non renseigné'}</p>
+        <p><strong>Mot de passe temporaire :</strong> ${data.password_temporaire || 'Non renseigné'}</p>
+        <p><a href="${data.login_url || '#'}">Se connecter</a></p>
+      `,
+      'registration-confirmation': `
+        <p>Bonjour ${data.admin_prenom || ''} ${data.admin_nom || ''},</p>
+        <p>Votre entreprise <strong>${data.entreprise_nom || 'Non renseignée'}</strong> a bien été inscrite sur ${process.env.EMAIL_NAME || 'TeamOff'}.</p>
+        <p>Vous pouvez vous connecter avec l'adresse <strong>${data.admin_email || 'Non renseignée'}</strong>.</p>
+        <p><strong>Parcours conseillé :</strong></p>
+        <ol>
+          <li>Connectez-vous à votre espace administrateur.</li>
+          <li>Créez vos services et leurs workflows de validation.</li>
+          <li>Paramétrez la politique de congés, les jours bloqués et les jours fériés.</li>
+          <li>Ajoutez vos managers et employés.</li>
+          <li>Faites une première demande test pour valider le circuit complet.</li>
+        </ol>
+        <p><a href="${data.login_url || '#'}">Accéder à la plateforme</a></p>
+      `,
+      'new-leave-request': `
+        <p>Bonjour,</p>
+        <p>Une nouvelle demande de congé nécessite votre validation.</p>
+        <p><strong>Employé :</strong> ${data.employe_nom || 'Non renseigné'}</p>
+        <p><strong>Période :</strong> ${data.dates || 'Non renseignée'}</p>
+        <p><strong>Type :</strong> ${data.type_conge || 'Non renseigné'}</p>
+        <p><a href="${data.validation_url || '#'}">Consulter la demande</a></p>
+      `,
+      'leave-status-update': `
+        <p>Bonjour ${data.prenom || ''},</p>
+        <p>Le statut de votre demande de congé a été mis à jour.</p>
+        <p><strong>Statut :</strong> ${data.statut || 'Non renseigné'}</p>
+        <p><strong>Période :</strong> ${data.dates || 'Non renseignée'}</p>
+        <p><a href="${data.dashboard_url || '#'}">Voir mes congés</a></p>
+      `,
+      'leave-cancellation': `
+        <p>Bonjour ${data.prenom || ''},</p>
+        <p>Votre congé a été annulé.</p>
+        <p><strong>Période :</strong> ${data.dates || 'Non renseignée'}</p>
+        <p><strong>Raison :</strong> ${data.raison || 'Non renseignée'}</p>
+        <p><a href="${data.dashboard_url || '#'}">Voir mon espace</a></p>
+      `,
+      'monthly-report': `
+        <p>Bonjour,</p>
+        <p>Voici votre rapport mensuel pour ${data.entreprise_nom || 'votre entreprise'}.</p>
+        <p><strong>Période :</strong> ${data.mois || ''} ${data.annee || ''}</p>
+        <p><strong>Total congés :</strong> ${data.total_conges || 0}</p>
+        <p><strong>Total employés :</strong> ${data.total_employes || 0}</p>
+      `,
+      'system-alert': `
+        <p>Bonjour,</p>
+        <p>Une alerte système a été détectée.</p>
+        <p><strong>Sévérité :</strong> ${data.severity || 'Non renseignée'}</p>
+        <p><strong>Type :</strong> ${data.alert_type || 'Non renseigné'}</p>
+        <p><strong>Message :</strong> ${data.message || 'Non renseigné'}</p>
+        <p><a href="${data.dashboard_url || '#'}">Voir le tableau de bord</a></p>
+      `,
+    };
+
+    return fallbackByTemplate[templateName] || `
+      <p>Bonjour,</p>
+      <p>${subject}</p>
+      <p>Un nouvel événement nécessite votre attention.</p>
+    `;
   }
 
   async getDefaultTemplate() {
@@ -194,6 +286,49 @@ class EmailService {
     );
   }
 
+  async sendRegistrationConfirmation(entreprise, admin) {
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const loginUrl = `${frontendUrl}/login`;
+    const dashboardUrl = `${frontendUrl}/dashboard`;
+    const servicesUrl = `${frontendUrl}/services`;
+    const policyUrl = `${frontendUrl}/politique-conges`;
+    const holidaysUrl = `${frontendUrl}/jours-feries`;
+    const usersUrl = `${frontendUrl}/users`;
+
+    return this.sendEmail(
+      admin.email,
+      `Confirmation d'inscription - ${entreprise.nom}`,
+      'registration-confirmation',
+      {
+        admin_prenom: admin.prenom,
+        admin_nom: admin.nom,
+        admin_email: admin.email,
+        entreprise_nom: entreprise.nom,
+        login_url: loginUrl,
+        dashboard_url: dashboardUrl,
+        services_url: servicesUrl,
+        policy_url: policyUrl,
+        holidays_url: holidaysUrl,
+        users_url: usersUrl,
+        content: `
+          <p>Bonjour ${admin.prenom} ${admin.nom},</p>
+          <p>Votre entreprise <strong>${entreprise.nom}</strong> a bien été inscrite sur ${process.env.EMAIL_NAME || 'TeamOff'}.</p>
+          <p>Votre compte administrateur est prêt avec l'adresse <strong>${admin.email}</strong>.</p>
+          <p><strong>Tutoriel de démarrage recommandé :</strong></p>
+          <ol>
+            <li><strong>Connexion :</strong> accédez à votre espace via <a href="${loginUrl}">${loginUrl}</a>.</li>
+            <li><strong>Services :</strong> créez vos équipes et définissez les workflows de validation dans <a href="${servicesUrl}">Services</a>.</li>
+            <li><strong>Politique de congés :</strong> configurez les règles de calcul dans <a href="${policyUrl}">Politique congés</a>.</li>
+            <li><strong>Jours fériés et jours bloqués :</strong> vérifiez votre calendrier RH dans <a href="${holidaysUrl}">Jours fériés</a>.</li>
+            <li><strong>Utilisateurs :</strong> ajoutez managers et employés depuis <a href="${usersUrl}">Utilisateurs</a>.</li>
+            <li><strong>Validation finale :</strong> connectez-vous ensuite au <a href="${dashboardUrl}">dashboard</a> et faites une première demande test.</li>
+          </ol>
+          <p>Si vous préférez, commencez directement par le tableau de bord : <a href="${dashboardUrl}">${dashboardUrl}</a></p>
+        `,
+      }
+    );
+  }
+
   async sendSuperAdminNotification(entreprise, admin) {
     const superAdmin = await Utilisateur.findOne({ where: { role: 'super_admin' } });
     if (!superAdmin) return;
@@ -207,7 +342,16 @@ class EmailService {
         admin_nom: `${admin.prenom} ${admin.nom}`,
         admin_email: admin.email,
         created_at: new Date().toLocaleDateString('fr-FR'),
-        validation_url: `${process.env.FRONTEND_URL}/super-admin/entreprises/${entreprise.id}`,
+        validation_url: `${process.env.FRONTEND_URL}/superadmin/companies`,
+        content: `
+          <p>Bonjour ${superAdmin.prenom || 'Super admin'},</p>
+          <p>Une nouvelle entreprise vient de s'inscrire sur ${process.env.EMAIL_NAME || 'TeamOff'}.</p>
+          <p><strong>Entreprise :</strong> ${entreprise.nom}</p>
+          <p><strong>Administrateur :</strong> ${admin.prenom} ${admin.nom}</p>
+          <p><strong>Email administrateur :</strong> ${admin.email}</p>
+          <p><strong>Date :</strong> ${new Date().toLocaleString('fr-FR')}</p>
+          <p>Consultez la liste des entreprises ici : <a href="${process.env.FRONTEND_URL}/superadmin/companies">${process.env.FRONTEND_URL}/superadmin/companies</a></p>
+        `,
       }
     );
   }

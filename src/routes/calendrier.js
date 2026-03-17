@@ -4,5 +4,6 @@ const authJwt = require('../middlewares/authJwt');
 const { getCalendrier } = require('../controllers/calendrierController');
 
 router.get('/', authJwt, getCalendrier);
+router.get('/:year/:month', authJwt, getCalendrier);
 
 module.exports = router;

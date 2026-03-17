@@ -15,10 +15,6 @@ module.exports = (sequelize) => {
       allowNull: false,
     },
 
-    logo: {
-      type: DataTypes.STRING(255),
-    },
-
     politique_conges: {
       type: DataTypes.JSONB,
       allowNull: false,

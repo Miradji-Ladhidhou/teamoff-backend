@@ -1,7 +1,50 @@
 const authService = require('../services/authService');
 const { auditAuth } = require('../services/auditHelper');
 const { Utilisateur } = require('../models');
+const { auditEntreprise, auditUser } = require('../services/auditHelper');
 const bcrypt = require('bcrypt');
+
+// ---------------------------
+// Register
+// ---------------------------
+async function register(req, res) {
+  try {
+    const { entreprise, admin } = await authService.registerEntreprise(req.body);
+
+    await auditEntreprise.created(entreprise, null, req);
+    await auditUser.created(admin, admin, req);
+
+    res.status(201).json({
+      message: 'Inscription entreprise effectuée avec succès',
+      entreprise: {
+        id: entreprise.id,
+        nom: entreprise.nom,
+        statut: entreprise.statut,
+      },
+      admin: {
+        id: admin.id,
+        prenom: admin.prenom,
+        nom: admin.nom,
+        email: admin.email,
+        role: admin.role,
+        statut: admin.statut,
+      },
+    });
+  } catch (err) {
+    if (
+      err.message.includes('requis')
+      || err.message.includes('invalide')
+      || err.message.includes('correspondent pas')
+      || err.message.includes('existe déjà')
+      || err.message.includes('caractère')
+    ) {
+      return res.status(400).json({ message: err.message });
+    }
+
+    console.error('Register error:', err);
+    return res.status(500).json({ message: 'Erreur serveur' });
+  }
+}
 
 // ---------------------------
 // Login
@@ -112,6 +155,7 @@ async function changePassword(req, res) {
 }
 
 module.exports = {
+  register,
   login,
   logout,
   forgotPassword,

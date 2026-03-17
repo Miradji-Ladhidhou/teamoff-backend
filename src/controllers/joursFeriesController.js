@@ -577,7 +577,56 @@ async function appliquerModeleJoursFeries(req, res) {
   }
 }
 
+// ----------------------------
+// Jours fériés par mois (accessible à tous les rôles — pour le calendrier)
+// ----------------------------
+async function getJoursFeriesByMonth(req, res) {
+  try {
+    const { year, month } = req.params;
+    const yearNum = parseInt(year, 10);
+    const monthNum = parseInt(month, 10);
+    if (!yearNum || monthNum < 1 || monthNum > 12) {
+      return res.status(400).json({ message: 'Paramètres year/month invalides.' });
+    }
+
+    // Entreprise cible : SA peut filtrer par query param, les autres utilisent la leur
+    const entrepriseId = req.user?.role === 'super_admin'
+      ? (req.query.entreprise_id || null)
+      : req.user?.entreprise_id;
+
+    if (!entrepriseId) {
+      return res.status(400).json({ message: 'entreprise_id est requis.' });
+    }
+
+    const startDate = new Date(yearNum, monthNum - 1, 1);
+    const endDate   = new Date(yearNum, monthNum, 0); // dernier jour du mois
+
+    const { Op } = require('sequelize');
+    const joursFeries = await JoursFeries.findAll({
+      where: {
+        entreprise_id: entrepriseId,
+        [Op.or]: [
+          { recurrent: true },  // fériés récurrents toujours inclus
+          {
+            date: {
+              [Op.between]: [
+                startDate.toISOString().slice(0, 10),
+                endDate.toISOString().slice(0, 10),
+              ],
+            },
+          },
+        ],
+      },
+      order: [['date', 'ASC']],
+    });
+    res.json(joursFeries);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+}
+
 module.exports = {
+  getJoursFeriesByMonth,
   listerJoursFeries,
   creerJourFerie,
   getJourFerie,
