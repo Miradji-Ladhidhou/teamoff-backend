@@ -35,6 +35,10 @@ router.put('/:id/politique', authJwt, authorizeRole(['super_admin', 'admin_entre
   entreprisesController.updatePolitiqueConges
 );
 
+// gestion des paramètres généraux d'une entreprise (super_admin et admin_entreprise de l'entreprise concernée)
+router.get('/:id/parametres', authJwt, authorizeRole(['super_admin', 'admin_entreprise'], req => req.user.entreprise_id), entreprisesController.getParametres);
+router.put('/:id/parametres', authJwt, authorizeRole(['super_admin', 'admin_entreprise'], req => req.user.entreprise_id), entreprisesController.updateParametres);
+
 // gestion des services d'une entreprise (super_admin et admin_entreprise de l'entreprise concernée)
 router.get('/:id/services', authJwt, authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id), entreprisesController.getEntrepriseServices);
 router.post('/:id/services', authJwt, authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id), entreprisesController.createEntrepriseService);

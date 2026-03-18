@@ -1,4 +1,5 @@
-const { Notification } = require('../models');
+const { Op } = require('sequelize');
+const { Notification, Utilisateur, sequelize, AuditLog } = require('../models');
 const emailService = require('./emailService');
 
 class MonitoringService {
@@ -57,18 +58,17 @@ class MonitoringService {
 
       for (const admin of admins) {
         await emailService.sendAlertEmail(admin.email, alert);
-      }
 
-      // Créer une notification en base
-      await Notification.create({
-        utilisateur_id: null, // Notification système
-        entreprise_id: entrepriseId,
-        type: 'system_alert',
-        titre: 'Alerte système',
-        message: alert.message,
-        severity: alert.severity,
-        is_read: false
-      });
+        // Créer une notification par administrateur
+        await Notification.create({
+          utilisateur_id: admin.id,
+          entreprise_id: entrepriseId,
+          type: 'system_alert',
+          message: alert.message,
+          url: '/admin/monitoring',
+          lu: false
+        });
+      }
 
     } catch (error) {
       console.error('Erreur lors de l\'envoi de l\'alerte:', error);
@@ -77,30 +77,74 @@ class MonitoringService {
 
   // Obtenir les admins d'une entreprise
   static async getEntrepriseAdmins(entrepriseId) {
-    const { Utilisateur } = require('../models');
     return await Utilisateur.findAll({
       where: {
         entreprise_id: entrepriseId,
-        role: ['admin_entreprise', 'super_admin']
+        role: { [Op.in]: ['admin_entreprise', 'super_admin'] }
       }
     });
   }
 
   // Rapport de santé du système
   static async getHealthReport() {
-    // TODO: Implémenter la vérification de la santé des services
+    const report = {
+      database: { status: 'unhealthy' },
+      email: { status: 'unhealthy' },
+      cache: { status: 'unknown', reason: 'Cache non configuré' },
+      timestamp: new Date().toISOString()
+    };
+
+    try {
+      await sequelize.authenticate();
+      report.database = { status: 'healthy' };
+    } catch (error) {
+      report.database = { status: 'unhealthy', error: error.message };
+    }
+
+    try {
+      const smtpConfig = await emailService.getSmtpConfig();
+      const transporter = emailService.createTransporter(smtpConfig);
+      await transporter.verify();
+      report.email = { status: 'healthy' };
+    } catch (error) {
+      report.email = { status: 'unhealthy', error: error.message };
+    }
+
+    report.status = [report.database.status, report.email.status].every((status) => status === 'healthy')
+      ? 'healthy'
+      : 'degraded';
+
     return {
-      database: 'healthy',
-      email: 'healthy',
-      cache: 'healthy',
-      timestamp: new Date()
+      ...report,
     };
   }
 
   // Nettoyer les anciennes métriques
   static async cleanupOldMetrics(daysToKeep = 30) {
-    // TODO: Implémenter le nettoyage des métriques anciennes
-    console.log(`Nettoyage des métriques de plus de ${daysToKeep} jours`);
+    const retentionDays = Number(daysToKeep);
+    const safeRetentionDays = Number.isFinite(retentionDays) && retentionDays > 0 ? retentionDays : 30;
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - safeRetentionDays);
+
+    const [deletedAuditLogs, deletedNotifications] = await Promise.all([
+      AuditLog.destroy({
+        where: {
+          createdAt: { [Op.lt]: cutoffDate }
+        }
+      }),
+      Notification.destroy({
+        where: {
+          created_at: { [Op.lt]: cutoffDate }
+        }
+      })
+    ]);
+
+    return {
+      cutoffDate: cutoffDate.toISOString(),
+      deletedAuditLogs,
+      deletedNotifications,
+      retentionDays: safeRetentionDays,
+    };
   }
 }
 

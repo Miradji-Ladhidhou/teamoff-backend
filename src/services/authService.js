@@ -208,16 +208,16 @@ function logoutUtilisateur(token) {
 // Forgot password
 // ---------------------------
 async function forgotPassword(email) {
-  const user = await Utilisateur.findOne({ where: { email } });
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedEmail) throw new Error('Email requis');
+
+  const user = await Utilisateur.findOne({ where: { email: normalizedEmail } });
   if (!user) throw new Error('Utilisateur non trouvé');
 
-  // Générer token temporaire pour reset (à sauvegarder ou envoyer par email)
+  // Générer token temporaire pour reset et l'envoyer par email
   const resetToken = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
-  // TEMP: afficher le token pour tests
-  console.log("RESET TOKEN:", resetToken);
-
-  // TODO: envoyer email via service mail avec resetToken
+  await emailService.sendPasswordReset(user.email, resetToken);
   return resetToken;
 }
 

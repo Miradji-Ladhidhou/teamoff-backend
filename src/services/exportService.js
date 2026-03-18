@@ -90,7 +90,7 @@ class ExportService {
   static async getUtilisateursPreview(entrepriseId, limit = 50) {
     const utilisateurs = await Utilisateur.findAll({
       where: { entreprise_id: entrepriseId },
-      attributes: ['id', 'prenom', 'nom', 'email', 'role', 'statut', 'created_at'],
+      attributes: ['id', 'prenom', 'nom', 'email', 'role', 'statut', 'date_embauche', 'created_at'],
       order: [['nom', 'ASC']],
       limit,
     });
@@ -102,11 +102,12 @@ class ExportService {
       email: user.email,
       role: user.role,
       statut: user.statut,
+      date_embauche: user.date_embauche,
       inscrit_le: user.created_at,
     }));
 
     return {
-      columns: ['id', 'prenom', 'nom', 'email', 'role', 'statut', 'inscrit_le'],
+      columns: ['id', 'prenom', 'nom', 'email', 'role', 'statut', 'date_embauche', 'inscrit_le'],
       rows,
       count: rows.length,
       limitedTo: limit,
@@ -258,7 +259,7 @@ class ExportService {
     try {
       const utilisateurs = await Utilisateur.findAll({
         where: { entreprise_id: entrepriseId },
-        attributes: ['id', 'prenom', 'nom', 'email', 'role', 'statut', 'created_at', 'updated_at'],
+        attributes: ['id', 'prenom', 'nom', 'email', 'role', 'statut', 'date_embauche', 'created_at', 'updated_at'],
         order: [['nom', 'ASC']]
       });
 
@@ -269,11 +270,12 @@ class ExportService {
         'Email': user.email,
         'Rôle': user.role,
         'Statut': user.statut,
+        'Date d\'embauche': user.date_embauche,
         'Date d\'inscription': user.created_at,
         'Dernière modification': user.updated_at
       }));
 
-      const fields = ['ID', 'Prénom', 'Nom', 'Email', 'Rôle', 'Statut', 'Date d\'inscription', 'Dernière modification'];
+      const fields = ['ID', 'Prénom', 'Nom', 'Email', 'Rôle', 'Statut', 'Date d\'embauche', 'Date d\'inscription', 'Dernière modification'];
 
       const json2csvParser = new Parser({ fields });
       return json2csvParser.parse(data);

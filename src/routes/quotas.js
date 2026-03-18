@@ -10,6 +10,8 @@ const {
 	getUserCounters,
 	upsertUserCounter,
 	removeUserCounter,
+	recalculateProrata,
+	monthlyAccrual,
 } = require('../controllers/quotasController');
 
 router.post('/init', authJwt, authorizeRole(['admin_entreprise', 'super_admin']), initQuota);
@@ -19,5 +21,7 @@ router.get('/usage', authJwt, authorizeRole(['admin_entreprise', 'super_admin'])
 router.get('/counters/:utilisateur_id', authJwt, authorizeRole(['admin_entreprise', 'super_admin']), getUserCounters);
 router.post('/counters/:utilisateur_id', authJwt, authorizeRole(['admin_entreprise', 'super_admin']), upsertUserCounter);
 router.delete('/counters/:counter_id', authJwt, authorizeRole(['admin_entreprise', 'super_admin']), removeUserCounter);
+router.post('/monthly-accrual', authJwt, authorizeRole(['admin_entreprise', 'super_admin']), monthlyAccrual);
+router.post('/recalculate-prorata', authJwt, authorizeRole(['admin_entreprise', 'super_admin']), recalculateProrata);
 
 module.exports = router;

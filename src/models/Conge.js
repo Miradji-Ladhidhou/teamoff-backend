@@ -36,6 +36,12 @@ module.exports = (sequelize) => {
     commentaire_manager: { type: DataTypes.TEXT },
     commentaire_admin: { type: DataTypes.TEXT },
 
+    jours_calcules: {
+      type: DataTypes.DECIMAL(5, 2),
+      allowNull: true,
+      defaultValue: null,
+    },
+
   }, {
     tableName: 'conge',
     timestamps: true,

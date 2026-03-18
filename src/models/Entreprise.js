@@ -42,10 +42,10 @@ module.exports = (sequelize) => {
 
   Entreprise.afterCreate(async (entreprise, options) => {
     await logAction({
-      entrepriseId: entreprise.id,
-      utilisateurId: options?.userId || null,
+      entreprise_id: entreprise.id,
+      user_id: options?.userId || null,
       action: 'entreprise_created',
-      meta: {
+      metadata: {
         new: entreprise.toJSON()
       }
     });
@@ -61,10 +61,10 @@ module.exports = (sequelize) => {
     });
 
     await logAction({
-      entrepriseId: entreprise.id,
-      utilisateurId: options?.userId || null,
+      entreprise_id: entreprise.id,
+      user_id: options?.userId || null,
       action: 'entreprise_updated',
-      meta: {
+      metadata: {
         changed_fields: changedFields,
         new: entreprise.toJSON(),
         old: entreprise._previousDataValues
@@ -74,10 +74,10 @@ module.exports = (sequelize) => {
 
   Entreprise.afterDestroy(async (entreprise, options) => {
     await logAction({
-      entrepriseId: entreprise.id,
-      utilisateurId: options?.userId || null,
+      entreprise_id: entreprise.id,
+      user_id: options?.userId || null,
       action: 'entreprise_deleted',
-      meta: {
+      metadata: {
         old: entreprise.toJSON()
       }
     });

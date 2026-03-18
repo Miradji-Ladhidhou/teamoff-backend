@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS utilisateur (
   role utilisateur_role NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   statut utilisateur_statut NOT NULL DEFAULT 'en_attente',
+  date_embauche DATE,
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
   UNIQUE (entreprise_id, email),
@@ -130,13 +131,17 @@ CREATE TABLE IF NOT EXISTS compteur_conges (
   annee INTEGER NOT NULL CHECK (annee >= 2000),
   jours_acquis NUMERIC(5,2) NOT NULL DEFAULT 0,
   jours_pris NUMERIC(5,2) NOT NULL DEFAULT 0,
+  jours_reportes NUMERIC(5,2) NOT NULL DEFAULT 0,
+  jours_reserves NUMERIC(5,2) NOT NULL DEFAULT 0,
+  dernier_credit_mensuel VARCHAR(7),
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_compteur UNIQUE (entreprise_id, utilisateur_id, conge_type_id, annee),
   CONSTRAINT fk_compteur_user FOREIGN KEY (utilisateur_id, entreprise_id) REFERENCES utilisateur(id, entreprise_id) ON DELETE CASCADE,
   CONSTRAINT fk_compteur_type FOREIGN KEY (conge_type_id, entreprise_id) REFERENCES conge_type(id, entreprise_id) ON DELETE CASCADE,
   CONSTRAINT check_jours_pris_non_negatif CHECK (jours_pris >= 0),
-  CONSTRAINT check_jours_acquis_non_negatif CHECK (jours_acquis >= 0)
+  CONSTRAINT check_jours_reportes_non_negatif CHECK (jours_reportes >= 0),
+  CONSTRAINT check_jours_reserves_non_negatif CHECK (jours_reserves >= 0)
 );
 
 CREATE INDEX IF NOT EXISTS idx_compteur_user_annee ON compteur_conges (entreprise_id, utilisateur_id, annee);

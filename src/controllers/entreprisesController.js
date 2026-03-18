@@ -230,6 +230,54 @@ async function updatePolitiqueConges(req, res) {
   }
 }
 
+// ----------------------------
+// Paramètres généraux
+// ----------------------------
+function isValidTimezone(tz) {
+  if (!tz || typeof tz !== 'string') return false;
+  try { Intl.DateTimeFormat(undefined, { timeZone: tz }); return true; } catch { return false; }
+}
+
+async function getParametres(req, res) {
+  try {
+    const entreprise = await Entreprise.findByPk(req.params.id);
+    if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
+    res.json({ parametres: entreprise.parametres || {} });
+  } catch (err) {
+    console.error('Erreur récupération paramètres:', err);
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+}
+
+async function updateParametres(req, res) {
+  try {
+    const entreprise = await Entreprise.findByPk(req.params.id);
+    if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
+
+    const { parametres } = req.body;
+    if (!parametres || typeof parametres !== 'object' || Array.isArray(parametres)) {
+      return res.status(400).json({ message: 'Paramètres invalides' });
+    }
+
+    if (parametres.timezone !== undefined && !isValidTimezone(parametres.timezone)) {
+      return res.status(400).json({ message: 'Fuseau horaire invalide' });
+    }
+
+    // Seules les clés autorisées sont acceptées
+    const safeParametres = {};
+    if (parametres.timezone !== undefined) safeParametres.timezone = parametres.timezone;
+
+    const oldParametres = { ...(entreprise.parametres || {}) };
+    entreprise.parametres = { ...oldParametres, ...safeParametres };
+    await entreprise.save({ userId: req.user.id });
+
+    res.json({ message: 'Paramètres mis à jour', parametres: entreprise.parametres });
+  } catch (err) {
+    console.error('Erreur mise à jour paramètres:', err);
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+}
+
 async function getEntrepriseServices(req, res) {
   try {
     const entreprise = await Entreprise.findByPk(req.params.id);
@@ -434,6 +482,8 @@ module.exports = {
   patchStatutEntreprise,
   getPolitiqueConges,
   updatePolitiqueConges,
+  getParametres,
+  updateParametres,
   getEntrepriseServices,
   createEntrepriseService,
   updateEntrepriseService,

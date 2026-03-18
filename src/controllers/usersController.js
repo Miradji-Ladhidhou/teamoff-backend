@@ -1,12 +1,34 @@
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
-const { Utilisateur, Entreprise } = require('../models');
+const { Utilisateur, Entreprise, sequelize } = require('../models');
 const emailService = require('../services/emailService'); 
 const { auditUser } = require('../services/auditHelper');
 const { validatePasswordPolicy } = require('../services/authService');
+const quotasService = require('../services/quotasService');
 
 function normalizeServiceName(value) {
   return String(value || '').trim();
+}
+
+function normalizeOptionalDateOnly(value) {
+  if (typeof value === 'undefined') return undefined;
+  if (value === null || value === '') return null;
+
+  const raw = String(value).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const err = new Error('date_embauche doit être au format YYYY-MM-DD');
+    err.status = 400;
+    throw err;
+  }
+
+  const parsed = new Date(`${raw}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    const err = new Error('date_embauche invalide');
+    err.status = 400;
+    throw err;
+  }
+
+  return raw;
 }
 
 async function serviceExistsInEntreprise(entrepriseId, serviceName) {
@@ -24,7 +46,7 @@ async function serviceExistsInEntreprise(entrepriseId, serviceName) {
  * Création utilisateur
  */
 async function createUser(req, res) {
-  const { nom, prenom, email, role, entreprise_id, service } = req.body;
+  const { nom, prenom, email, role, entreprise_id, service, date_embauche } = req.body;
   const user = req.user;
   const normalizedService = normalizeServiceName(service);
 
@@ -41,6 +63,8 @@ async function createUser(req, res) {
   }
 
   try {
+    const normalizedHiringDate = normalizeOptionalDateOnly(date_embauche);
+
     if (normalizedService) {
       const serviceExists = await serviceExistsInEntreprise(entreprise_id, normalizedService);
       if (!serviceExists) {
@@ -51,15 +75,27 @@ async function createUser(req, res) {
     const tempPassword = crypto.randomBytes(6).toString('hex');
     const hash = await bcrypt.hash(tempPassword, 10);
 
-    const newUser = await Utilisateur.create({
-      nom,
-      prenom,
-      email,
-      role,
-      service: normalizedService || null,
-      entreprise_id,
-      password_hash: hash,
-      statut: 'en_attente',
+    let newUser = null;
+
+    await sequelize.transaction(async (t) => {
+      newUser = await Utilisateur.create({
+        nom,
+        prenom,
+        email,
+        role,
+        service: normalizedService || null,
+        entreprise_id,
+        date_embauche: normalizedHiringDate || null,
+        password_hash: hash,
+        statut: 'en_attente',
+      }, { transaction: t });
+
+      await quotasService.initializeUserCounters({
+        entrepriseId: entreprise_id,
+        utilisateurId: newUser.id,
+        annee: new Date().getFullYear(),
+        transaction: t,
+      });
     });
 
     const entreprise = entreprise_id
@@ -83,12 +119,13 @@ async function createUser(req, res) {
       email: newUser.email,
       role: newUser.role,
       entreprise_id: newUser.entreprise_id,
+      date_embauche: newUser.date_embauche,
       statut: newUser.statut,
       message: 'Utilisateur créé et email envoyé avec mot de passe temporaire'
     });
   } catch (err) {
     console.error('Erreur création utilisateur:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
 
@@ -143,7 +180,8 @@ async function updateUser(req, res) {
       return res.status(403).json({ message: 'Vous ne pouvez modifier que les utilisateurs de votre entreprise' });
     }
 
-    const { nom, prenom, email, role, service, statut, password } = req.body;
+    const { nom, prenom, email, role, service, statut, password, date_embauche } = req.body;
+    const normalizedHiringDate = normalizeOptionalDateOnly(date_embauche);
 
     const nextRole = role || utilisateur.role;
     const nextService = typeof service !== 'undefined' ? service : utilisateur.service;
@@ -173,7 +211,20 @@ async function updateUser(req, res) {
       await emailService.sendPasswordResetConfirmation(email);
     }
 
-    await utilisateur.update({ nom, prenom, email, role, service: normalizedNextService || null, statut });
+    const updatePayload = {
+      nom,
+      prenom,
+      email,
+      role,
+      service: normalizedNextService || null,
+      statut,
+    };
+
+    if (typeof date_embauche !== 'undefined') {
+      updatePayload.date_embauche = normalizedHiringDate;
+    }
+
+    await utilisateur.update(updatePayload);
 
     // === Audit général ===
     await auditUser.updated(utilisateur, req.user, req);
@@ -186,7 +237,7 @@ async function updateUser(req, res) {
     res.json(utilisateur);
   } catch (err) {
     console.error('Erreur mise à jour utilisateur:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
 

@@ -111,7 +111,12 @@ async function forgotPassword(req, res) {
     // === Audit demande reset ===
     await auditAuth.passwordResetRequest(req.body.email, req);
 
-    res.json({ message: 'Email de réinitialisation envoyé', resetToken: token });
+    const response = { message: 'Email de réinitialisation envoyé' };
+    if (process.env.NODE_ENV === 'development') {
+      response.resetToken = token;
+    }
+
+    res.json(response);
   } catch (err) {
     res.status(400).json({ message: err.message });
   }

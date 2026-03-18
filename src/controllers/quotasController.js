@@ -140,6 +140,72 @@ async function removeUserCounter(req, res) {
   }
 }
 
+async function recalculateProrata(req, res) {
+  try {
+    const annee = Number(req.body?.annee || req.query?.annee || new Date().getFullYear());
+    const apply = req.body?.apply === true || req.query?.apply === 'true';
+    const onlyMissingHiringDate = req.body?.only_missing_hiring_date === true || req.query?.only_missing_hiring_date === 'true';
+
+    let entrepriseId = null;
+    if (req.user.role === 'super_admin') {
+      entrepriseId = req.body?.entreprise_id || req.query?.entreprise_id || null;
+    } else {
+      entrepriseId = req.user.entreprise_id;
+    }
+
+    const result = await quotasService.recalculateCountersProrata({
+      annee,
+      entrepriseId,
+      apply,
+      onlyMissingHiringDate,
+      previewLimit: 30,
+    });
+
+    res.json({
+      message: result?.disabled
+        ? result.message
+        : apply
+          ? 'Régularisation prorata appliquée avec succès.'
+          : 'Simulation prorata effectuée.',
+      ...result,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
+  }
+}
+
+async function monthlyAccrual(req, res) {
+  try {
+    const annee = Number(req.body?.annee || req.query?.annee || new Date().getFullYear());
+    const mois = Number(req.body?.mois || req.query?.mois || (new Date().getMonth() + 1));
+    const apply = req.body?.apply === true || req.query?.apply === 'true';
+
+    const entrepriseId = req.user.role === 'super_admin'
+      ? (req.body?.entreprise_id || req.query?.entreprise_id || null)
+      : req.user.entreprise_id;
+
+    if (!entrepriseId) {
+      return res.status(400).json({ message: 'entreprise_id est requis pour super_admin' });
+    }
+
+    const result = await quotasService.ajouterAcquisitionMensuelle(entrepriseId, annee, mois, {
+      apply,
+      previewLimit: 30,
+    });
+
+    res.json({
+      message: apply
+        ? 'Crédit mensuel appliqué avec succès.'
+        : 'Simulation de crédit mensuel effectuée.',
+      ...result,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
+  }
+}
+
 module.exports = {
   initQuota,
   getSolde,
@@ -148,4 +214,6 @@ module.exports = {
   getUserCounters,
   upsertUserCounter,
   removeUserCounter,
+  recalculateProrata,
+  monthlyAccrual,
 };

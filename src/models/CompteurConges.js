@@ -55,15 +55,25 @@ module.exports = (sequelize) => {
       defaultValue: 0
     },
 
+    jours_annules: {
+      type: DataTypes.DECIMAL(5,2),
+      allowNull: false,
+      defaultValue: 0
+    },
+
+    dernier_credit_mensuel: {
+      type: DataTypes.STRING(7),
+      allowNull: true,
+      defaultValue: null
+    },
+
     solde_disponible: {
       type: DataTypes.VIRTUAL,
       get() {
         const acquis = parseFloat(this.jours_acquis || 0);
-        const reportes = parseFloat(this.jours_reportes || 0);
         const reserves = parseFloat(this.jours_reserves || 0);
-        const pris = parseFloat(this.jours_pris || 0);
 
-        return acquis + reportes - reserves - pris;
+        return acquis - reserves;
       }
     }
 

@@ -15,6 +15,7 @@ const usersController = require('../controllers/usersController');
 const authorizeRole = require('../middlewares/authorizeRole');
 const { generalLimiter } = require('../middlewares/rateLimiter');
 const { metricsMiddleware, getMetrics } = require('../middlewares/metrics');
+const MonitoringService = require('../services/monitoringService');
 const sequelize = require('../config/database');
 
 // Appliquer rate limiter général à toutes les routes
@@ -74,6 +75,51 @@ router.put('/me', authJwt, usersController.updateOwnProfile);
 // Métriques (super_admin uniquement)
 // ------------------------------
 router.get('/metrics', authJwt, authorizeRole(['super_admin']), getMetrics);
+
+// ------------------------------
+// Monitoring santé système (super_admin uniquement)
+// ------------------------------
+router.get('/monitoring/health', authJwt, authorizeRole(['super_admin']), async (req, res) => {
+  try {
+    const report = await MonitoringService.getHealthReport();
+    const statusCode = report.status === 'healthy' ? 200 : 503;
+    res.status(statusCode).json(report);
+  } catch (error) {
+    res.status(500).json({
+      status: 'unhealthy',
+      message: 'Impossible de récupérer le rapport de santé',
+      error: error.message,
+    });
+  }
+});
+
+// ------------------------------
+// Monitoring cleanup (super_admin uniquement)
+// ------------------------------
+router.post('/monitoring/cleanup', authJwt, authorizeRole(['super_admin']), async (req, res) => {
+  try {
+    const rawDaysToKeep = req.body?.daysToKeep;
+    const hasInput = rawDaysToKeep !== undefined && rawDaysToKeep !== null && rawDaysToKeep !== '';
+    const daysToKeep = hasInput ? Number(rawDaysToKeep) : 30;
+
+    if (!Number.isFinite(daysToKeep) || daysToKeep <= 0) {
+      return res.status(400).json({
+        message: 'daysToKeep doit être un nombre strictement positif'
+      });
+    }
+
+    const result = await MonitoringService.cleanupOldMetrics(daysToKeep);
+    return res.status(200).json({
+      message: 'Nettoyage des métriques terminé',
+      ...result,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: 'Impossible de nettoyer les métriques',
+      error: error.message,
+    });
+  }
+});
 
 // ------------------------------
 // Quotas routes (auth requis)

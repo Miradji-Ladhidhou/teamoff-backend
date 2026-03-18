@@ -9,6 +9,7 @@ const errorHandler = require('./middlewares/errorHandler');
 const notificationService = require('./services/notificationSocketService');
 const maintenanceMode = require('./middlewares/maintenanceMode');
 const { initBackupCron } = require('./cron/backupCron');
+const { initQuotasCron } = require('./cron/quotasCron');
 const cors = require('cors');
 
 const app = express();
@@ -136,6 +137,30 @@ async function ensureHolidayTemplateTables() {
   `);
 }
 
+async function ensureCompteurCongesColumns() {
+  await sequelize.query(`
+    ALTER TABLE compteur_conges
+    ADD COLUMN IF NOT EXISTS dernier_credit_mensuel VARCHAR(7) NULL;
+  `);
+
+  await sequelize.query(`
+    ALTER TABLE compteur_conges
+    ADD COLUMN IF NOT EXISTS jours_annules NUMERIC(5,2) NOT NULL DEFAULT 0;
+  `);
+
+  // Autorise les recalculs de solde signés (positif/négatif) après modification d'un congé validé.
+  await sequelize.query(`
+    ALTER TABLE compteur_conges
+    DROP CONSTRAINT IF EXISTS check_jours_acquis_non_negatif;
+  `);
+
+  // Stocke le nombre de jours calculés à la création du congé (utilisé pour le rollback du solde).
+  await sequelize.query(`
+    ALTER TABLE conge
+    ADD COLUMN IF NOT EXISTS jours_calcules NUMERIC(5,2) NULL;
+  `);
+}
+
 // ----------------------
 // Démarrage serveur
 // ----------------------
@@ -154,11 +179,15 @@ const startServer = async () => {
     await ensureHolidayTemplateTables();
     console.log('✅ Tables modèles jours fériés vérifiées');
 
+    await ensureCompteurCongesColumns();
+    console.log('✅ Colonnes compteurs congés vérifiées');
+
     await sequelize.sync({ alter: process.env.NODE_ENV === 'development' });
     console.log('✅ Base synchronisée');
 
     // Initialiser le cron de sauvegarde automatique
     await initBackupCron();
+    initQuotasCron();
 
     const PORT = process.env.PORT || 5500;
 

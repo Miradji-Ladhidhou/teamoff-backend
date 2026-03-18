@@ -1,6 +1,7 @@
 const { Conge, CompteurConges, CongeType, Utilisateur, Entreprise, sequelize } = require('../models');
 const notificationService = require('./notificationService');
 const { auditConge } = require('./auditHelper');
+const { ensureCounter } = require('./quotasService');
 const joursFeriesService = require('./joursFeriesService');
 const { getLeaveRules, getEffectiveLeaveRules } = require('./politiqueConges');
 const { Op } = require('sequelize');
@@ -9,6 +10,13 @@ const isSameOrBefore = require('dayjs/plugin/isSameOrBefore');
 const { validateUUID, validateDateRange, validateDemiJournee } = require('../utils/validation');
 
 dayjs.extend(isSameOrBefore);
+
+const FRONTEND_URL = process.env.FRONTEND_URL || '';
+
+function buildCongeUrl(congeId) {
+  const path = `/conges/${congeId}`;
+  return FRONTEND_URL ? `${FRONTEND_URL}${path}` : path;
+}
 
 function safeNumber(value) {
   const parsed = Number.parseFloat(value);
@@ -24,10 +32,12 @@ function shouldCountLeaveDay(current, joursFeriesSet, blockedDays) {
   const dateKey = current.format('YYYY-MM-DD');
   const weekdaysSet = new Set(Array.isArray(blockedDays?.weekdays) ? blockedDays.weekdays : []);
   const excludeWeekends = blockedDays?.exclude_weekends !== false;
+  const countSaturday = blockedDays?.count_saturday === true;
+  const countSunday = blockedDays?.count_sunday === true;
   const excludeHolidays = blockedDays?.exclude_holidays !== false;
   const specificDatesSet = new Set(Array.isArray(blockedDays?.specific_dates) ? blockedDays.specific_dates : []);
 
-  if (excludeWeekends && (day === 0 || day === 6)) {
+  if (excludeWeekends && ((day === 6 && !countSaturday) || (day === 0 && !countSunday))) {
     return false;
   }
 
@@ -44,6 +54,16 @@ function shouldCountLeaveDay(current, joursFeriesSet, blockedDays) {
   }
 
   return true;
+}
+
+function getExtraWeekendDaysAfterFriday(endDate, blockedDays) {
+  if (!endDate || typeof endDate.day !== 'function') return 0;
+  if (endDate.day() !== 5) return 0;
+
+  const addSaturday = blockedDays?.include_saturday_after_friday === true;
+  const addSunday = blockedDays?.include_sunday_after_friday === true;
+
+  return (addSaturday ? 1 : 0) + (addSunday ? 1 : 0);
 }
 
 function calculateBusinessDays(conge, joursFeriesSet, blockedDays) {
@@ -64,6 +84,8 @@ function calculateBusinessDays(conge, joursFeriesSet, blockedDays) {
     if (conge.fin_demi_journee === 'matin') total -= 0.5;
   }
 
+  total += getExtraWeekendDaysAfterFriday(end, blockedDays);
+
   return total;
 }
 
@@ -72,28 +94,58 @@ function calculateLeaveBreakdown(conge, joursFeriesSet, blockedDays) {
   let joursBloques = 0;
   let joursFeriesExclus = 0;
   let joursPrisCalcules = 0;
+  const datesNonPrises = [];
   let current = dayjs(conge.date_debut);
   const end = dayjs(conge.date_fin);
 
   const weekdaysSet = new Set(Array.isArray(blockedDays?.weekdays) ? blockedDays.weekdays : []);
   const excludeWeekends = blockedDays?.exclude_weekends !== false;
+  const countSaturday = blockedDays?.count_saturday === true;
+  const countSunday = blockedDays?.count_sunday === true;
   const excludeHolidays = blockedDays?.exclude_holidays !== false;
   const specificDatesSet = new Set(Array.isArray(blockedDays?.specific_dates) ? blockedDays.specific_dates : []);
+  const weekdayLabelByNumber = {
+    0: 'Dimanche',
+    1: 'Lundi',
+    2: 'Mardi',
+    3: 'Mercredi',
+    4: 'Jeudi',
+    5: 'Vendredi',
+    6: 'Samedi',
+  };
 
   while (current.isSameOrBefore(end, 'day')) {
     joursDansPeriode += 1;
     const day = current.day();
     const dateKey = current.format('YYYY-MM-DD');
 
-    const isBlocked =
-      (excludeWeekends && (day === 0 || day === 6))
-      || weekdaysSet.has(day)
-      || specificDatesSet.has(dateKey);
+    let blockedCause = null;
+    if (excludeWeekends && day === 6 && !countSaturday) {
+      blockedCause = 'Week-end (samedi exclu)';
+    } else if (excludeWeekends && day === 0 && !countSunday) {
+      blockedCause = 'Week-end (dimanche exclu)';
+    } else if (weekdaysSet.has(day)) {
+      blockedCause = `Jour bloqué (${weekdayLabelByNumber[day] || 'jour configuré'})`;
+    } else if (specificDatesSet.has(dateKey)) {
+      blockedCause = 'Date bloquée manuellement';
+    }
+
+    const isBlocked = Boolean(blockedCause);
 
     if (isBlocked) {
       joursBloques += 1;
+      datesNonPrises.push({
+        date: dateKey,
+        cause: blockedCause,
+        quantite: 1,
+      });
     } else if (excludeHolidays && joursFeriesSet.has(dateKey)) {
       joursFeriesExclus += 1;
+      datesNonPrises.push({
+        date: dateKey,
+        cause: 'Jour férié exclu',
+        quantite: 1,
+      });
     } else {
       joursPrisCalcules += 1;
     }
@@ -106,12 +158,25 @@ function calculateLeaveBreakdown(conge, joursFeriesSet, blockedDays) {
     if (conge.debut_demi_journee === 'apres_midi') {
       joursPrisCalcules -= 0.5;
       joursDemiJourneesDeduites += 0.5;
+      datesNonPrises.push({
+        date: dayjs(conge.date_debut).format('YYYY-MM-DD'),
+        cause: 'Demi-journée non prise (matin)',
+        quantite: 0.5,
+      });
     }
     if (conge.fin_demi_journee === 'matin') {
       joursPrisCalcules -= 0.5;
       joursDemiJourneesDeduites += 0.5;
+      datesNonPrises.push({
+        date: dayjs(conge.date_fin).format('YYYY-MM-DD'),
+        cause: 'Demi-journée non prise (après-midi)',
+        quantite: 0.5,
+      });
     }
   }
+
+  const weekendAfterFridayCount = getExtraWeekendDaysAfterFriday(end, blockedDays);
+  joursPrisCalcules += weekendAfterFridayCount;
 
   const joursDeduitsCalcul = (joursBloques + joursFeriesExclus + joursDemiJourneesDeduites);
 
@@ -120,8 +185,10 @@ function calculateLeaveBreakdown(conge, joursFeriesSet, blockedDays) {
     jours_bloques: joursBloques,
     jours_feries_exclus: joursFeriesExclus,
     jours_demi_journees_deduites: joursDemiJourneesDeduites,
+    jours_weekend_apres_vendredi: weekendAfterFridayCount,
     jours_deduits_calcul: joursDeduitsCalcul,
     jours_pris_calcules: joursPrisCalcules,
+    dates_non_prises: datesNonPrises,
   };
 }
 
@@ -129,6 +196,13 @@ async function resolveCongeDays(conge) {
   const persisted = Number.parseFloat(conge.jours_calcules);
   if (Number.isFinite(persisted) && persisted > 0) {
     return persisted;
+  }
+
+  // Compat legacy: certains enregistrements peuvent exposer le nombre de jours
+  // sous d'autres clés selon l'historique des migrations.
+  const fallbackStored = Number.parseFloat(conge.nombre_jours ?? conge.jours_pris);
+  if (Number.isFinite(fallbackStored) && fallbackStored > 0) {
+    return fallbackStored;
   }
 
   const computed = await calcJoursConges(
@@ -216,6 +290,9 @@ async function calcJoursConges(entrepriseId, dateDebut, dateFin, debut_demi, fin
     if (debut_demi === 'apres_midi') total -= 0.5;
     if (fin_demi === 'matin') total -= 0.5;
   }
+
+  total += getExtraWeekendDaysAfterFriday(end, blockedDays);
+
   return total;
 }
 
@@ -240,8 +317,12 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     const utilisateur = await Utilisateur.findByPk(utilisateurId, { transaction: t });
     if (!utilisateur) throw new Error('Utilisateur introuvable');
 
-    if (reqUser?.role === 'employe' && reqUser.id !== utilisateur.id) {
-      throw new Error('Un employé ne peut créer un congé que pour lui-même');
+    if (!['employe', 'manager'].includes(reqUser?.role)) {
+      throw new Error('Seuls les employés et managers peuvent poser un congé');
+    }
+
+    if (reqUser.id !== utilisateur.id) {
+      throw new Error('Un employé ou un manager ne peut créer un congé que pour lui-même');
     }
 
     if (reqUser?.role !== 'super_admin' && reqUser?.entreprise_id !== utilisateur.entreprise_id) {
@@ -313,23 +394,22 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       lock: t.LOCK.UPDATE
     });
     if (!compteur) {
-      compteur = await CompteurConges.create({
-        utilisateur_id: utilisateurId,
-        entreprise_id: utilisateur.entreprise_id,
-        conge_type_id,
+      compteur = await ensureCounter({
+        entrepriseId: utilisateur.entreprise_id,
+        utilisateurId,
+        congeTypeId: conge_type_id,
         annee: dayjs(date_debut).year(),
-        jours_acquis: congeType.quota_annuel ?? 0,
-        jours_pris: 0,
-        jours_reserves: 0
-      }, { transaction: t });
+        transaction: t,
+      });
     }
 
-    if (jours > (compteur.jours_acquis - compteur.jours_pris - compteur.jours_reserves)) {
+    if (jours > (safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves))) {
       throw new Error('Solde insuffisant');
     }
 
     const approvalWorkflow = leaveRules.approval_workflow;
     if (approvalWorkflow === 'auto') {
+      compteur.jours_acquis = Math.max(0, safeNumber(compteur.jours_acquis) - safeNumber(jours));
       compteur.jours_pris = safeNumber(compteur.jours_pris) + safeNumber(jours);
     } else {
       compteur.jours_reserves = safeNumber(compteur.jours_reserves) + safeNumber(jours);
@@ -359,17 +439,28 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
 
     const shouldNotifyOnCreate = leaveRules.notification_settings.on_create;
 
+    const utilisateurNomComplet = `${utilisateur.prenom || ''} ${utilisateur.nom || ''}`.trim() || utilisateur.nom;
+
     if (shouldNotifyOnCreate && manager) {
       await notificationService.sendEmail({
         to: manager.email,
-        subject: `Nouvelle demande de congé de ${utilisateur.nom}`,
-        html: `<p>Une nouvelle demande de congé a été créée par ${utilisateur.prenom} ${utilisateur.nom} du ${date_debut} au ${date_fin}.</p><p>Commentaire employé : ${commentaire_employe || 'Aucun'}</p><p>Veuillez la valider.</p>`
+        subject: `Nouvelle demande de conge - ${utilisateurNomComplet}`,
+        templateName: 'leave-new-request-manager',
+        data: {
+          destinataire_prenom: manager.prenom || 'Manager',
+          demandeur_nom: utilisateurNomComplet,
+          date_debut,
+          date_fin,
+          type_conge: congeType.libelle || 'Type non renseigne',
+          commentaire_employe: commentaire_employe || 'Aucun',
+          action_url: buildCongeUrl(conge.id),
+        }
       });
       await notificationService.creerNotification({
         entreprise_id: utilisateur.entreprise_id,
         utilisateur_id: manager.id,
         type: 'conge_demande',
-        message: `Nouvelle demande de congé de ${utilisateur.nom} (${date_debut} - ${date_fin})`,
+        message: `Nouvelle demande de congé de ${utilisateurNomComplet} (${date_debut} - ${date_fin})`,
         url: `/conges/${conge.id}`
       });
     }
@@ -379,7 +470,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
         entreprise_id: utilisateur.entreprise_id,
         utilisateur_id: admin.id,
         type: 'conge_demande',
-        message: `Nouvelle demande de congé de ${utilisateur.nom} (${date_debut} - ${date_fin})`,
+        message: `Nouvelle demande de congé de ${utilisateurNomComplet} (${date_debut} - ${date_fin})`,
         url: `/conges/${conge.id}`
       });
     }
@@ -388,8 +479,15 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     if (shouldNotifyOnCreate) {
       await notificationService.sendEmail({
         to: utilisateur.email,
-        subject: 'Votre demande de congé a été créée',
-        html: `<p>Votre demande de congé du ${date_debut} au ${date_fin} a été créée${approvalWorkflow === 'auto' ? ' et validée automatiquement.' : ' et est en attente de validation.'}</p>`
+        subject: 'Confirmation de creation de votre demande de conge',
+        templateName: 'leave-created-employee',
+        data: {
+          destinataire_prenom: utilisateur.prenom || 'Collaborateur',
+          date_debut,
+          date_fin,
+          statut_label: approvalWorkflow === 'auto' ? 'Validee automatiquement' : 'En attente de validation',
+          action_url: buildCongeUrl(conge.id),
+        }
       });
       await notificationService.creerNotification({
         entreprise_id: utilisateur.entreprise_id,
@@ -456,8 +554,17 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
       if (admin) {
         await notificationService.sendEmail({
           to: admin.email,
-          subject: `Congé validé par le manager`,
-          html: `<p>Le congé de ${utilisateur.nom} du ${conge.date_debut} au ${conge.date_fin} a été validé par le manager et nécessite votre validation finale.</p><p>Commentaire employé : ${conge.commentaire_employe || 'Aucun'}</p><p>Commentaire manager : ${conge.commentaire_manager || 'Aucun'}</p>`
+          subject: 'Demande de conge validee par le manager - action requise',
+          templateName: 'leave-manager-approved-admin',
+          data: {
+            destinataire_prenom: admin.prenom || 'Administrateur',
+            demandeur_nom: `${utilisateur.prenom || ''} ${utilisateur.nom || ''}`.trim() || utilisateur.nom,
+            date_debut: conge.date_debut,
+            date_fin: conge.date_fin,
+            commentaire_employe: conge.commentaire_employe || 'Aucun',
+            commentaire_manager: conge.commentaire_manager || 'Aucun',
+            action_url: buildCongeUrl(conge.id),
+          }
         });
         await notificationService.creerNotification({
           entreprise_id: conge.entreprise_id,
@@ -480,6 +587,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         });
         if (!compteur) throw new Error('Compteur de congés introuvable pour validation');
 
+        compteur.jours_acquis = Math.max(0, safeNumber(compteur.jours_acquis) - safeNumber(joursConge));
         compteur.jours_pris = safeNumber(compteur.jours_pris) + safeNumber(joursConge);
         compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
         await compteur.save({ transaction: t });
@@ -487,8 +595,14 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         if (leaveRules.notification_settings.on_validate) {
           await notificationService.sendEmail({
             to: utilisateur.email,
-            subject: 'Votre demande de congé a été approuvée',
-            html: `<p>Votre demande de congé du ${conge.date_debut} au ${conge.date_fin} a été approuvée.</p>`
+            subject: 'Votre demande de conge est approuvee',
+            templateName: 'leave-approved-employee',
+            data: {
+              destinataire_prenom: utilisateur.prenom || 'Collaborateur',
+              date_debut: conge.date_debut,
+              date_fin: conge.date_fin,
+              action_url: buildCongeUrl(conge.id),
+            }
           });
           await notificationService.creerNotification({
             entreprise_id: conge.entreprise_id,
@@ -535,6 +649,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
       });
       if (!compteur) throw new Error('Compteur de congés introuvable pour validation');
 
+      compteur.jours_acquis = Math.max(0, safeNumber(compteur.jours_acquis) - safeNumber(joursConge));
       compteur.jours_pris = safeNumber(compteur.jours_pris) + safeNumber(joursConge);
       compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
       await compteur.save({ transaction: t });
@@ -543,8 +658,14 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
       if (leaveRules.notification_settings.on_validate) {
         await notificationService.sendEmail({
           to: utilisateur.email,
-          subject: 'Votre demande de congé a été approuvée',
-          html: `<p>Votre demande de congé du ${conge.date_debut} au ${conge.date_fin} a été approuvée.</p>`
+          subject: 'Votre demande de conge est approuvee',
+          templateName: 'leave-approved-employee',
+          data: {
+            destinataire_prenom: utilisateur.prenom || 'Collaborateur',
+            date_debut: conge.date_debut,
+            date_fin: conge.date_fin,
+            action_url: buildCongeUrl(conge.id),
+          }
         });
         await notificationService.creerNotification({
           entreprise_id: conge.entreprise_id,
@@ -609,6 +730,7 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
 
     if (compteur) {
       if (ancienStatut === 'valide_final') {
+        compteur.jours_acquis = safeNumber(compteur.jours_acquis) + safeNumber(joursConge);
         compteur.jours_pris = Math.max(0, safeNumber(compteur.jours_pris) - safeNumber(joursConge));
       } else {
         compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
@@ -620,8 +742,15 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
     if (leaveRules.notification_settings.on_reject) {
       await notificationService.sendEmail({
         to: utilisateur.email,
-        subject: 'Votre demande de congé a été refusée',
-        html: `<p>Votre demande de congé du ${conge.date_debut} au ${conge.date_fin} a été refusée.</p>`
+        subject: 'Votre demande de conge a ete refusee',
+        templateName: 'leave-rejected-employee',
+        data: {
+          destinataire_prenom: utilisateur.prenom || 'Collaborateur',
+          date_debut: conge.date_debut,
+          date_fin: conge.date_fin,
+          commentaire: commentaire || conge.commentaire_admin || conge.commentaire_manager || 'Aucun commentaire',
+          action_url: buildCongeUrl(conge.id),
+        }
       });
       await notificationService.creerNotification({
         entreprise_id: conge.entreprise_id,
@@ -718,16 +847,14 @@ async function getConges(user) {
     where: {
       [Op.or]: compteurKeys
     },
-    attributes: ['utilisateur_id', 'conge_type_id', 'annee', 'jours_acquis', 'jours_reportes', 'jours_reserves', 'jours_pris']
+    attributes: ['utilisateur_id', 'conge_type_id', 'annee', 'jours_acquis', 'jours_reserves']
   });
 
   const soldeByKey = new Map();
   compteurs.forEach((compteur) => {
     const solde =
-      parseFloat(compteur.jours_acquis || 0) +
-      parseFloat(compteur.jours_reportes || 0) -
-      parseFloat(compteur.jours_reserves || 0) -
-      parseFloat(compteur.jours_pris || 0);
+      parseFloat(compteur.jours_acquis || 0) -
+      parseFloat(compteur.jours_reserves || 0);
     const key = `${compteur.utilisateur_id}::${compteur.conge_type_id}::${compteur.annee}`;
     soldeByKey.set(key, Number.isFinite(solde) ? solde : null);
   });
@@ -791,7 +918,7 @@ async function getCongeById(id, user) {
       conge_type_id: conge.conge_type_id,
       annee
     },
-    attributes: ['jours_acquis', 'jours_reportes', 'jours_reserves', 'jours_pris']
+    attributes: ['jours_acquis', 'jours_reserves']
   });
 
   let joursFeriesSet = new Set();
@@ -817,10 +944,8 @@ async function getCongeById(id, user) {
     : leaveBreakdown.jours_pris_calcules;
 
   const joursRestants = compteur
-    ? parseFloat(compteur.jours_acquis || 0) +
-      parseFloat(compteur.jours_reportes || 0) -
-      parseFloat(compteur.jours_reserves || 0) -
-      parseFloat(compteur.jours_pris || 0)
+    ? parseFloat(compteur.jours_acquis || 0) -
+      parseFloat(compteur.jours_reserves || 0)
     : null;
 
   return {
@@ -843,39 +968,303 @@ async function getCongeById(id, user) {
 // Modifier et supprimer
 // ----------------------------
 async function updateConge(id, data, user) {
-  const conge = await Conge.findByPk(id);
-  if (!conge) throw new Error('Congé introuvable');
-  if (conge.statut !== 'en_attente_manager') throw new Error('Modification impossible');
+  return sequelize.transaction(async (t) => {
+    const conge = await Conge.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!conge) throw new Error('Congé introuvable');
 
-  // Certains clients envoient l'objet complet, y compris le statut.
-  // Nous ignorons le statut ici (la validation doit passer par /validate).
-  if ('statut' in data) {
-    if (data.statut !== conge.statut) {
-      throw new Error('Modification du statut non autorisée');
+    const employe = await Utilisateur.findByPk(conge.utilisateur_id, {
+      transaction: t,
+      attributes: ['id', 'prenom', 'nom', 'email']
+    });
+    if (!employe) throw new Error('Employé introuvable');
+
+    if (user?.role !== 'admin_entreprise' && user?.id !== conge.utilisateur_id) {
+      throw new Error('Modification non autorisée');
     }
-    delete data.statut;
-  }
 
-  await conge.update(data);
-  return conge;
+    if (user?.role === 'admin_entreprise' && user?.entreprise_id !== conge.entreprise_id) {
+      throw new Error('Accès interdit: entreprise différente');
+    }
+
+    const isPending = conge.statut === 'en_attente_manager';
+    const isFinalValidated = conge.statut === 'valide_final';
+
+    if (!isPending && !isFinalValidated) {
+      throw new Error('Modification impossible');
+    }
+
+    if (isFinalValidated && user?.role !== 'admin_entreprise') {
+      throw new Error('Seul un admin entreprise peut modifier un congé validé');
+    }
+
+    // Certains clients envoient l'objet complet, y compris le statut.
+    // Nous ignorons le statut ici (la validation doit passer par /validate).
+    if ('statut' in data) {
+      if (data.statut !== conge.statut) {
+        throw new Error('Modification du statut non autorisée');
+      }
+      delete data.statut;
+    }
+
+    const allowedFields = [
+      'date_debut',
+      'date_fin',
+      'debut_demi_journee',
+      'fin_demi_journee',
+      'conge_type_id',
+      'commentaire_employe'
+    ];
+
+    const updates = {};
+    for (const field of allowedFields) {
+      if (field in data) updates[field] = data[field];
+    }
+
+    const nextDateDebut = updates.date_debut ?? conge.date_debut;
+    const nextDateFin = updates.date_fin ?? conge.date_fin;
+    const nextDebutDemiJournee = updates.debut_demi_journee ?? conge.debut_demi_journee;
+    const nextFinDemiJournee = updates.fin_demi_journee ?? conge.fin_demi_journee;
+    const nextCongeTypeId = updates.conge_type_id ?? conge.conge_type_id;
+
+    if (!validateUUID(nextCongeTypeId)) {
+      throw new Error('Type de congé invalide');
+    }
+
+    if (!validateDateRange(nextDateDebut, nextDateFin)) {
+      throw new Error('Dates invalides ou date_fin < date_debut');
+    }
+
+    if (!validateDemiJournee(nextDebutDemiJournee) || !validateDemiJournee(nextFinDemiJournee)) {
+      throw new Error('Demi-journée invalide');
+    }
+
+    if (
+      nextDateDebut === nextDateFin
+      && nextDebutDemiJournee === 'apres_midi'
+      && nextFinDemiJournee === 'matin'
+    ) {
+      throw new Error('Demi-journée incohérente sur une seule journée');
+    }
+
+    const oldDays = await resolveCongeDays(conge);
+    const newDays = await calcJoursConges(
+      conge.entreprise_id,
+      nextDateDebut,
+      nextDateFin,
+      nextDebutDemiJournee,
+      nextFinDemiJournee
+    );
+
+    if (!Number.isFinite(newDays) || newDays <= 0) {
+      throw new Error('Nombre de jours de congé invalide');
+    }
+
+    const oldYear = dayjs(conge.date_debut).year();
+    const nextYear = dayjs(nextDateDebut).year();
+
+    const oldCounter = await CompteurConges.findOne({
+      where: {
+        utilisateur_id: conge.utilisateur_id,
+        conge_type_id: conge.conge_type_id,
+        annee: oldYear
+      },
+      transaction: t,
+      lock: t.LOCK.UPDATE
+    });
+
+    if (!oldCounter) {
+      throw new Error('Compteur de congés introuvable pour modification');
+    }
+
+    const nextCongeType = await CongeType.findOne({
+      where: { id: nextCongeTypeId, entreprise_id: conge.entreprise_id },
+      transaction: t
+    });
+    if (!nextCongeType) throw new Error('Type de congé introuvable');
+
+    const sameCounter = conge.conge_type_id === nextCongeTypeId && oldYear === nextYear;
+
+    let nextCounter = oldCounter;
+    if (!sameCounter) {
+      nextCounter = await CompteurConges.findOne({
+        where: {
+          utilisateur_id: conge.utilisateur_id,
+          conge_type_id: nextCongeTypeId,
+          annee: nextYear
+        },
+        transaction: t,
+        lock: t.LOCK.UPDATE
+      });
+
+      if (!nextCounter) {
+        nextCounter = await ensureCounter({
+          entrepriseId: conge.entreprise_id,
+          utilisateurId: conge.utilisateur_id,
+          congeTypeId: nextCongeTypeId,
+          annee: nextYear,
+          transaction: t,
+        });
+      }
+    }
+
+    if (isPending) {
+      const nextCounterAvailable =
+        safeNumber(nextCounter.jours_acquis)
+        - safeNumber(nextCounter.jours_reserves);
+
+      const effectiveAvailable = sameCounter
+        ? nextCounterAvailable + safeNumber(oldDays)
+        : nextCounterAvailable;
+
+      if (safeNumber(newDays) > effectiveAvailable) {
+        throw new Error('Solde insuffisant');
+      }
+    }
+
+    if (isPending) {
+      if (sameCounter) {
+        oldCounter.jours_reserves = Math.max(
+          0,
+          safeNumber(oldCounter.jours_reserves) - safeNumber(oldDays)
+        ) + safeNumber(newDays);
+        await oldCounter.save({ transaction: t });
+      } else {
+        oldCounter.jours_reserves = Math.max(0, safeNumber(oldCounter.jours_reserves) - safeNumber(oldDays));
+        nextCounter.jours_reserves = safeNumber(nextCounter.jours_reserves) + safeNumber(newDays);
+        await oldCounter.save({ transaction: t });
+        await nextCounter.save({ transaction: t });
+      }
+    } else {
+      if (sameCounter) {
+        // Pour un congé déjà validé, l'admin entreprise peut appliquer un delta signé.
+        // Le solde peut donc évoluer à la hausse ou à la baisse selon la modification.
+        oldCounter.jours_acquis =
+          safeNumber(oldCounter.jours_acquis) + safeNumber(oldDays) - safeNumber(newDays);
+        oldCounter.jours_pris =
+          safeNumber(oldCounter.jours_pris) - safeNumber(oldDays) + safeNumber(newDays);
+        await oldCounter.save({ transaction: t });
+      } else {
+        oldCounter.jours_acquis = safeNumber(oldCounter.jours_acquis) + safeNumber(oldDays);
+        oldCounter.jours_pris = Math.max(0, safeNumber(oldCounter.jours_pris) - safeNumber(oldDays));
+
+        nextCounter.jours_acquis = safeNumber(nextCounter.jours_acquis) - safeNumber(newDays);
+        nextCounter.jours_pris = safeNumber(nextCounter.jours_pris) + safeNumber(newDays);
+
+        await oldCounter.save({ transaction: t });
+        await nextCounter.save({ transaction: t });
+      }
+    }
+
+    await conge.update({
+      ...updates,
+      jours_calcules: newDays
+    }, { transaction: t });
+
+    if (isFinalValidated && user?.role === 'admin_entreprise') {
+      const adminNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Administrateur';
+      if (employe.email) {
+        await notificationService.sendEmail({
+          to: employe.email,
+          subject: 'Mise a jour de votre conge valide',
+          templateName: 'leave-updated-employee',
+          data: {
+            destinataire_prenom: employe.prenom || 'Collaborateur',
+            auteur_action: adminNom,
+            ancienne_periode: `${conge.date_debut} au ${conge.date_fin}`,
+            nouvelle_periode: `${nextDateDebut} au ${nextDateFin}`,
+            action_url: buildCongeUrl(conge.id),
+          }
+        });
+      }
+      await notificationService.creerNotification({
+        entreprise_id: conge.entreprise_id,
+        utilisateur_id: employe.id,
+        type: 'conge_modifie_admin',
+        message: `Votre congé du ${conge.date_debut} au ${conge.date_fin} a été modifié par ${adminNom} (nouvelle période : ${nextDateDebut} au ${nextDateFin})`,
+        url: `/conges/${conge.id}`
+      });
+    }
+
+    return conge;
+  });
 }
 
 async function deleteConge(id, user) {
-  const conge = await Conge.findByPk(id);
-  if (!conge) throw new Error('Congé introuvable');
-  if (conge.statut !== 'en_attente_manager') throw new Error('Impossible de supprimer');
+  await sequelize.transaction(async (t) => {
+    const conge = await Conge.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!conge) throw new Error('Congé introuvable');
 
-  const joursConge = await resolveCongeDays(conge);
+    const employe = await Utilisateur.findByPk(conge.utilisateur_id, {
+      attributes: ['id', 'prenom', 'nom', 'email'],
+      transaction: t,
+    });
+    if (!employe) throw new Error('Employé introuvable');
 
-  const compteur = await CompteurConges.findOne({
-    where: { utilisateur_id: conge.utilisateur_id, conge_type_id: conge.conge_type_id, annee: dayjs(conge.date_debut).year() }
+    if (user?.role !== 'admin_entreprise' && user?.id !== conge.utilisateur_id) {
+      throw new Error('Suppression non autorisée');
+    }
+
+    if (user?.role === 'admin_entreprise' && user?.entreprise_id !== conge.entreprise_id) {
+      throw new Error('Accès interdit: entreprise différente');
+    }
+
+    const isPending = conge.statut === 'en_attente_manager';
+    const isFinalValidated = conge.statut === 'valide_final';
+
+    if (!isPending && !isFinalValidated) throw new Error('Impossible de supprimer');
+    if (isFinalValidated && user?.role !== 'admin_entreprise') {
+      throw new Error('Seul un admin entreprise peut annuler un congé validé');
+    }
+
+    const joursConge = await resolveCongeDays(conge);
+
+    const compteur = await CompteurConges.findOne({
+      where: { utilisateur_id: conge.utilisateur_id, conge_type_id: conge.conge_type_id, annee: dayjs(conge.date_debut).year() },
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    // Évite les suppressions silencieuses sans rollback de solde.
+    if (!compteur) {
+      throw new Error('Compteur introuvable pour annulation: aucune mise à jour de solde appliquée');
+    }
+
+    if (isPending) {
+      compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
+    } else {
+      compteur.jours_acquis = safeNumber(compteur.jours_acquis) + safeNumber(joursConge);
+      compteur.jours_pris = Math.max(0, safeNumber(compteur.jours_pris) - safeNumber(joursConge));
+      compteur.jours_annules = safeNumber(compteur.jours_annules) + safeNumber(joursConge);
+    }
+    await compteur.save({ transaction: t });
+
+    if (isFinalValidated && user?.role === 'admin_entreprise') {
+      const adminNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Administrateur';
+      if (employe.email) {
+        await notificationService.sendEmail({
+          to: employe.email,
+          subject: 'Annulation de votre conge valide',
+          templateName: 'leave-cancelled-employee',
+          data: {
+            destinataire_prenom: employe.prenom || 'Collaborateur',
+            auteur_action: adminNom,
+            date_debut: conge.date_debut,
+            date_fin: conge.date_fin,
+            action_url: buildCongeUrl(conge.id),
+          }
+        });
+      }
+      await notificationService.creerNotification({
+        entreprise_id: conge.entreprise_id,
+        utilisateur_id: employe.id,
+        type: 'conge_annule_admin',
+        message: `Votre congé du ${conge.date_debut} au ${conge.date_fin} a été annulé par ${adminNom}`,
+        url: `/conges/${conge.id}`
+      });
+    }
+
+    await conge.destroy({ transaction: t });
   });
-  if (compteur) {
-    compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
-    await compteur.save();
-  }
-
-  await conge.destroy();
 }
 
 module.exports = {

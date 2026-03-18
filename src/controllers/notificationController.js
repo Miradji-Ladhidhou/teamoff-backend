@@ -1,5 +1,78 @@
 // /controllers/notificationController.js
-const { Notification } = require('../models');
+const { Notification, Entreprise } = require('../models');
+
+const DEFAULT_TIMEZONE = process.env.DEFAULT_APP_TIMEZONE || 'Europe/Paris';
+
+function isValidTimezone(timezone) {
+  if (typeof timezone !== 'string' || !timezone.trim()) {
+    return false;
+  }
+
+  try {
+    new Intl.DateTimeFormat('fr-FR', { timeZone: timezone.trim() });
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function normalizeTimezone(timezone) {
+  if (!isValidTimezone(timezone)) {
+    return null;
+  }
+
+  return timezone.trim();
+}
+
+function getEntrepriseTimezone(parametres, preferredTimezone) {
+  const preferred = normalizeTimezone(preferredTimezone);
+  if (preferred) {
+    return preferred;
+  }
+
+  const tz = parametres?.timezone;
+  const entrepriseTimezone = normalizeTimezone(tz);
+  if (entrepriseTimezone) {
+    return entrepriseTimezone;
+  }
+
+  return normalizeTimezone(DEFAULT_TIMEZONE) || 'UTC';
+}
+
+function formatDateInTimezone(dateValue, timezone) {
+  if (!dateValue) {
+    return null;
+  }
+
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return new Intl.DateTimeFormat('fr-FR', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
+function toIsoString(dateValue) {
+  if (!dateValue) {
+    return null;
+  }
+
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toISOString();
+}
 
 /**
  * Récupérer les notifications de l'utilisateur connecté
@@ -22,8 +95,26 @@ async function getNotifications(req, res) {
       order: [['created_at', 'DESC']]
     });
 
+    const entreprise = await Entreprise.findByPk(req.user.entreprise_id, {
+      attributes: ['nom', 'parametres'],
+    });
+    const timezone = getEntrepriseTimezone(entreprise?.parametres, req.query.timezone);
+
+    const items = rows.map((row) => {
+      const raw = row.get({ plain: true });
+      const createdAtSource = raw.created_at || raw.createdAt;
+
+      return {
+        ...raw,
+        entreprise_nom: entreprise?.nom || null,
+        created_at_iso: toIsoString(createdAtSource),
+        created_at_display: formatDateInTimezone(createdAtSource, timezone),
+        timezone,
+      };
+    });
+
     res.json({
-      items: rows,
+      items,
       pagination: {
         page,
         limit,

@@ -1,7 +1,6 @@
-const { AuditLog } = require('../models');
-
 async function logAction({ action, entity, entity_id, user_id, entreprise_id, ip, userAgent, metadata }) {
   try {
+    const { AuditLog } = require('../models');
     await AuditLog.create({
       action,
       entity,

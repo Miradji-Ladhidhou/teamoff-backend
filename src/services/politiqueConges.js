@@ -7,6 +7,10 @@ const DEFAULT_LEAVE_POLICY = {
   blocked_days: {
     exclude_weekends: true,
     exclude_holidays: true,
+    count_saturday: false,
+    count_sunday: false,
+    include_saturday_after_friday: false,
+    include_sunday_after_friday: false,
     weekdays: [],
     specific_dates: []
   },
@@ -50,6 +54,10 @@ function normalizeBlockedDays(rawBlockedDays = {}) {
   return {
     exclude_weekends: rawBlockedDays.exclude_weekends !== false,
     exclude_holidays: rawBlockedDays.exclude_holidays !== false,
+    count_saturday: rawBlockedDays.count_saturday === true,
+    count_sunday: rawBlockedDays.count_sunday === true,
+    include_saturday_after_friday: rawBlockedDays.include_saturday_after_friday === true || rawBlockedDays.count_saturday === true,
+    include_sunday_after_friday: rawBlockedDays.include_sunday_after_friday === true || rawBlockedDays.count_sunday === true,
     weekdays,
     specific_dates: specificDates,
   };
@@ -98,6 +106,8 @@ function normalizeLeavePolicy(rawPolicy = {}) {
     minimum_notice_days: Math.max(0, Number(rawPolicy?.minimum_notice_days) || 0),
     max_consecutive_days: Math.max(1, Number(rawPolicy?.max_consecutive_days) || DEFAULT_LEAVE_POLICY.max_consecutive_days),
     notification_settings: normalizeNotificationSettings(rawPolicy?.notification_settings),
+    report_autorise: rawPolicy?.report_autorise === true,
+    report_max_jours: Math.max(0, Number(rawPolicy?.report_max_jours) || 0),
   };
 }
 

@@ -42,6 +42,12 @@ module.exports = (sequelize) => {
       allowNull: false,
       defaultValue: 'en_attente',
     },
+    date_embauche: {
+      type: DataTypes.DATEONLY,
+      allowNull: true,
+      defaultValue: null,
+      field: 'date_embauche',
+    },
     failed_login_attempts: {
       type: DataTypes.INTEGER,
       allowNull: false,

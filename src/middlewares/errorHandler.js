@@ -3,6 +3,11 @@ function errorHandler(err, req, res, next) {
   if (req.user) console.error(`Utilisateur: ${req.user.id} | Role: ${req.user.role}`);
   console.error(err);
 
+  // JSON syntax error from express.json()
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({ message: 'JSON invalide' });
+  }
+
   const message = err.message || 'Erreur serveur';
 
   if (message.includes('introuvable')) return res.status(404).json({ message });

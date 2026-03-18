@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{app_name}} - Alerte systeme</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f6fb;font-family:Arial,sans-serif;color:#1f2937;">
+    <table width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;">
+      <tr><td align="center">
+        <table width="640" cellspacing="0" cellpadding="0" style="max-width:640px;width:100%;background:#fff;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;">
+          <tr><td style="background:{{severity_color}};color:#fff;padding:22px 24px;"><h1 style="margin:0;font-size:22px;">Alerte systeme</h1><p style="margin:8px 0 0;font-size:14px;opacity:.95;">Severite : {{severity}}</p></td></tr>
+          <tr><td style="padding:24px;line-height:1.6;">
+            <p>Bonjour,</p>
+            <p>Une alerte a ete detectee sur la plateforme.</p>
+            <p><strong>Type :</strong> {{alert_type}}<br/>
+               <strong>Message :</strong> {{message}}<br/>
+               <strong>Horodatage :</strong> {{timestamp}}</p>
+            <p><a href="{{dashboard_url}}" style="display:inline-block;background:{{severity_color}};color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:bold;">Ouvrir le tableau de bord</a></p>
+            <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;" />
+            <p style="margin:0;">Cordialement,<br/><strong>{{signature}}</strong></p>
+          </td></tr>
+          <tr><td style="padding:0 24px 20px;color:#6b7280;font-size:12px;">© {{year}} {{app_name}} - Email automatique</td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>

@@ -12,7 +12,9 @@
     "verify:conges-approval": "node scripts/verifyCongeApprovalFlow.js",
     "verify:conges-suite": "node scripts/verifyCongesSuite.js",
     "verify:all-roles": "node scripts/verifyAllRolesWorkflow.js",
-    "migrate:add-service-column": "node scripts/addServiceColumn.js"
+    "migrate:add-service-column": "node scripts/addServiceColumn.js",
+    "migrate:add-date-embauche-column": "node scripts/addDateEmbaucheColumn.js",
+    "quota:recalc-prorata": "node scripts/recalculateCountersProrata.js"
   },
   "keywords": [],
   "author": "",
