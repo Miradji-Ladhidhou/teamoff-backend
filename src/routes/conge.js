@@ -5,6 +5,7 @@ const authorizeRole = require('../middlewares/authorizeRole');
 const { checkUsageLimit } = require('../middlewares/usageLimiter');
 const congeController = require('../controllers/congeController');
 
+router.post('/check-overlap', authJwt, authorizeRole(['employe','manager']), congeController.checkOverlap);
 router.post('/demande', authJwt, authorizeRole(['employe','manager']), checkUsageLimit('create_conge'), congeController.create);
 router.get('/', authJwt, authorizeRole(['employe','manager','admin_entreprise','super_admin']), congeController.list);
 router.get('/:id', authJwt, authorizeRole(['employe','manager','admin_entreprise','super_admin']), congeController.get);

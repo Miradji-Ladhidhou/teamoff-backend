@@ -9,6 +9,7 @@
           <p>Bonjour {{destinataire_prenom}},</p>
           <p>Votre demande de conge a bien ete enregistree.</p>
           <p><strong>Periode :</strong> {{date_debut}} au {{date_fin}}<br/><strong>Statut :</strong> {{statut_label}}</p>
+          {{overlap_warning_html}}
           <p><a href="{{action_url}}" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:bold;">Voir ma demande</a></p>
           <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;" />
           <p style="margin:0;">Cordialement,<br/><strong>{{signature}}</strong></p>

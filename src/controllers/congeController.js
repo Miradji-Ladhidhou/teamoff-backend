@@ -1,6 +1,14 @@
 const congeService = require('../services/congesService');
 const notificationService = require('../services/notificationSocketService');
 
+async function checkOverlap(req, res) {
+  try {
+    const result = await congeService.checkOverlapConge({ ...req.body, reqUser: req.user });
+    res.json(result);
+  }
+  catch(err) { res.status(400).json({ message: err.message }); }
+}
+
 async function create(req, res) {
   try {
     const conge = await congeService.createConge({ ...req.body, reqUser: req.user, req });
@@ -94,4 +102,4 @@ async function reject(req, res) {
   catch(err) { res.status(400).json({ message: err.message }); }
 }
 
-module.exports = { create, list, get, update, remove, validate, reject };
+module.exports = { checkOverlap, create, list, get, update, remove, validate, reject };
