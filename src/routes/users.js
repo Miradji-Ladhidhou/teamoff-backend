@@ -2,11 +2,15 @@ const express = require('express');
 const router = express.Router();
 const authJwt = require('../middlewares/authJwt');
 const authorizeRole = require('../middlewares/authorizeRole');
+
+const { advancedRateLimiter } = require('../middlewares/advancedRateLimiter');
 const usersController = require('../controllers/usersController');
 
 // Routes pour la gestion des utilisateurs
 
 // Créer un nouvel utilisateur
+
+// Création utilisateur (pas de rate limit strict, réservé admin)
 router.post(
   '/',
   authJwt,
@@ -15,18 +19,23 @@ router.post(
 );
 
 // Récupérer tous les utilisateurs
+
+// GET utilisateurs (rate limit permissif)
 router.get(
   '/',
   authJwt,
   authorizeRole(['super_admin', 'admin_entreprise', 'manager']),
+  advancedRateLimiter('getData'),
   usersController.getAllUsers
 );
 
 // Récupérer un utilisateur par ID
+
 router.get(
   '/:id',
   authJwt,
   authorizeRole(['super_admin', 'admin_entreprise', 'manager', 'employe']),
+  advancedRateLimiter('getData'),
   usersController.getUserById
 );
 

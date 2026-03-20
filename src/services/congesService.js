@@ -229,14 +229,20 @@ async function getEntrepriseLeaveRules(entrepriseId, transaction = null) {
   return getLeaveRules(entreprise);
 }
 
-async function computeOverlapContext({ entrepriseId, utilisateurId, dateDebut, dateFin, userService = null, transaction = null }) {
+async function computeOverlapContext({ entrepriseId, utilisateurId, dateDebut, dateFin, userService = null, transaction = null, excludeCongeId = null }) {
+  const where = {
+    entreprise_id: entrepriseId,
+    statut: { [Op.in]: ['en_attente_manager', 'valide_manager', 'valide_final'] },
+    date_debut: { [Op.lte]: dateFin },
+    date_fin: { [Op.gte]: dateDebut }
+  };
+
+  if (excludeCongeId) {
+    where.id = { [Op.ne]: excludeCongeId };
+  }
+
   const overlappingConges = await Conge.findAll({
-    where: {
-      entreprise_id: entrepriseId,
-      statut: { [Op.in]: ['en_attente_manager', 'valide_manager', 'valide_final'] },
-      date_debut: { [Op.lte]: dateFin },
-      date_fin: { [Op.gte]: dateDebut }
-    },
+    where,
     include: [{
       model: Utilisateur,
       as: 'utilisateur',
@@ -402,6 +408,73 @@ async function checkOverlapConge({ utilisateur_id, conge_type_id, date_debut, da
   };
 }
 
+async function getValidationOverlapStatus(congeId, reqUser) {
+  const conge = await Conge.findByPk(congeId);
+  if (!conge) throw new Error('Congé introuvable');
+
+  if (reqUser?.role === 'manager' && reqUser?.entreprise_id !== conge.entreprise_id) {
+    throw new Error('Accès interdit: entreprise différente');
+  }
+
+  if ((reqUser?.role === 'admin_entreprise' || reqUser?.role === 'super_admin')
+    && reqUser?.role !== 'super_admin'
+    && reqUser?.entreprise_id !== conge.entreprise_id) {
+    throw new Error('Accès interdit: entreprise différente');
+  }
+
+  const utilisateur = await Utilisateur.findByPk(conge.utilisateur_id);
+  if (!utilisateur) throw new Error('Utilisateur introuvable');
+
+  const baseLeaveRules = await getEntrepriseLeaveRules(conge.entreprise_id);
+  const leaveRules = getEffectiveLeaveRules(baseLeaveRules, utilisateur.service || null);
+
+  const overlapContext = await computeOverlapContext({
+    entrepriseId: conge.entreprise_id,
+    utilisateurId: conge.utilisateur_id,
+    dateDebut: conge.date_debut,
+    dateFin: conge.date_fin,
+    userService: utilisateur.service || null,
+    excludeCongeId: conge.id,
+  });
+
+  const globalLimit = Number(leaveRules.max_employees_on_leave.global);
+  const projectedOnLeaveCount = overlapContext.overlappingCount + 1;
+  const limitReached = Number.isFinite(globalLimit) && projectedOnLeaveCount > globalLimit;
+
+  const userService = utilisateur.service || null;
+  const serviceLimit = Number(userService ? leaveRules.max_employees_on_leave.by_service?.[userService] : null);
+  const projectedServiceOnLeaveCount = overlapContext.overlappingCountByService + 1;
+  const serviceLimitReached = Boolean(
+    userService && Number.isFinite(serviceLimit) && serviceLimit > 0 && projectedServiceOnLeaveCount > serviceLimit
+  );
+
+  const hasOverlap = Boolean(overlapContext.overlapWithSameUser || limitReached || serviceLimitReached);
+
+  return {
+    conge_id: conge.id,
+    has_overlap: hasOverlap,
+    overlap_with_same_user: overlapContext.overlapWithSameUser,
+    limit_reached: limitReached,
+    service_limit_reached: serviceLimitReached,
+    policy: leaveRules.overlap_policy,
+    message: hasOverlap
+      ? buildOverlapMessage({
+        dateDebut: conge.date_debut,
+        dateFin: conge.date_fin,
+        overlapWithSameUser: overlapContext.overlapWithSameUser,
+        limitReached,
+        serviceLimitReached,
+        userService,
+        projectedOnLeaveCount,
+        globalLimit,
+        projectedServiceOnLeaveCount,
+        serviceLimit,
+      })
+      : 'Aucun chevauchement détecté pour cette validation.',
+    requires_manager_comment: Boolean(reqUser?.role === 'manager' && hasOverlap),
+  };
+}
+
 // ----------------------------
 // Calcul des jours ouvrés
 // ----------------------------
@@ -437,6 +510,7 @@ async function calcJoursConges(entrepriseId, dateDebut, dateFin, debut_demi, fin
 // Créer un congé
 // ----------------------------
 async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin, debut_demi_journee, fin_demi_journee, commentaire_employe, reqUser, req }) {
+    const sanitizeHtml = require('sanitize-html');
   return sequelize.transaction(async (t) => {
     const utilisateurId = utilisateur_id || reqUser?.id;
     const debutDemiJournee = debut_demi_journee || 'matin';
@@ -579,6 +653,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     }
     await compteur.save({ transaction: t });
 
+    const safeCommentaire = commentaire_employe ? sanitizeHtml(commentaire_employe, { allowedTags: [], allowedAttributes: {} }) : commentaire_employe;
     const conge = await Conge.create({
       utilisateur_id: utilisateurId,
       entreprise_id: utilisateur.entreprise_id,
@@ -587,7 +662,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       date_fin,
       debut_demi_journee: debutDemiJournee,
       fin_demi_journee: finDemiJournee,
-      commentaire_employe,
+      commentaire_employe: safeCommentaire,
       statut: approvalWorkflow === 'auto' ? 'valide_final' : 'en_attente_manager',
       jours_calcules: jours
     }, { transaction: t });
@@ -732,10 +807,59 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         throw new Error('Impossible de valider ce congé à ce stade');
       }
 
+      const managerComment = typeof commentaire === 'string' ? commentaire.trim() : null;
+
+      const overlapContext = await computeOverlapContext({
+        entrepriseId: conge.entreprise_id,
+        utilisateurId: conge.utilisateur_id,
+        dateDebut: conge.date_debut,
+        dateFin: conge.date_fin,
+        userService: utilisateur?.service || null,
+        transaction: t,
+        excludeCongeId: conge.id,
+      });
+
+      const globalLimit = Number(leaveRules.max_employees_on_leave.global);
+      const projectedOnLeaveCount = overlapContext.overlappingCount + 1;
+      const limitReached = Number.isFinite(globalLimit) && projectedOnLeaveCount > globalLimit;
+
+      const userService = utilisateur?.service || null;
+      const serviceLimitRaw = userService
+        ? leaveRules.max_employees_on_leave.by_service?.[userService]
+        : null;
+      const serviceLimit = Number(serviceLimitRaw);
+      const projectedServiceOnLeaveCount = overlapContext.overlappingCountByService + 1;
+      const serviceLimitReached = Boolean(
+        userService && Number.isFinite(serviceLimit) && serviceLimit > 0 && projectedServiceOnLeaveCount > serviceLimit
+      );
+
+      const hasOverlapAtValidation = Boolean(
+        overlapContext.overlapWithSameUser || limitReached || serviceLimitReached
+      );
+
+      const overlapMessage = hasOverlapAtValidation
+        ? buildOverlapMessage({
+          dateDebut: conge.date_debut,
+          dateFin: conge.date_fin,
+          overlapWithSameUser: overlapContext.overlapWithSameUser,
+          limitReached,
+          serviceLimitReached,
+          userService,
+          projectedOnLeaveCount,
+          globalLimit,
+          projectedServiceOnLeaveCount,
+          serviceLimit,
+        })
+        : null;
+
+      if (hasOverlapAtValidation && !managerComment) {
+        throw new Error('Commentaire manager obligatoire en cas de chevauchement avant validation');
+      }
+
       conge.statut = ['manager', 'manager_only'].includes(leaveRules.approval_workflow)
         ? 'valide_final'
         : 'valide_manager';
-      conge.commentaire_manager = commentaire;
+      conge.commentaire_manager = managerComment;
       await conge.save({ transaction: t });
 
       // Notification admin entreprise
@@ -745,7 +869,9 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
       if (admin) {
         await notificationService.sendEmail({
           to: admin.email,
-          subject: 'Demande de conge validee par le manager - action requise',
+          subject: hasOverlapAtValidation
+            ? 'ALERTE chevauchement - validation finale requise'
+            : 'Demande de conge validee par le manager - action requise',
           templateName: 'leave-manager-approved-admin',
           data: {
             destinataire_prenom: admin.prenom || 'Administrateur',
@@ -754,6 +880,9 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
             date_fin: conge.date_fin,
             commentaire_employe: conge.commentaire_employe || 'Aucun',
             commentaire_manager: conge.commentaire_manager || 'Aucun',
+            overlap_warning_html: hasOverlapAtValidation
+              ? `<div style="margin-top:12px;padding:12px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;color:#92400e;"><strong>Alerte chevauchement :</strong><br/>${overlapMessage || 'Chevauchement détecté sur cette demande.'}</div>`
+              : '',
             action_url: buildCongeUrl(conge.id),
           }
         });
@@ -761,7 +890,9 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
           entreprise_id: conge.entreprise_id,
           utilisateur_id: admin.id,
           type: 'conge_valide_manager',
-          message: `Congé de ${utilisateur.nom} validé par manager (${conge.date_debut} - ${conge.date_fin})`,
+          message: hasOverlapAtValidation
+            ? `ALERTE chevauchement: congé de ${utilisateur.nom} validé par manager (${conge.date_debut} - ${conge.date_fin})`
+            : `Congé de ${utilisateur.nom} validé par manager (${conge.date_debut} - ${conge.date_fin})`,
           url: `/conges/${conge.id}`
         });
       }
@@ -792,6 +923,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
               destinataire_prenom: utilisateur.prenom || 'Collaborateur',
               date_debut: conge.date_debut,
               date_fin: conge.date_fin,
+              commentaire: conge.commentaire_manager || conge.commentaire_admin || 'Aucun commentaire',
               action_url: buildCongeUrl(conge.id),
             }
           });
@@ -855,6 +987,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
             destinataire_prenom: utilisateur.prenom || 'Collaborateur',
             date_debut: conge.date_debut,
             date_fin: conge.date_fin,
+            commentaire: conge.commentaire_admin || conge.commentaire_manager || 'Aucun commentaire',
             action_url: buildCongeUrl(conge.id),
           }
         });
@@ -1159,6 +1292,7 @@ async function getCongeById(id, user) {
 // Modifier et supprimer
 // ----------------------------
 async function updateConge(id, data, user) {
+  const sanitizeHtml = require('sanitize-html');
   return sequelize.transaction(async (t) => {
     const conge = await Conge.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
     if (!conge) throw new Error('Congé introuvable');
@@ -1179,6 +1313,9 @@ async function updateConge(id, data, user) {
 
     const isPending = conge.statut === 'en_attente_manager';
     const isFinalValidated = conge.statut === 'valide_final';
+    const previousDateDebut = conge.date_debut;
+    const previousDateFin = conge.date_fin;
+    const previousCommentaireEmploye = conge.commentaire_employe || '';
 
     if (!isPending && !isFinalValidated) {
       throw new Error('Modification impossible');
@@ -1208,7 +1345,13 @@ async function updateConge(id, data, user) {
 
     const updates = {};
     for (const field of allowedFields) {
-      if (field in data) updates[field] = data[field];
+      if (field in data) {
+        if (field === 'commentaire_employe' && typeof data[field] === 'string') {
+          updates[field] = sanitizeHtml(data[field], { allowedTags: [], allowedAttributes: {} });
+        } else {
+          updates[field] = data[field];
+        }
+      }
     }
 
     const nextDateDebut = updates.date_debut ?? conge.date_debut;
@@ -1351,6 +1494,42 @@ async function updateConge(id, data, user) {
       jours_calcules: newDays
     }, { transaction: t });
 
+    if (isPending && user?.role === 'employe' && user?.id === conge.utilisateur_id) {
+      const manager = await Utilisateur.findOne({
+        where: { entreprise_id: conge.entreprise_id, role: 'manager' },
+        transaction: t,
+      });
+      const admin = await Utilisateur.findOne({
+        where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise' },
+        transaction: t,
+      });
+
+      const demandeurNom = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || employe.nom || 'Employe';
+      const previousPeriod = `${previousDateDebut} au ${previousDateFin}`;
+      const nextPeriod = `${nextDateDebut} au ${nextDateFin}`;
+      const nextCommentaireEmploye = (updates.commentaire_employe ?? conge.commentaire_employe ?? '').toString().trim();
+
+      const recipients = [manager, admin].filter((recipient) => recipient?.email);
+
+      for (const recipient of recipients) {
+        await notificationService.sendEmail({
+          to: recipient.email,
+          subject: `Demande de conge modifiee - ${demandeurNom}`,
+          templateName: 'leave-updated-before-approval',
+          data: {
+            destinataire_prenom: recipient.prenom || 'Validateur',
+            demandeur_nom: demandeurNom,
+            ancienne_periode: previousPeriod,
+            nouvelle_periode: nextPeriod,
+            type_conge: nextCongeType.libelle || 'Type non renseigne',
+            ancien_commentaire_employe: previousCommentaireEmploye || 'Aucun',
+            commentaire_employe: nextCommentaireEmploye || 'Aucun',
+            action_url: buildCongeUrl(conge.id),
+          }
+        });
+      }
+    }
+
     if (isFinalValidated && user?.role === 'admin_entreprise') {
       const adminNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Administrateur';
       if (employe.email) {
@@ -1361,7 +1540,7 @@ async function updateConge(id, data, user) {
           data: {
             destinataire_prenom: employe.prenom || 'Collaborateur',
             auteur_action: adminNom,
-            ancienne_periode: `${conge.date_debut} au ${conge.date_fin}`,
+            ancienne_periode: `${previousDateDebut} au ${previousDateFin}`,
             nouvelle_periode: `${nextDateDebut} au ${nextDateFin}`,
             action_url: buildCongeUrl(conge.id),
           }
@@ -1371,7 +1550,7 @@ async function updateConge(id, data, user) {
         entreprise_id: conge.entreprise_id,
         utilisateur_id: employe.id,
         type: 'conge_modifie_admin',
-        message: `Votre congé du ${conge.date_debut} au ${conge.date_fin} a été modifié par ${adminNom} (nouvelle période : ${nextDateDebut} au ${nextDateFin})`,
+        message: `Votre congé du ${previousDateDebut} au ${previousDateFin} a été modifié par ${adminNom} (nouvelle période : ${nextDateDebut} au ${nextDateFin})`,
         url: `/conges/${conge.id}`
       });
     }
@@ -1380,7 +1559,9 @@ async function updateConge(id, data, user) {
   });
 }
 
-async function deleteConge(id, user) {
+async function deleteConge(id, user, options = {}) {
+  const cancellationComment = (options?.commentaire || '').trim();
+
   await sequelize.transaction(async (t) => {
     const conge = await Conge.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
     if (!conge) throw new Error('Congé introuvable');
@@ -1405,6 +1586,9 @@ async function deleteConge(id, user) {
     if (!isPending && !isFinalValidated) throw new Error('Impossible de supprimer');
     if (isFinalValidated && user?.role !== 'admin_entreprise') {
       throw new Error('Seul un admin entreprise peut annuler un congé validé');
+    }
+    if (isFinalValidated && !cancellationComment) {
+      throw new Error('Le commentaire est obligatoire pour annuler un congé déjà validé');
     }
 
     const joursConge = await resolveCongeDays(conge);
@@ -1441,6 +1625,7 @@ async function deleteConge(id, user) {
             auteur_action: adminNom,
             date_debut: conge.date_debut,
             date_fin: conge.date_fin,
+            commentaire: cancellationComment,
             action_url: buildCongeUrl(conge.id),
           }
         });
@@ -1449,7 +1634,7 @@ async function deleteConge(id, user) {
         entreprise_id: conge.entreprise_id,
         utilisateur_id: employe.id,
         type: 'conge_annule_admin',
-        message: `Votre congé du ${conge.date_debut} au ${conge.date_fin} a été annulé par ${adminNom}`,
+        message: `Votre congé du ${conge.date_debut} au ${conge.date_fin} a été annulé par ${adminNom}. Motif: ${cancellationComment}`,
         url: `/conges/${conge.id}`
       });
     }
@@ -1460,6 +1645,7 @@ async function deleteConge(id, user) {
 
 module.exports = {
   checkOverlapConge,
+  getValidationOverlapStatus,
   createConge,
   getConges,
   getCongeById,

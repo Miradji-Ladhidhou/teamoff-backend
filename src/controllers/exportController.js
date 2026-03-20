@@ -2,6 +2,10 @@ const ExportService = require('../services/exportService');
 const { Entreprise } = require('../models');
 
 async function resolveEntrepriseId(req) {
+  if (req.user?.role === 'super_admin') {
+    return req.query?.entrepriseId || null;
+  }
+
   if (req.user?.entreprise_id) {
     return req.user.entreprise_id;
   }
@@ -28,6 +32,9 @@ class ExportController {
       }
 
       const type = req.query.type || 'conges';
+      if (req.user?.role === 'manager' && type !== 'conges') {
+        return res.status(403).json({ error: 'Les managers peuvent uniquement prévisualiser les congés.' });
+      }
       const requestedLimit = Number(req.query.limit || 50);
       const limit = Number.isNaN(requestedLimit) ? 50 : Math.max(1, Math.min(200, requestedLimit));
 
@@ -52,7 +59,8 @@ class ExportController {
       }
       const filters = req.query; // status, dateDebut, dateFin, utilisateurId
 
-      const csvData = await ExportService.generateCongesCSV(entrepriseId, filters);
+      const userRole = req.user?.role || 'admin_entreprise';
+      const csvData = await ExportService.generateCongesCSV(entrepriseId, filters, userRole);
 
       const filename = `conges_${new Date().toISOString().split('T')[0]}.csv`;
 
@@ -74,7 +82,8 @@ class ExportController {
       }
       const filters = req.query; // status, dateDebut, dateFin
 
-      const pdfData = await ExportService.generateCongesPDF(entrepriseId, filters);
+      const userRole = req.user?.role || 'admin_entreprise';
+      const pdfData = await ExportService.generateCongesPDF(entrepriseId, filters, userRole);
 
       const filename = `conges_${new Date().toISOString().split('T')[0]}.pdf`;
 

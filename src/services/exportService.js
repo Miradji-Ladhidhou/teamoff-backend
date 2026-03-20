@@ -6,13 +6,17 @@ const { Conge, Utilisateur, Entreprise, AuditLog, CongeType } = require('../mode
 const { Op } = require('sequelize');
 
 function buildCongeWhereClause(entrepriseId, filters = {}) {
-  const whereClause = { entreprise_id: entrepriseId };
+  const whereClause = {};
+  if (entrepriseId) {
+    whereClause.entreprise_id = entrepriseId;
+  } else if (filters.entrepriseId && filters.entrepriseId !== 'all') {
+    whereClause.entreprise_id = filters.entrepriseId;
+  }
   const statutRaw = filters.statut || filters.status;
   const statutMap = {
     en_attente: ['en_attente_manager'],
     approuve: ['valide_manager', 'valide_final'],
     refuse: ['refuse_manager', 'refuse_final'],
-    annule: ['annule'],
   };
 
   if (statutRaw && statutRaw !== 'all') {
@@ -44,31 +48,94 @@ function buildCongeWhereClause(entrepriseId, filters = {}) {
   return whereClause;
 }
 
+function buildCongesOrder(filters = {}) {
+  const sortBy = (filters.sortBy || 'date_demande').toLowerCase();
+  const sortOrder = String(filters.sortOrder || 'desc').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
+  if (sortBy === 'entreprise') {
+    return [[{ model: Entreprise, as: 'entreprise' }, 'nom', sortOrder], ['created_at', 'DESC']];
+  }
+  if (sortBy === 'service' || sortBy === 'equipe') {
+    return [[{ model: Utilisateur, as: 'utilisateur' }, 'service', sortOrder], ['created_at', 'DESC']];
+  }
+  if (sortBy === 'salarie') {
+    return [
+      [{ model: Utilisateur, as: 'utilisateur' }, 'nom', sortOrder],
+      [{ model: Utilisateur, as: 'utilisateur' }, 'prenom', sortOrder],
+      ['created_at', 'DESC']
+    ];
+  }
+  if (sortBy === 'statut') {
+    return [['statut', sortOrder], ['created_at', 'DESC']];
+  }
+
+  return [['created_at', sortOrder]];
+}
+
+function buildUtilisateurWhere(filters = {}) {
+  const utilisateurWhere = {};
+
+  const serviceFilter = (filters.service || filters.equipe || '').trim();
+  if (serviceFilter) {
+    utilisateurWhere.service = { [Op.iLike]: `%${serviceFilter}%` };
+  }
+
+  const salarieFilter = (filters.salarie || '').trim();
+  if (salarieFilter) {
+    utilisateurWhere[Op.or] = [
+      { prenom: { [Op.iLike]: `%${salarieFilter}%` } },
+      { nom: { [Op.iLike]: `%${salarieFilter}%` } },
+      { email: { [Op.iLike]: `%${salarieFilter}%` } },
+    ];
+  }
+
+  return utilisateurWhere;
+}
+
+function buildCongesQueryOptions(entrepriseId, filters = {}) {
+  const whereClause = buildCongeWhereClause(entrepriseId, filters);
+  const utilisateurWhere = buildUtilisateurWhere(filters);
+  const hasUtilisateurFilter = Object.keys(utilisateurWhere).length > 0;
+
+  return {
+    where: whereClause,
+    include: [
+      {
+        model: Utilisateur,
+        as: 'utilisateur',
+        attributes: ['prenom', 'nom', 'email', 'service'],
+        required: hasUtilisateurFilter,
+        ...(hasUtilisateurFilter ? { where: utilisateurWhere } : {}),
+      },
+      {
+        model: CongeType,
+        as: 'conge_type',
+        attributes: ['libelle'],
+        required: false,
+      },
+      {
+        model: Entreprise,
+        as: 'entreprise',
+        attributes: ['nom'],
+        required: false,
+      }
+    ],
+    order: buildCongesOrder(filters),
+  };
+}
+
 class ExportService {
   static async getCongesPreview(entrepriseId, filters = {}, limit = 50) {
-    const whereClause = buildCongeWhereClause(entrepriseId, filters);
+    const queryOptions = buildCongesQueryOptions(entrepriseId, filters);
     const conges = await Conge.findAll({
-      where: whereClause,
-      include: [
-        {
-          model: Utilisateur,
-          as: 'utilisateur',
-          attributes: ['prenom', 'nom', 'email'],
-          required: false
-        },
-        {
-          model: CongeType,
-          as: 'conge_type',
-          attributes: ['libelle'],
-          required: false
-        }
-      ],
-      order: [['created_at', 'DESC']],
+      ...queryOptions,
       limit,
     });
 
     const rows = conges.map(conge => ({
       id: conge.id,
+      entreprise: conge.entreprise?.nom || 'Entreprise inconnue',
+      service: conge.utilisateur?.service || '',
       employe: conge.utilisateur ? `${conge.utilisateur.prenom || ''} ${conge.utilisateur.nom || ''}`.trim() : 'Utilisateur supprimé',
       email: conge.utilisateur?.email || 'N/A',
       type_conge: conge.conge_type?.libelle || 'Type supprimé',
@@ -80,7 +147,7 @@ class ExportService {
     }));
 
     return {
-      columns: ['id', 'employe', 'email', 'type_conge', 'date_debut', 'date_fin', 'jours', 'statut', 'cree_le'],
+      columns: ['id', 'entreprise', 'service', 'employe', 'email', 'type_conge', 'date_debut', 'date_fin', 'jours', 'statut', 'cree_le'],
       rows,
       count: rows.length,
       limitedTo: limit,
@@ -201,47 +268,37 @@ class ExportService {
   }
 
   // Générer CSV des congés
-  static async generateCongesCSV(entrepriseId, filters = {}) {
+  static async generateCongesCSV(entrepriseId, filters = {}, userRole = 'admin_entreprise') {
     try {
-      const whereClause = buildCongeWhereClause(entrepriseId, filters);
+      const queryOptions = buildCongesQueryOptions(entrepriseId, filters);
+      const conges = await Conge.findAll({ ...queryOptions });
 
-      const conges = await Conge.findAll({
-        where: whereClause,
-        include: [
-          {
-            model: Utilisateur,
-            as: 'utilisateur',
-            attributes: ['prenom', 'nom', 'email'],
-            required: false // LEFT JOIN pour éviter les erreurs si utilisateur supprimé
-          },
-          {
-            model: CongeType,
-            as: 'conge_type',
-            attributes: ['libelle'],
-            required: false // LEFT JOIN pour éviter les erreurs si type supprimé
-          }
-        ],
-        order: [['created_at', 'DESC']]
+      const data = conges.map(conge => {
+        const base = {
+          'Entreprise': conge.entreprise?.nom || 'Entreprise inconnue',
+          'Service': conge.utilisateur?.service || '',
+          'Employé': conge.utilisateur ? `${conge.utilisateur.prenom || ''} ${conge.utilisateur.nom || ''}`.trim() : 'Utilisateur supprimé',
+          'Email': conge.utilisateur ? conge.utilisateur.email : 'N/A',
+          'Type de congé': conge.conge_type ? conge.conge_type.libelle : 'Type supprimé',
+          'Date début': ExportService.formatDateTime(conge.date_debut),
+          'Date fin': ExportService.formatDateTime(conge.date_fin),
+          'Jours calculés': conge.jours_calcules,
+          'Statut': conge.statut,
+          'Commentaire employé': conge.commentaire_employe || '',
+          'Commentaire manager': conge.commentaire_manager || '',
+          'Commentaire admin': conge.commentaire_admin || '',
+          'Date de création': ExportService.formatDateTime(conge.created_at),
+          'Dernière modification': ExportService.formatDateTime(conge.updated_at)
+        };
+        if (userRole === 'super_admin') {
+          base['ID Congé'] = conge.id;
+        }
+        return userRole === 'super_admin' ? { 'ID Congé': conge.id, ...base } : base;
       });
 
-      const data = conges.map(conge => ({
-        'ID Congé': conge.id,
-        'Employé': conge.utilisateur ? `${conge.utilisateur.prenom || ''} ${conge.utilisateur.nom || ''}`.trim() : 'Utilisateur supprimé',
-        'Email': conge.utilisateur ? conge.utilisateur.email : 'N/A',
-        'Type de congé': conge.conge_type ? conge.conge_type.libelle : 'Type supprimé',
-        'Date début': conge.date_debut,
-        'Date fin': conge.date_fin,
-        'Jours calculés': conge.jours_calcules,
-        'Statut': conge.statut,
-        'Commentaire employé': conge.commentaire_employe || '',
-        'Commentaire manager': conge.commentaire_manager || '',
-        'Commentaire admin': conge.commentaire_admin || '',
-        'Date de création': conge.created_at,
-        'Dernière modification': conge.updated_at
-      }));
-
       const fields = [
-        'ID Congé', 'Employé', 'Email', 'Type de congé', 'Date début', 'Date fin',
+        ...(userRole === 'super_admin' ? ['ID Congé'] : []),
+        'Entreprise', 'Service', 'Employé', 'Email', 'Type de congé', 'Date début', 'Date fin',
         'Jours calculés', 'Statut', 'Commentaire employé', 'Commentaire manager',
         'Commentaire admin', 'Date de création', 'Dernière modification'
       ];
@@ -377,33 +434,16 @@ class ExportService {
   }
 
   // Générer PDF des congés
-  static async generateCongesPDF(entrepriseId, filters = {}) {
+  static async generateCongesPDF(entrepriseId, filters = {}, userRole = 'admin_entreprise') {
     return new Promise(async (resolve, reject) => {
       try {
-        const entreprise = await Entreprise.findByPk(entrepriseId);
-        const whereClause = buildCongeWhereClause(entrepriseId, filters);
-
-        const conges = await Conge.findAll({
-          where: whereClause,
-          include: [
-            {
-              model: Utilisateur,
-              as: 'utilisateur',
-              attributes: ['prenom', 'nom', 'email']
-            },
-            {
-              model: CongeType,
-              as: 'conge_type',
-              attributes: ['libelle']
-            }
-          ],
-          order: [['created_at', 'DESC']]
-        });
+        const entreprise = entrepriseId ? await Entreprise.findByPk(entrepriseId) : null;
+        const queryOptions = buildCongesQueryOptions(entrepriseId, filters);
+        const conges = await Conge.findAll({ ...queryOptions });
 
         // Créer le document PDF
         const doc = new PDFDocument();
         const buffers = [];
-
         doc.on('data', buffers.push.bind(buffers));
         doc.on('end', () => {
           const pdfData = Buffer.concat(buffers);
@@ -411,9 +451,10 @@ class ExportService {
         });
 
         // En-tête
-        doc.fontSize(20).text(`Rapport des Congés - ${entreprise.nom}`, { align: 'center' });
+        const reportScope = entreprise?.nom || 'Toutes les entreprises';
+        doc.fontSize(20).text(`Rapport des Congés - ${reportScope}`, { align: 'center' });
         doc.moveDown();
-        doc.fontSize(12).text(`Généré le ${new Date().toLocaleDateString('fr-FR')}`, { align: 'center' });
+        doc.fontSize(12).text(`Généré le ${ExportService.formatDateTime(new Date())}`, { align: 'center' });
         doc.moveDown(2);
 
         // Statistiques
@@ -439,14 +480,20 @@ class ExportService {
 
         conges.forEach((conge, index) => {
           if (index > 0) doc.moveDown();
-
           doc.fontSize(10);
-          doc.text(`Congé #${conge.id}`, { bold: true });
-          doc.text(`Employé: ${conge.utilisateur.prenom} ${conge.utilisateur.nom}`);
-          doc.text(`Type: ${conge.conge_type.libelle}`);
-          doc.text(`Période: ${conge.date_debut} au ${conge.date_fin}`);
+          if (userRole === 'super_admin') {
+            doc.text(`ID Congé: ${conge.id}`);
+          }
+          const employeNom = conge.utilisateur ? `${conge.utilisateur.prenom || ''} ${conge.utilisateur.nom || ''}`.trim() : 'Utilisateur supprimé';
+          doc.text(`Entreprise: ${conge.entreprise?.nom || 'Entreprise inconnue'}`);
+          doc.text(`Service: ${conge.utilisateur?.service || ''}`);
+          doc.text(`Employé: ${employeNom}`);
+          doc.text(`Type: ${conge.conge_type?.libelle || 'Type supprimé'}`);
+          doc.text(`Période: ${ExportService.formatDateTime(conge.date_debut)} au ${ExportService.formatDateTime(conge.date_fin)}`);
           doc.text(`Jours: ${conge.jours_calcules}`);
           doc.text(`Statut: ${conge.statut}`);
+          doc.text(`Date de création: ${ExportService.formatDateTime(conge.created_at)}`);
+          doc.text(`Dernière modification: ${ExportService.formatDateTime(conge.updated_at)}`);
           if (conge.commentaire_employe) {
             doc.text(`Commentaire: ${conge.commentaire_employe}`);
           }
@@ -523,9 +570,12 @@ class ExportService {
     return new Date(date).toLocaleDateString('fr-FR');
   }
 
-  // Méthode utilitaire pour formater les périodes
-  static formatPeriod(dateDebut, dateFin) {
-    return `${this.formatDate(dateDebut)} - ${this.formatDate(dateFin)}`;
+  // Méthode utilitaire pour formater les dates complètes (DD/MM/YYYY HH:mm:ss)
+  static formatDateTime(date) {
+    if (!date) return '';
+    const d = new Date(date);
+    const pad = (n) => n.toString().padStart(2, '0');
+    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   }
 }
 

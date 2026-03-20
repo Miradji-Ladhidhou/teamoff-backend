@@ -75,7 +75,10 @@ async function updateOwnPasswordIfRequested(utilisateur, { currentPassword, newP
  * Création utilisateur
  */
 async function createUser(req, res) {
-  const { nom, prenom, email, role, entreprise_id, service, date_embauche } = req.body;
+  const sanitizeHtml = require('sanitize-html');
+  let { nom, prenom, email, role, entreprise_id, service, date_embauche } = req.body;
+  if (typeof nom === 'string') nom = sanitizeHtml(nom, { allowedTags: [], allowedAttributes: {} });
+  if (typeof prenom === 'string') prenom = sanitizeHtml(prenom, { allowedTags: [], allowedAttributes: {} });
   const user = req.user;
   const normalizedService = normalizeServiceName(service);
 
@@ -209,7 +212,9 @@ async function updateUser(req, res) {
       return res.status(403).json({ message: 'Vous ne pouvez modifier que les utilisateurs de votre entreprise' });
     }
 
-    const { nom, prenom, email, role, service, statut, password, date_embauche } = req.body;
+    let { nom, prenom, email, role, service, statut, password, date_embauche } = req.body;
+    if (typeof nom === 'string') nom = require('sanitize-html')(nom, { allowedTags: [], allowedAttributes: {} });
+    if (typeof prenom === 'string') prenom = require('sanitize-html')(prenom, { allowedTags: [], allowedAttributes: {} });
     const normalizedHiringDate = normalizeOptionalDateOnly(date_embauche);
 
     const nextRole = role || utilisateur.role;

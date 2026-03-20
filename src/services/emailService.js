@@ -172,13 +172,14 @@ class EmailService {
         <p>Le statut de votre demande de congé a été mis à jour.</p>
         <p><strong>Statut :</strong> ${data.statut || 'Non renseigné'}</p>
         <p><strong>Période :</strong> ${data.dates || 'Non renseignée'}</p>
+        <p><strong>Commentaire :</strong> ${data.commentaire || 'Aucun commentaire'}</p>
         <p><a href="${data.dashboard_url || '#'}">Voir mes congés</a></p>
       `,
       'leave-cancellation': `
         <p>Bonjour ${data.prenom || ''},</p>
         <p>Votre congé a été annulé.</p>
         <p><strong>Période :</strong> ${data.dates || 'Non renseignée'}</p>
-        <p><strong>Raison :</strong> ${data.raison || 'Non renseignée'}</p>
+        <p><strong>Commentaire :</strong> ${data.commentaire || data.raison || 'Non renseignée'}</p>
         <p><a href="${data.dashboard_url || '#'}">Voir mon espace</a></p>
       `,
       'monthly-report': `

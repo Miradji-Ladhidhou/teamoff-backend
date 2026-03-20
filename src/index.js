@@ -12,7 +12,10 @@ const { initBackupCron } = require('./cron/backupCron');
 const { initQuotasCron } = require('./cron/quotasCron');
 const cors = require('cors');
 
+
 const app = express();
+// Pour que req.ip reflète la vraie IP derrière un reverse proxy (ex: Artillery, nginx, etc.)
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 
 // Initialiser Socket.IO

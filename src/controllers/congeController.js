@@ -9,6 +9,14 @@ async function checkOverlap(req, res) {
   catch(err) { res.status(400).json({ message: err.message }); }
 }
 
+async function checkValidationOverlap(req, res) {
+  try {
+    const result = await congeService.getValidationOverlapStatus(req.params.id, req.user);
+    res.json(result);
+  }
+  catch(err) { res.status(400).json({ message: err.message }); }
+}
+
 async function create(req, res) {
   try {
     const conge = await congeService.createConge({ ...req.body, reqUser: req.user, req });
@@ -41,7 +49,8 @@ async function update(req, res) {
 
 async function remove(req, res) {
   try {
-    await congeService.deleteConge(req.params.id, req.user, req);
+    const commentaire = req.body?.commentaire ?? null;
+    await congeService.deleteConge(req.params.id, req.user, { commentaire, req });
 
     // Notifier les administrateurs
     notificationService.notifyCompany(req.user.entreprise_id, 'conge-deleted', {
@@ -102,4 +111,4 @@ async function reject(req, res) {
   catch(err) { res.status(400).json({ message: err.message }); }
 }
 
-module.exports = { checkOverlap, create, list, get, update, remove, validate, reject };
+module.exports = { checkOverlap, checkValidationOverlap, create, list, get, update, remove, validate, reject };

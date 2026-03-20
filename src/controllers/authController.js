@@ -1,6 +1,7 @@
 const authService = require('../services/authService');
 const { Utilisateur } = require('../models');
 const { auditAuth, auditEntreprise, auditUser } = require('../services/auditHelper');
+const emailService = require('../services/emailService');
 const bcrypt = require('bcrypt');
 
 // ---------------------------
@@ -125,6 +126,12 @@ async function resetPassword(req, res) {
   try {
     const user = await authService.resetPassword(req.body.token, req.body.newPassword);
 
+    try {
+      await emailService.sendPasswordResetConfirmation(user.email);
+    } catch (mailErr) {
+      console.error('Erreur envoi email confirmation reset password:', mailErr.message);
+    }
+
     // === Audit succès reset ===
     await auditAuth.passwordResetSuccess(user, req);
 
@@ -159,6 +166,12 @@ async function changePassword(req, res) {
 
     user.password_hash = await bcrypt.hash(newPassword, 10);
     await user.save();
+
+    try {
+      await emailService.sendPasswordResetConfirmation(user.email);
+    } catch (mailErr) {
+      console.error('Erreur envoi email confirmation changement password:', mailErr.message);
+    }
 
     // === Audit succès changement mot de passe ===
     await auditAuth.passwordChangeSuccess(user, req);

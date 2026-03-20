@@ -13,13 +13,12 @@ const settingsRoutes = require('./settings');
 const authJwt = require('../middlewares/authJwt');
 const usersController = require('../controllers/usersController');
 const authorizeRole = require('../middlewares/authorizeRole');
-const { generalLimiter } = require('../middlewares/rateLimiter');
+// const { generalLimiter } = require('../middlewares/rateLimiter');
 const { metricsMiddleware, getMetrics } = require('../middlewares/metrics');
 const MonitoringService = require('../services/monitoringService');
 const sequelize = require('../config/database');
 
-// Appliquer rate limiter général à toutes les routes
-router.use(generalLimiter);
+// Le rate limiting avancé est appliqué par route critique (voir middlewares/advancedRateLimiter.js)
 
 // Appliquer métriques à toutes les routes
 router.use(metricsMiddleware);

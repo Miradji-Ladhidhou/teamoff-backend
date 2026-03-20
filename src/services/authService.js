@@ -241,7 +241,7 @@ async function resetPassword(token, newPassword) {
   user.password_hash = hashed;
   await user.save();
 
-  return true;
+  return user;
 }
 
 // ---------------------------
