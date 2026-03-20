@@ -1,5 +1,6 @@
 const { spawnSync } = require('child_process');
 
+// Les scripts sous-jacents gerent leur propre contexte isole et cleanup strict.
 const steps = [
   { name: 'verify:conges-core', command: 'npm', args: ['run', 'verify:conges-core'] },
   { name: 'verify:conges-approval', command: 'npm', args: ['run', 'verify:conges-approval'] },

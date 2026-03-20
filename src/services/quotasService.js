@@ -2,6 +2,14 @@
 const { CompteurConges, CongeType, Utilisateur, Entreprise, sequelize } = require('../models');
 const { getLeaveRules } = require('./politiqueConges');
 
+const isQuotasDebug = process.env.QUOTAS_DEBUG === 'true';
+
+function quotasLog(...args) {
+  if (isQuotasDebug) {
+    console.log(...args);
+  }
+}
+
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -207,7 +215,7 @@ async function initQuotaAnnuel(entrepriseId, annee) {
           newCounter.jours_reportes = carry;
           await newCounter.save({ transaction: t });
 
-          console.log(`[report-annuel] ${utilisateur.id} / ${type.libelle}: ${carry}j reportés de ${prevYear} vers ${annee}`);
+          quotasLog(`[report-annuel] ${utilisateur.id} / ${type.libelle}: ${carry}j reportes de ${prevYear} vers ${annee}`);
         }
       }
     }

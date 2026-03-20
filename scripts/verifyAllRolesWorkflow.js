@@ -178,6 +178,34 @@ function isoDate(offset = 0) {
   return d.toISOString().slice(0, 10);
 }
 
+async function ensureLeaveBudget({ entrepriseId, userId, congeTypeId, year, acquired = 60 }) {
+  const [counter, created] = await CompteurConges.findOrCreate({
+    where: {
+      utilisateur_id: userId,
+      conge_type_id: congeTypeId,
+      annee: year,
+    },
+    defaults: {
+      entreprise_id: entrepriseId,
+      utilisateur_id: userId,
+      conge_type_id: congeTypeId,
+      annee: year,
+      jours_acquis: acquired,
+      jours_pris: 0,
+      jours_reserves: 0,
+      jours_reportes: 0,
+    },
+  });
+
+  if (!created) {
+    await counter.update({
+      jours_acquis: acquired,
+      jours_reserves: 0,
+      jours_pris: 0,
+    });
+  }
+}
+
 // Retourne un lundi futur garanti (évite weekends)
 function nextMonday(offsetWeeks = 1) {
   const d = new Date();
@@ -386,6 +414,22 @@ async function main() {
   let congeCreatedId = null;
   let congeEmpId = null;
   {
+    const targetYear = Number(nextMonday(4).slice(0, 4));
+    await ensureLeaveBudget({
+      entrepriseId: emp.entreprise_id,
+      userId: emp.id,
+      congeTypeId: congeType.id,
+      year: targetYear,
+      acquired: 60,
+    });
+    await ensureLeaveBudget({
+      entrepriseId: mgr.entreprise_id,
+      userId: mgr.id,
+      congeTypeId: congeType.id,
+      year: targetYear,
+      acquired: 60,
+    });
+
     // Nettoyage des congés en attente laissés par des runs précédents
     await Conge.destroy({ where: { utilisateur_id: [emp.id, mgr.id], statut: ['en_attente_manager', 'valide_manager'] } });
     info('Congés en attente préexistants supprimés (cleanup)');

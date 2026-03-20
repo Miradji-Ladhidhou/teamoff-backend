@@ -1,7 +1,6 @@
 const authService = require('../services/authService');
-const { auditAuth } = require('../services/auditHelper');
 const { Utilisateur } = require('../models');
-const { auditEntreprise, auditUser } = require('../services/auditHelper');
+const { auditAuth, auditEntreprise, auditUser } = require('../services/auditHelper');
 const bcrypt = require('bcrypt');
 
 // ---------------------------
@@ -105,21 +104,18 @@ async function logout(req, res) {
 // Forgot password
 // ---------------------------
 async function forgotPassword(req, res) {
+  const genericResponse = { message: 'Si un compte existe, un email a ete envoye' };
+
   try {
-    const token = await authService.forgotPassword(req.body.email);
+    await authService.forgotPassword(req.body?.email);
 
     // === Audit demande reset ===
-    await auditAuth.passwordResetRequest(req.body.email, req);
-
-    const response = { message: 'Email de réinitialisation envoyé' };
-    if (process.env.NODE_ENV === 'development') {
-      response.resetToken = token;
-    }
-
-    res.json(response);
-  } catch (err) {
-    res.status(400).json({ message: err.message });
+    await auditAuth.passwordResetRequest(req.body?.email, req);
+  } catch (_) {
+    // Reponse volontairement identique pour eviter la fuite d'information.
   }
+
+  return res.status(200).json(genericResponse);
 }
 
 // ---------------------------
@@ -143,18 +139,23 @@ async function resetPassword(req, res) {
 // ---------------------------
 async function changePassword(req, res) {
   try {
-    console.log('req.user:', req.user);
-    console.log('req.body:', req.body);
-
-    const { currentPassword, newPassword } = req.body;
+    const { currentPassword, newPassword } = req.body || {};
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ message: 'Utilisateur non authentifié' });
+
+    if (!currentPassword || typeof currentPassword !== 'string' || !currentPassword.trim()) {
+      return res.status(400).json({ message: 'Mot de passe actuel requis' });
+    }
+
+    if (!newPassword || typeof newPassword !== 'string' || !newPassword.trim()) {
+      return res.status(400).json({ message: 'Nouveau mot de passe requis' });
+    }
 
     const user = await Utilisateur.findByPk(userId);
     if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
-    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
-    if (!isMatch) return res.status(400).json({ message: 'Mot de passe actuel incorrect' });
+    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!isCurrentPasswordValid) return res.status(400).json({ message: 'Mot de passe actuel incorrect' });
 
     user.password_hash = await bcrypt.hash(newPassword, 10);
     await user.save();

@@ -4,6 +4,14 @@ const path = require('path');
 const { Utilisateur, Entreprise } = require('../models');
 const systemSettingsService = require('./systemSettingsService');
 
+const isEmailDebug = process.env.EMAIL_DEBUG === 'true';
+
+function emailLog(...args) {
+  if (isEmailDebug) {
+    console.log(...args);
+  }
+}
+
 class EmailService {
   constructor() {
     this.defaultSmtpConfig = {
@@ -75,13 +83,13 @@ class EmailService {
       };
 
       if (process.env.MAIL_SIMULATE === 'true') {
-        console.log('📧 Email simulé:', { to, subject, data });
+        emailLog('Email simule:', { to, subject, data });
         return { success: true, test: true };
       }
 
       const transporter = this.createTransporter(smtpConfig);
       const info = await transporter.sendMail(mailOptions);
-      console.log(`📧 Email envoyé à ${to}: ${info.messageId}`);
+      emailLog(`Email envoye a ${to}: ${info.messageId}`);
       return { success: true, messageId: info.messageId };
     } catch (error) {
       console.error('❌ Erreur envoi email:', error);
@@ -450,13 +458,12 @@ class EmailService {
 
   async sendMonthlyReport(email, reportData, entreprise = null) {
     try {
-      // Si aucune entreprise n’est fournie, la récupérer depuis l’utilisateur
+      // Si aucune entreprise n'est fournie, la recuperer depuis l'utilisateur
       if (!entreprise) {
         const user = await Utilisateur.findOne({ where: { email } });
         if (!user) throw new Error(`Utilisateur introuvable pour l'email ${email}`);
 
-        const EntrepriseModel = require('../models/Entreprise')(user.sequelize); // s'assure que le modèle existe
-        entreprise = await EntrepriseModel.findByPk(user.entreprise_id);
+        entreprise = await Entreprise.findByPk(user.entreprise_id);
         if (!entreprise) throw new Error(`Entreprise introuvable pour l'utilisateur ${email}`);
       }
 
