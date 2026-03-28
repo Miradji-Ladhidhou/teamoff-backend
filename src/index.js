@@ -25,12 +25,14 @@ notificationService.initialize(server);
 // ----------------------
 // Configuration CORS
 // ----------------------
-const corsOptions = {
-  origin: 'http://localhost:3001',
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'https://teamoff-front.vercel.app',
+];
+
+app.use(cors({
+  origin: allowedOrigins,
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-};
+}));
 
 app.use(cors(corsOptions));
 
@@ -192,6 +194,10 @@ const startServer = async () => {
     // Initialiser le cron de sauvegarde automatique
     await initBackupCron();
     initQuotasCron();
+
+    // creer les tables manquantes et les colonnes nécessaires
+    await sequelize.sync({ alter: true });
+    console.log('✅ Base synchronisée');
 
     const PORT = process.env.PORT || 5500;
 
