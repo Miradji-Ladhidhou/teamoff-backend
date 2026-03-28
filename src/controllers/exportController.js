@@ -15,6 +15,15 @@ async function resolveEntrepriseId(req) {
 }
 
 class ExportController {
+  // =========================
+  // STATISTIQUES
+  // =========================
+  static async exportStatistiquesCSV(req, res) {
+    const entrepriseId = await resolveEntrepriseId(req);
+    const data = await ExportService.generateStatistiquesCSV(entrepriseId, req.query);
+    res.setHeader('Content-Type', 'text/csv');
+    res.send(data);
+  }
 
   // =========================
   // PREVIEW
@@ -28,6 +37,8 @@ class ExportController {
 
       res.json({ type, ...preview });
     } catch (err) {
+      // Ajout d'un log détaillé pour le debug
+      console.error('Erreur dans previewExport:', err);
       res.status(500).json({ error: err.message });
     }
   }

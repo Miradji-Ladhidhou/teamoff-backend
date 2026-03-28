@@ -61,6 +61,11 @@ class EmailService {
         throw new Error('Configuration SMTP incomplete (host/user/pass requis).');
       }
 
+      // Ajout/forçage de la signature TeamOff SaaS si absente
+      if (!data.signature) {
+        data.signature = 'TeamOff SaaS';
+      }
+
       let html;
       try {
         const templatePath = path.join(__dirname, '../templates/emails', `${templateName}.html`);

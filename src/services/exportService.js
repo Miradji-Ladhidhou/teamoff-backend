@@ -5,6 +5,14 @@ const PDFDocument = require('pdfkit');
 const pdfTemplate = require('./pdfTemplate');
 
 class ExportService {
+    static async generateUtilisateursCSV(id, filters) {
+      const preview = await this.getUtilisateursPreview(id, filters, 1000);
+      return new Parser({ fields: preview.columns }).parse(preview.rows);
+    }
+  static async generateStatistiquesCSV(id, filters) {
+    const preview = await this.getUsagePreview(id, filters, 1000);
+    return new Parser({ fields: preview.columns }).parse(preview.rows);
+  }
 
   // =========================
   // PDF HELPER
@@ -72,7 +80,7 @@ class ExportService {
 
   static buildOrder(sortBy = 'date_debut', sortOrder = 'DESC') {
     const mapping = {
-      date_demande: 'createdAt',
+      date_demande: 'created_at',
       date_debut: 'date_debut',
       statut: 'statut'
     };
@@ -236,6 +244,7 @@ class ExportService {
         ...this.buildFilters(filters)
       },
       include: [{ model: Utilisateur, as: 'utilisateur', attributes: ['prenom','nom','email'] }],
+      order: this.buildOrder(filters.sortBy, filters.sortOrder),
       limit
     });
 
@@ -340,14 +349,17 @@ static async getUtilisateursPreview(entrepriseId, filters = {}, limit = 50) {
 
 static async getUsagePreview(entrepriseId, filters = {}, limit = 50) {
 
+
   const totalUsers = await Utilisateur.count({ where: { entreprise_id: entrepriseId } });
   const totalConges = await Conge.count({ where: { entreprise_id: entrepriseId } });
-  const totalAbsences = await Absence.count({ where: { entreprise_id: entrepriseId } });
+  const totalAbsences = await Absence.count({ where: { entreprise_id: entrepriseId, type_absence: { [Op.ne]: 'maladie' } } });
+  const totalArretsMaladie = await Absence.count({ where: { entreprise_id: entrepriseId, type_absence: 'maladie' } });
 
   const rows = [
     { metric: 'Utilisateurs', value: totalUsers },
     { metric: 'Congés', value: totalConges },
-    { metric: 'Absences', value: totalAbsences }
+    { metric: 'Absences', value: totalAbsences },
+    { metric: 'Arrêts maladie', value: totalArretsMaladie }
   ];
 
   return {

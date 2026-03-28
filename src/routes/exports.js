@@ -39,6 +39,7 @@ router.get('/audit/csv', ExportController.exportAuditCSV);
 // USAGE / STATS
 // -----------------------------
 router.get('/usage/pdf', ExportController.exportUsagePDF);
+router.get('/statistiques/csv', ExportController.exportStatistiquesCSV);
 
 // -----------------------------
 // ENTREPRISES
