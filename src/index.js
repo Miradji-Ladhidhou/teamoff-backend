@@ -23,7 +23,7 @@ notificationService.initialize(server);
 // ----------------------
 // CORS
 // ----------------------
-const allowedOrigins = [process.env.FRONTEND_URL || 'https://teamoff-front.vercel.app'];
+const allowedOrigins = [process.env.FRONTEND_URL || 'https://teamoff.vercel.app'];
 
 app.use(cors({
   origin: allowedOrigins,
@@ -77,7 +77,7 @@ const startServer = async () => {
 
     // 🔥 SYNCHRONISATION DES MODELS
     await sequelize.sync({
-      alter: true,   // adapte les tables existantes
+      alter: false,   // adapte les tables existantes
       logging: false // optionnel (évite spam logs)
     });
 
