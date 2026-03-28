@@ -23,11 +23,27 @@ notificationService.initialize(server);
 // ----------------------
 // CORS
 // ----------------------
-const allowedOrigins = [process.env.FRONTEND_URL || 'https://teamoff.vercel.app'];
+const allowedOrigins = [
+  'https://teamoff.vercel.app',
+  'http://localhost:5173', // si tu testes en local
+];
 
 app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); 
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'), false);
+    }
+  },
+  credentials: true, // important si tu envoies cookies ou JWT
+}));
+
+// Autoriser les requêtes preflight OPTIONS
+app.options('*', cors({
   origin: allowedOrigins,
-  credentials: true,
+  credentials: true
 }));
 
 // ----------------------
