@@ -9,6 +9,7 @@ const bcrypt = require('bcrypt');
 // ---------------------------
 async function register(req, res) {
   try {
+    console.log('register payload', req.body);
     const { entreprise, admin } = await authService.registerEntreprise(req.body);
 
     await auditEntreprise.created(entreprise, null, req);
@@ -31,6 +32,7 @@ async function register(req, res) {
       },
     });
   } catch (err) {
+    console.error('register error', err);
     if (
       err.message.includes('requis')
       || err.message.includes('invalide')
@@ -41,7 +43,6 @@ async function register(req, res) {
       return res.status(400).json({ message: err.message });
     }
 
-    console.error('Register error:', err);
     return res.status(500).json({ message: 'Erreur serveur' });
   }
 }
