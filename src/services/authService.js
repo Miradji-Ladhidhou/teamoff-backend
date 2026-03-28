@@ -131,6 +131,7 @@ async function registerEntreprise(payload) {
     admin_confirm_password,
   } = payload;
 
+      console.log('registerEntreprise payload', payload);
   if (!entreprise_nom?.trim()) throw new Error('Le nom de l\'entreprise est requis');
   if (!entreprise_email?.trim()) throw new Error('L\'email de l\'entreprise est requis');
   if (!entreprise_telephone?.trim()) throw new Error('Le téléphone de l\'entreprise est requis');
