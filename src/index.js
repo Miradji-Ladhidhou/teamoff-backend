@@ -13,9 +13,7 @@ const { initBackupCron } = require('./cron/backupCron');
 const { initQuotasCron } = require('./cron/quotasCron');
 const cors = require('cors');
 
-
 const app = express();
-// Pour que req.ip reflète la vraie IP derrière un reverse proxy (ex: Artillery, nginx, etc.)
 app.set('trust proxy', 1);
 const server = http.createServer(app);
 
@@ -25,16 +23,12 @@ notificationService.initialize(server);
 // ----------------------
 // Configuration CORS
 // ----------------------
-const allowedOrigins = [
-  process.env.FRONTEND_URL || 'https://teamoff-front.vercel.app',
-];
+const allowedOrigins = [process.env.FRONTEND_URL || 'https://teamoff-front.vercel.app'];
 
 app.use(cors({
   origin: allowedOrigins,
   credentials: true,
 }));
-
-app.use(cors(corsOptions));
 
 // ----------------------
 // Middlewares de base
@@ -45,9 +39,7 @@ app.use(metricsMiddleware);
 
 // Empêcher le rate limiter de bloquer les preflight OPTIONS
 app.use((req, res, next) => {
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
 
@@ -60,22 +52,18 @@ app.use(generalLimiter);
 app.get('/health', async (req, res) => {
   try {
     await sequelize.authenticate();
-
     res.json({
       status: 'ok',
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV || 'development',
       version: process.env.npm_package_version || '1.0.0'
     });
-
   } catch (error) {
-
     res.status(503).json({
       status: 'error',
       timestamp: new Date().toISOString(),
       error: 'Database connection failed'
     });
-
   }
 });
 
@@ -90,12 +78,26 @@ app.use('/api', routes);
 // ----------------------
 app.use(errorHandler);
 
+// ----------------------
+// Fonctions d'initialisation DB
+// ----------------------
+async function ensureUtilisateurTable() {
+  await sequelize.query(`
+    CREATE TABLE IF NOT EXISTS utilisateur (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      email VARCHAR(255) NOT NULL UNIQUE,
+      password VARCHAR(255) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+}
+
 async function ensureUtilisateurAuthColumns() {
   await sequelize.query(`
     ALTER TABLE utilisateur
     ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER NOT NULL DEFAULT 0;
   `);
-
   await sequelize.query(`
     ALTER TABLE utilisateur
     ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ NULL;
@@ -104,10 +106,18 @@ async function ensureUtilisateurAuthColumns() {
 
 async function ensureJoursFeriesColumns() {
   await sequelize.query(`
+    CREATE TABLE IF NOT EXISTS jours_feries (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      libelle VARCHAR(255) NOT NULL,
+      date DATE NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await sequelize.query(`
     ALTER TABLE jours_feries
     ADD COLUMN IF NOT EXISTS recurrent BOOLEAN NOT NULL DEFAULT false;
   `);
-
   await sequelize.query(`
     ALTER TABLE jours_feries
     ADD COLUMN IF NOT EXISTS est_travail BOOLEAN NOT NULL DEFAULT false;
@@ -127,7 +137,6 @@ async function ensureHolidayTemplateTables() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
-
   await sequelize.query(`
     CREATE TABLE IF NOT EXISTS holiday_template_items (
       id UUID PRIMARY KEY,
@@ -145,25 +154,21 @@ async function ensureHolidayTemplateTables() {
 
 async function ensureCompteurCongesColumns() {
   await sequelize.query(`
+    CREATE TABLE IF NOT EXISTS compteur_conges (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      utilisateur_id UUID NOT NULL,
+      jours_acquis NUMERIC(5,2) NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await sequelize.query(`
     ALTER TABLE compteur_conges
     ADD COLUMN IF NOT EXISTS dernier_credit_mensuel VARCHAR(7) NULL;
   `);
-
   await sequelize.query(`
     ALTER TABLE compteur_conges
     ADD COLUMN IF NOT EXISTS jours_annules NUMERIC(5,2) NOT NULL DEFAULT 0;
-  `);
-
-  // Autorise les recalculs de solde signés (positif/négatif) après modification d'un congé validé.
-  await sequelize.query(`
-    ALTER TABLE compteur_conges
-    DROP CONSTRAINT IF EXISTS check_jours_acquis_non_negatif;
-  `);
-
-  // Stocke le nombre de jours calculés à la création du congé (utilisé pour le rollback du solde).
-  await sequelize.query(`
-    ALTER TABLE conge
-    ADD COLUMN IF NOT EXISTS jours_calcules NUMERIC(5,2) NULL;
   `);
 }
 
@@ -172,44 +177,32 @@ async function ensureCompteurCongesColumns() {
 // ----------------------
 const startServer = async () => {
   try {
-
     await sequelize.authenticate();
     console.log('✅ Connexion DB OK');
 
+    // Créer toutes les tables et colonnes manquantes
+    await ensureUtilisateurTable();
     await ensureUtilisateurAuthColumns();
-    console.log('✅ Colonnes auth utilisateur vérifiées');
-
     await ensureJoursFeriesColumns();
-    console.log('✅ Colonnes jours fériés vérifiées');
-
     await ensureHolidayTemplateTables();
-    console.log('✅ Tables modèles jours fériés vérifiées');
-
     await ensureCompteurCongesColumns();
-    console.log('✅ Colonnes compteurs congés vérifiées');
 
-    await sequelize.sync({ alter: process.env.NODE_ENV === 'development' });
+    // Synchroniser les modèles Sequelize (création/mise à jour tables)
+    await sequelize.sync({ alter: true });
     console.log('✅ Base synchronisée');
 
     // Initialiser le cron de sauvegarde automatique
     await initBackupCron();
     initQuotasCron();
 
-    // creer les tables manquantes et les colonnes nécessaires
-    await sequelize.sync({ alter: true });
-    console.log('✅ Base synchronisée');
-
     const PORT = process.env.PORT || 5500;
-
     server.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
     });
 
   } catch (err) {
-
     console.error('❌ Impossible de démarrer le serveur :', err);
     process.exit(1);
-
   }
 };
 
