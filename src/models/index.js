@@ -21,6 +21,7 @@ const Notification = require('./Notification')(sequelize);
 const SystemSetting = require('./SystemSetting')(sequelize);
 const HolidayTemplate = require('./HolidayTemplate')(sequelize);
 const HolidayTemplateItem = require('./HolidayTemplateItem')(sequelize);
+const Absence = require('./absence')(sequelize, require('sequelize').DataTypes);
 
 // ======================
 // Associations
@@ -92,6 +93,15 @@ HolidayTemplate.belongsTo(Entreprise, { foreignKey: 'source_entreprise_id', as: 
 HolidayTemplate.hasMany(HolidayTemplateItem, { foreignKey: 'template_id', as: 'items', onDelete: 'CASCADE' });
 HolidayTemplateItem.belongsTo(HolidayTemplate, { foreignKey: 'template_id', as: 'template' });
 
+// ----------------------
+// Absence relations
+// ----------------------
+Absence.belongsTo(Utilisateur, { foreignKey: 'utilisateur_id', as: 'utilisateur' });
+Utilisateur.hasMany(Absence, { foreignKey: 'utilisateur_id', as: 'absences' });
+Absence.belongsTo(Entreprise, { foreignKey: 'entreprise_id', as: 'entreprise' });
+Entreprise.hasMany(Absence, { foreignKey: 'entreprise_id', as: 'absences' });
+
+
 // ======================
 // Export
 // ======================
@@ -108,4 +118,5 @@ module.exports = {
   SystemSetting,
   HolidayTemplate,
   HolidayTemplateItem,
+  Absence,
 };

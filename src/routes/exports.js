@@ -1,16 +1,47 @@
 const express = require('express');
 const router = express.Router();
-const authJwt = require('../middlewares/authJwt');
-const authorizeRole = require('../middlewares/authorizeRole');
 const ExportController = require('../controllers/exportController');
 
-// Les managers peuvent exporter uniquement les congés de leur entreprise.
-router.get('/preview', authJwt, authorizeRole(['manager', 'admin_entreprise', 'super_admin']), ExportController.previewExport);
-router.get('/conges/csv', authJwt, authorizeRole(['manager', 'admin_entreprise', 'super_admin']), ExportController.exportCongesCSV);
-router.get('/conges/pdf', authJwt, authorizeRole(['manager', 'admin_entreprise', 'super_admin']), ExportController.exportCongesPDF);
-router.get('/utilisateurs/csv', authJwt, authorizeRole(['admin_entreprise', 'super_admin']), ExportController.exportUtilisateursCSV);
-router.get('/entreprises/csv', authJwt, authorizeRole(['super_admin']), ExportController.exportEntreprisesCSV);
-router.get('/audit/csv', authJwt, authorizeRole(['admin_entreprise', 'super_admin']), ExportController.exportAuditLogsCSV);
-router.get('/usage/pdf', authJwt, authorizeRole(['admin_entreprise', 'super_admin']), ExportController.exportUsageReportPDF);
+// -----------------------------
+// PREVIEW
+// -----------------------------
+router.get('/preview', ExportController.previewExport);
+
+// -----------------------------
+// CONGES
+// -----------------------------
+router.get('/conges/csv', ExportController.exportCongesCSV);
+router.get('/conges/pdf', ExportController.exportCongesPDF);
+
+// -----------------------------
+// ABSENCES
+// -----------------------------
+router.get('/absences/csv', ExportController.exportAbsencesCSV);
+router.get('/absences/pdf', ExportController.exportAbsencesPDF);
+
+// -----------------------------
+// ARRETS MALADIE
+// -----------------------------
+router.get('/arrets-maladie/csv', ExportController.exportArretsMaladieCSV);
+router.get('/arrets-maladie/pdf', ExportController.exportArretsMaladiePDF);
+
+// -----------------------------
+// UTILISATEURS
+// -----------------------------
+router.get('/utilisateurs/csv', ExportController.exportUtilisateursCSV);
+
+// -----------------------------
+// AUDIT
+// -----------------------------
+router.get('/audit/csv', ExportController.exportAuditCSV);
+
+// -----------------------------
+// USAGE / STATS
+// -----------------------------
+router.get('/usage/pdf', ExportController.exportUsagePDF);
+
+// -----------------------------
+// ENTREPRISES
+// -----------------------------
 
 module.exports = router;

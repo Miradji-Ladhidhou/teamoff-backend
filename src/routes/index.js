@@ -159,4 +159,13 @@ router.use('/audit', authJwt, auditRoutes);
 // ------------------------------
 router.use('/settings', authJwt, settingsRoutes);
 
+// ------------------------------
+// Absences routes (auth requis)
+// ------------------------------
+const absencesUploadRoutes = require('./absencesUpload');
+router.use('/absences/upload', authJwt, absencesUploadRoutes);
+
+const absencesRoutes = require('./absences');
+router.use('/absences', authJwt, absencesRoutes);
+
 module.exports = router;

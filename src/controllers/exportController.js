@@ -10,170 +10,128 @@ async function resolveEntrepriseId(req) {
     return req.user.entreprise_id;
   }
 
-  if (req.query?.entrepriseId) {
-    return req.query.entrepriseId;
-  }
-
-  const entreprise = await Entreprise.findOne({
-    attributes: ['id'],
-    order: [['createdAt', 'ASC']],
-  });
-
-  return entreprise?.id || null;
+  const entreprise = await Entreprise.findOne();
+  return entreprise?.id;
 }
 
 class ExportController {
-  // Prévisualisation des données avant export
+
+  // =========================
+  // PREVIEW
+  // =========================
   static async previewExport(req, res) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
-      if (!entrepriseId) {
-        return res.status(400).json({ error: 'Aucune entreprise disponible pour la prévisualisation.' });
-      }
-
       const type = req.query.type || 'conges';
-      if (req.user?.role === 'manager' && type !== 'conges') {
-        return res.status(403).json({ error: 'Les managers peuvent uniquement prévisualiser les congés.' });
-      }
-      const requestedLimit = Number(req.query.limit || 50);
-      const limit = Number.isNaN(requestedLimit) ? 50 : Math.max(1, Math.min(200, requestedLimit));
 
-      const preview = await ExportService.getPreview(type, entrepriseId, req.query, limit);
+      const preview = await ExportService.getPreview(type, entrepriseId, req.query, req.query.limit);
 
-      return res.json({
-        type,
-        ...preview,
-      });
-    } catch (error) {
-      console.error('Erreur lors de la prévisualisation export:', error);
-      return res.status(500).json({ error: 'Erreur lors de la prévisualisation export' });
+      res.json({ type, ...preview });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
   }
 
-  // Export des congés en CSV
+  // =========================
+  // CONGÉS
+  // =========================
   static async exportCongesCSV(req, res) {
-    try {
-      const entrepriseId = await resolveEntrepriseId(req);
-      if (!entrepriseId) {
-        return res.status(400).json({ error: 'Aucune entreprise disponible pour l\'export.' });
-      }
-      const filters = req.query; // status, dateDebut, dateFin, utilisateurId
+    const entrepriseId = await resolveEntrepriseId(req);
+    const data = await ExportService.generateCongesCSV(entrepriseId, req.query, req.user.role);
 
-      const userRole = req.user?.role || 'admin_entreprise';
-      const csvData = await ExportService.generateCongesCSV(entrepriseId, filters, userRole);
-
-      const filename = `conges_${new Date().toISOString().split('T')[0]}.csv`;
-
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.send(csvData);
-    } catch (error) {
-      console.error('Erreur lors de l\'export CSV des congés:', error);
-      res.status(500).json({ error: 'Erreur lors de l\'export CSV' });
-    }
+    res.setHeader('Content-Type', 'text/csv');
+    res.send(data);
   }
 
-  // Export des congés en PDF
   static async exportCongesPDF(req, res) {
-    try {
-      const entrepriseId = await resolveEntrepriseId(req);
-      if (!entrepriseId) {
-        return res.status(400).json({ error: 'Aucune entreprise disponible pour l\'export.' });
-      }
-      const filters = req.query; // status, dateDebut, dateFin
-
-      const userRole = req.user?.role || 'admin_entreprise';
-      const pdfData = await ExportService.generateCongesPDF(entrepriseId, filters, userRole);
-
-      const filename = `conges_${new Date().toISOString().split('T')[0]}.pdf`;
-
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.send(pdfData);
-    } catch (error) {
-      console.error('Erreur lors de l\'export PDF des congés:', error);
-      res.status(500).json({ error: 'Erreur lors de l\'export PDF' });
+    const entrepriseId = await resolveEntrepriseId(req);
+    let entrepriseName = null;
+    if (req.user?.entreprise_id && Entreprise) {
+      const ent = await Entreprise.findByPk(req.user.entreprise_id);
+      entrepriseName = ent?.nom || null;
     }
+    const data = await ExportService.generateCongesPDF(entrepriseId, req.query, entrepriseName);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.send(data);
   }
 
-  // Export des utilisateurs en CSV
+  // =========================
+  // ABSENCES
+  // =========================
+  static async exportAbsencesCSV(req, res) {
+    const entrepriseId = await resolveEntrepriseId(req);
+    const data = await ExportService.generateAbsencesCSV(entrepriseId, req.query);
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.send(data);
+  }
+
+  static async exportAbsencesPDF(req, res) {
+    const entrepriseId = await resolveEntrepriseId(req);
+    let entrepriseName = null;
+    if (req.user?.entreprise_id && Entreprise) {
+      const ent = await Entreprise.findByPk(req.user.entreprise_id);
+      entrepriseName = ent?.nom || null;
+    }
+    const data = await ExportService.generateAbsencesPDF(entrepriseId, req.query, entrepriseName);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.send(data);
+  }
+
+  // =========================
+  // ARRÊTS MALADIE
+  // =========================
+  static async exportArretsMaladieCSV(req, res) {
+    const entrepriseId = await resolveEntrepriseId(req);
+    const data = await ExportService.generateArretsMaladieCSV(entrepriseId, req.query);
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.send(data);
+  }
+
+  static async exportArretsMaladiePDF(req, res) {
+    const entrepriseId = await resolveEntrepriseId(req);
+    let entrepriseName = null;
+    if (req.user?.entreprise_id && Entreprise) {
+      const ent = await Entreprise.findByPk(req.user.entreprise_id);
+      entrepriseName = ent?.nom || null;
+    }
+    const data = await ExportService.generateArretsMaladiePDF(entrepriseId, req.query, entrepriseName);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.send(data);
+  }
+
+  // =========================
+  // UTILISATEURS
+  // =========================
   static async exportUtilisateursCSV(req, res) {
-    try {
-      const entrepriseId = await resolveEntrepriseId(req);
-      if (!entrepriseId) {
-        return res.status(400).json({ error: 'Aucune entreprise disponible pour l\'export.' });
-      }
+    const entrepriseId = await resolveEntrepriseId(req);
+    const data = await ExportService.generateUtilisateursCSV(entrepriseId);
 
-      const csvData = await ExportService.generateUtilisateursCSV(entrepriseId);
-
-      const filename = `utilisateurs_${new Date().toISOString().split('T')[0]}.csv`;
-
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.send(csvData);
-    } catch (error) {
-      console.error('Erreur lors de l\'export CSV des utilisateurs:', error);
-      res.status(500).json({ error: 'Erreur lors de l\'export CSV' });
-    }
+    res.setHeader('Content-Type', 'text/csv');
+    res.send(data);
   }
 
-  // Export des logs d'audit en CSV
-  static async exportAuditLogsCSV(req, res) {
-    try {
-      const entrepriseId = await resolveEntrepriseId(req);
-      if (!entrepriseId) {
-        return res.status(400).json({ error: 'Aucune entreprise disponible pour l\'export.' });
-      }
-      const filters = req.query; // dateDebut, dateFin, action, utilisateurId
+  // =========================
+  // AUDIT
+  // =========================
+  static async exportAuditCSV(req, res) {
+    const entrepriseId = await resolveEntrepriseId(req);
+    const data = await ExportService.generateAuditLogsCSV(entrepriseId, req.query);
 
-      const csvData = await ExportService.generateAuditLogsCSV(entrepriseId, filters);
-
-      const filename = `audit_logs_${new Date().toISOString().split('T')[0]}.csv`;
-
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.send(csvData);
-    } catch (error) {
-      console.error('Erreur lors de l\'export CSV des logs d\'audit:', error);
-      res.status(500).json({ error: 'Erreur lors de l\'export CSV' });
-    }
+    res.setHeader('Content-Type', 'text/csv');
+    res.send(data);
   }
 
-  // Export du rapport d'usage en PDF
-  static async exportUsageReportPDF(req, res) {
-    try {
-      const entrepriseId = await resolveEntrepriseId(req);
-      if (!entrepriseId) {
-        return res.status(400).json({ error: 'Aucune entreprise disponible pour l\'export.' });
-      }
+  // =========================
+  // USAGE
+  // =========================
+  static async exportUsagePDF(req, res) {
+    const entrepriseId = await resolveEntrepriseId(req);
+    const data = await ExportService.generateUsageReportPDF(entrepriseId);
 
-      const pdfData = await ExportService.generateUsageReportPDF(entrepriseId);
-
-      const filename = `rapport_usage_${new Date().toISOString().split('T')[0]}.pdf`;
-
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.send(pdfData);
-    } catch (error) {
-      console.error('Erreur lors de l\'export PDF du rapport d\'usage:', error);
-      res.status(500).json({ error: 'Erreur lors de l\'export PDF' });
-    }
-  }
-
-  // Export des entreprises en CSV (super_admin)
-  static async exportEntreprisesCSV(req, res) {
-    try {
-      const csvData = await ExportService.generateEntreprisesCSV();
-
-      const filename = `entreprises_${new Date().toISOString().split('T')[0]}.csv`;
-
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.send(csvData);
-    } catch (error) {
-      console.error('Erreur lors de l\'export CSV des entreprises:', error);
-      res.status(500).json({ error: 'Erreur lors de l\'export CSV des entreprises' });
-    }
+    res.setHeader('Content-Type', 'application/pdf');
+    res.send(data);
   }
 }
 
