@@ -24,7 +24,7 @@ notificationService.initialize(server);
 // CORS
 // ----------------------
 const allowedOrigins = [
-  'https://teamoff-r9srs92by-974.vercel.app',
+  'https://teamoff.vercel.app', // URL de production
   'http://localhost:5173', // si tu testes en local
 ];
 
