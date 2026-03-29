@@ -135,11 +135,13 @@ router.use('/calendrier-conges', authJwt, calendrierRoutes);
 // ------------------------------
 // Notifications routes (auth requis)
 // ------------------------------
+const notificationRoutes = require('./notification');
 router.use('/notifications', authJwt, notificationRoutes);
 
 // ----------------------------
 // Types de congé routes (auth requis)
 // ----------------------------
+const congeTypesRoutes = require('./congeTypes');
 router.use('/conge-types', authJwt, congeTypesRoutes);
 
 // ------------------------------
@@ -157,6 +159,7 @@ router.use('/audit', authJwt, auditRoutes);
 // ------------------------------
 // System settings routes (super_admin uniquement)
 // ------------------------------
+const SystemSetting = require('./SystemSetting')(sequelize, DataTypes);
 router.use('/settings', authJwt, settingsRoutes);
 
 // ------------------------------
