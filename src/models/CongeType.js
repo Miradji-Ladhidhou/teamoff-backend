@@ -9,6 +9,7 @@ module.exports = (sequelize, DataTypes) => {
     entreprise_id: {
       type: DataTypes.UUID,
       allowNull: false,
+      references: { model: 'entreprise', key: 'id' }
     },
 
     code: {

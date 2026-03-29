@@ -10,17 +10,20 @@ module.exports = (sequelize, DataTypes) => {
 
     entreprise_id: {
       type: DataTypes.UUID,
-      allowNull: false
+      allowNull: false,
+      references: { model: 'entreprise', key: 'id' }
     },
 
     utilisateur_id: {
       type: DataTypes.UUID,
-      allowNull: false
+      allowNull: false,
+      references: { model: 'utilisateur', key: 'id' }
     },
 
     conge_type_id: {
       type: DataTypes.UUID,
-      allowNull: false
+      allowNull: false,
+      references: { model: 'conge_type', key: 'id' }
     },
 
     annee: {

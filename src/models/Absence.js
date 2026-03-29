@@ -8,12 +8,12 @@ module.exports = (sequelize, DataTypes) => {
     utilisateur_id: {
       type: DataTypes.UUID,
       allowNull: false,
-      references: { model: 'Utilisateurs', key: 'id' },
+      references: { model: 'utilisateur', key: 'id' },
     },
     entreprise_id: {
       type: DataTypes.UUID,
       allowNull: false,
-      references: { model: 'Entreprises', key: 'id' },
+      references: { model: 'entreprise', key: 'id' },
     },
     type_absence: {
       type: DataTypes.STRING,

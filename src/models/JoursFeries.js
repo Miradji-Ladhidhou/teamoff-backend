@@ -5,7 +5,7 @@ module.exports = (sequelize, DataTypes) => {
       primaryKey: true,
       defaultValue: DataTypes.UUIDV4,
     },
-    entreprise_id: { type: DataTypes.UUID, allowNull: false },
+    entreprise_id: { type: DataTypes.UUID, allowNull: false, references: { model: 'entreprise', key: 'id' } },
     date: { type: DataTypes.DATEONLY, allowNull: false },
     libelle: { type: DataTypes.STRING(255), allowNull: false },
     recurrent: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },

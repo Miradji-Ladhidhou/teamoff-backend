@@ -6,9 +6,9 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: DataTypes.UUIDV4,
     },
 
-    entreprise_id: { type: DataTypes.UUID, allowNull: false },
-    utilisateur_id: { type: DataTypes.UUID, allowNull: false },
-    conge_type_id: { type: DataTypes.UUID, allowNull: false },
+    entreprise_id: { type: DataTypes.UUID, allowNull: false, references: { model: 'entreprise', key: 'id' } },
+    utilisateur_id: { type: DataTypes.UUID, allowNull: false, references: { model: 'utilisateur', key: 'id' } },
+    conge_type_id: { type: DataTypes.UUID, allowNull: false, references: { model: 'conge_type', key: 'id' } },
 
     date_debut: { type: DataTypes.DATEONLY, allowNull: false },
     date_fin: { type: DataTypes.DATEONLY, allowNull: false },
