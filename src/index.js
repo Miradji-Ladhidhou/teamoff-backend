@@ -107,10 +107,7 @@ const startServer = async () => {
     console.log('✅ DB connected');
 
     // 🔥 SYNCHRONISATION DES MODELS
-    await sequelize.sync({
-      alter: false,   // adapte les tables existantes
-      logging: false // optionnel (évite spam logs)
-    });
+    await sequelize.sync({ force: true }); // ATTENTION : force: true réinitialise la DB à chaque démarrage, à utiliser uniquement en dev
 
     console.log('✅ Models synchronisés avec la DB');
 
