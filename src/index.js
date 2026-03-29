@@ -2,7 +2,9 @@ require('dotenv').config();
 const express = require('express');
 const compression = require('compression');
 const http = require('http');
-const sequelize = require('./config/database');
+// Import de l'instance sequelize et des modèles
+const models = require('./models');
+const sequelize = models.sequelize;
 const routes = require('./routes');
 const { metricsMiddleware } = require('./middlewares/metrics');
 const { generalLimiter } = require('./middlewares/rateLimiter');
@@ -107,7 +109,7 @@ const startServer = async () => {
     console.log('✅ DB connected');
 
     // 🔥 SYNCHRONISATION DES MODELS
-    await sequelize.sync({ alter: true }); // alter: true crée/modifie les tables sans perte de données
+      await sequelize.sync({ alter: true }); // alter: true crée/modifie les tables sans perte de données
 
     console.log('✅ Models synchronisés avec la DB');
 
