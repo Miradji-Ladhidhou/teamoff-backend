@@ -1,6 +1,4 @@
-const { DataTypes } = require('sequelize');
-
-module.exports = (sequelize) => {
+module.exports = (sequelize, DataTypes) => {
   return sequelize.define('Conge', {
     id: {
       type: DataTypes.UUID,

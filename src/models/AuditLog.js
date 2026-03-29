@@ -1,8 +1,8 @@
-const { Model, DataTypes } = require('sequelize');
+const { Model } = require('sequelize');
 
 class AuditLog extends Model {}
 
-module.exports = (sequelize) => {
+module.exports = (sequelize, DataTypes) => {
   AuditLog.init(
     {
       id: {

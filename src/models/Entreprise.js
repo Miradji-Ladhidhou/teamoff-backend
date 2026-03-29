@@ -1,7 +1,6 @@
-const { DataTypes } = require('sequelize');
 const { logAction } = require('../services/auditLogger');
 
-module.exports = (sequelize) => {
+module.exports = (sequelize, DataTypes) => {
 
   const Entreprise = sequelize.define('Entreprise', {
     id: {
