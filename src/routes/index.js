@@ -1,6 +1,21 @@
+// src/routes/index.js
 const express = require('express');
 const router = express.Router();
+const { DataTypes } = require('sequelize');
+const sequelize = require('../config/database');
 
+// ------------------------------
+// Middlewares & services
+// ------------------------------
+const authJwt = require('../middlewares/authJwt');
+const authorizeRole = require('../middlewares/authorizeRole');
+const usersController = require('../controllers/usersController');
+const { metricsMiddleware, getMetrics } = require('../middlewares/metrics');
+const MonitoringService = require('../services/monitoringService');
+
+// ------------------------------
+// Route modules
+// ------------------------------
 const authRoutes = require('./auth');
 const usersRoutes = require('./users');
 const entrepriseRoutes = require('./entreprises');
@@ -9,18 +24,16 @@ const congesRoutes = require('./conge');
 const notificationRoutes = require('./notification');
 const congeTypesRoutes = require('./congeTypes');
 const settingsRoutes = require('./settings');
+const quotasRoutes = require('./quotas');
+const calendrierRoutes = require('./calendrier');
+const exportRoutes = require('./exports');
+const auditRoutes = require('./audit');
+const absencesRoutes = require('./absences');
+const absencesUploadRoutes = require('./absencesUpload');
 
-const authJwt = require('../middlewares/authJwt');
-const usersController = require('../controllers/usersController');
-const authorizeRole = require('../middlewares/authorizeRole');
-// const { generalLimiter } = require('../middlewares/rateLimiter');
-const { metricsMiddleware, getMetrics } = require('../middlewares/metrics');
-const MonitoringService = require('../services/monitoringService');
-const sequelize = require('../config/database');
-
-// Le rate limiting avancé est appliqué par route critique (voir middlewares/advancedRateLimiter.js)
-
-// Appliquer métriques à toutes les routes
+// ------------------------------
+// Appliquer les métriques à toutes les routes
+// ------------------------------
 router.use(metricsMiddleware);
 
 // ------------------------------
@@ -36,7 +49,7 @@ router.get('/health', async (req, res) => {
 });
 
 // ------------------------------
-// Auth routes
+// Auth routes (open)
 // ------------------------------
 router.use('/auth', authRoutes);
 
@@ -67,7 +80,6 @@ router.get('/me', authJwt, (req, res) => {
   res.json({ message: 'Accès autorisé', user: req.user });
 });
 
-// Mise à jour du propre profil (tous les utilisateurs authentifiés)
 router.put('/me', authJwt, usersController.updateOwnProfile);
 
 // ------------------------------
@@ -102,73 +114,55 @@ router.post('/monitoring/cleanup', authJwt, authorizeRole(['super_admin']), asyn
     const daysToKeep = hasInput ? Number(rawDaysToKeep) : 30;
 
     if (!Number.isFinite(daysToKeep) || daysToKeep <= 0) {
-      return res.status(400).json({
-        message: 'daysToKeep doit être un nombre strictement positif'
-      });
+      return res.status(400).json({ message: 'daysToKeep doit être un nombre strictement positif' });
     }
 
     const result = await MonitoringService.cleanupOldMetrics(daysToKeep);
-    return res.status(200).json({
-      message: 'Nettoyage des métriques terminé',
-      ...result,
-    });
+    res.status(200).json({ message: 'Nettoyage des métriques terminé', ...result });
   } catch (error) {
-    return res.status(500).json({
-      message: 'Impossible de nettoyer les métriques',
-      error: error.message,
-    });
+    res.status(500).json({ message: 'Impossible de nettoyer les métriques', error: error.message });
   }
 });
 
 // ------------------------------
 // Quotas routes (auth requis)
 // ------------------------------
-const quotasRoutes = require('./quotas'); 
 router.use('/quotas', authJwt, quotasRoutes);
 
 // ------------------------------
 // Calendrier des congés routes (auth requis)
 // ------------------------------
-const calendrierRoutes = require('./calendrier');
 router.use('/calendrier-conges', authJwt, calendrierRoutes);
 
 // ------------------------------
 // Notifications routes (auth requis)
 // ------------------------------
-const notificationRoutes = require('./notification');
 router.use('/notifications', authJwt, notificationRoutes);
 
-// ----------------------------
+// ------------------------------
 // Types de congé routes (auth requis)
-// ----------------------------
-const congeTypesRoutes = require('./congeTypes');
+// ------------------------------
 router.use('/conge-types', authJwt, congeTypesRoutes);
 
 // ------------------------------
 // Exports routes (admin uniquement)
 // ------------------------------
-const exportRoutes = require('./exports');
 router.use('/exports', authJwt, exportRoutes);
 
 // ------------------------------
 // Audit logs routes (super_admin uniquement)
 // ------------------------------
-const auditRoutes = require('./audit');
 router.use('/audit', authJwt, auditRoutes);
 
 // ------------------------------
 // System settings routes (super_admin uniquement)
 // ------------------------------
-const SystemSetting = require('./SystemSetting')(sequelize, DataTypes);
 router.use('/settings', authJwt, settingsRoutes);
 
 // ------------------------------
 // Absences routes (auth requis)
 // ------------------------------
-const absencesUploadRoutes = require('./absencesUpload');
 router.use('/absences/upload', authJwt, absencesUploadRoutes);
-
-const absencesRoutes = require('./absences');
 router.use('/absences', authJwt, absencesRoutes);
 
 module.exports = router;
