@@ -1,27 +1,28 @@
 // models/index.js
-const { Sequelize } = require('sequelize');
+const { Sequelize, DataTypes } = require('sequelize');
 require('dotenv').config();
 
+// Connexion à la base
 const sequelize = new Sequelize(process.env.DATABASE_URL, {
   dialect: 'postgres',
   logging: false,
 });
 
 // ======================
-// Import des modèles
+// Import des modèles avec DataTypes
 // ======================
-const Entreprise = require('./Entreprise')(sequelize);
-const Utilisateur = require('./Utilisateur')(sequelize);
-const CongeType = require('./CongeType')(sequelize);
-const CompteurConges = require('./CompteurConges')(sequelize);
-const Conge = require('./Conge')(sequelize);
-const JoursFeries = require('./JoursFeries')(sequelize);
-const AuditLog = require('./AuditLog')(sequelize);
-const Notification = require('./Notification')(sequelize);
-const SystemSetting = require('./SystemSetting')(sequelize);
-const HolidayTemplate = require('./HolidayTemplate')(sequelize);
-const HolidayTemplateItem = require('./HolidayTemplateItem')(sequelize);
-const Absence = require('./absence')(sequelize, require('sequelize').DataTypes);
+const Entreprise = require('./Entreprise')(sequelize, DataTypes);
+const Utilisateur = require('./Utilisateur')(sequelize, DataTypes);
+const CongeType = require('./CongeType')(sequelize, DataTypes);
+const CompteurConges = require('./CompteurConges')(sequelize, DataTypes);
+const Conge = require('./Conge')(sequelize, DataTypes);
+const JoursFeries = require('./JoursFeries')(sequelize, DataTypes);
+const AuditLog = require('./AuditLog')(sequelize, DataTypes);
+const Notification = require('./Notification')(sequelize, DataTypes);
+const SystemSetting = require('./SystemSetting')(sequelize, DataTypes);
+const HolidayTemplate = require('./HolidayTemplate')(sequelize, DataTypes);
+const HolidayTemplateItem = require('./HolidayTemplateItem')(sequelize, DataTypes);
+const Absence = require('./Absence')(sequelize, DataTypes);
 
 // ======================
 // Associations
@@ -37,6 +38,7 @@ Entreprise.hasMany(JoursFeries, { foreignKey: 'entreprise_id', as: 'jours_feries
 Entreprise.hasMany(AuditLog, { foreignKey: 'entreprise_id', as: 'audit_logs' });
 Entreprise.hasMany(Notification, { foreignKey: 'entreprise_id', as: 'notifications' });
 Entreprise.hasMany(CompteurConges, { foreignKey: 'entreprise_id', as: 'compteurs_conges' });
+Entreprise.hasMany(Absence, { foreignKey: 'entreprise_id', as: 'absences' });
 
 // ----------------------
 // Utilisateur relations
@@ -46,6 +48,7 @@ Utilisateur.hasMany(Conge, { foreignKey: 'utilisateur_id', as: 'conges' });
 Utilisateur.hasMany(CompteurConges, { foreignKey: 'utilisateur_id', as: 'compteurs_conges' });
 Utilisateur.hasMany(AuditLog, { foreignKey: 'user_id', as: 'audit_logs' });
 Utilisateur.hasMany(Notification, { foreignKey: 'utilisateur_id', as: 'notifications' });
+Utilisateur.hasMany(Absence, { foreignKey: 'utilisateur_id', as: 'absences' });
 
 // ----------------------
 // CongeType relations
@@ -97,10 +100,7 @@ HolidayTemplateItem.belongsTo(HolidayTemplate, { foreignKey: 'template_id', as: 
 // Absence relations
 // ----------------------
 Absence.belongsTo(Utilisateur, { foreignKey: 'utilisateur_id', as: 'utilisateur' });
-Utilisateur.hasMany(Absence, { foreignKey: 'utilisateur_id', as: 'absences' });
 Absence.belongsTo(Entreprise, { foreignKey: 'entreprise_id', as: 'entreprise' });
-Entreprise.hasMany(Absence, { foreignKey: 'entreprise_id', as: 'absences' });
-
 
 // ======================
 // Export
