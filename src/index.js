@@ -78,6 +78,15 @@ app.get('/health', async (req, res) => {
   }
 });
 
+app.get('/debug/tables', async (req, res) => {
+  const [results] = await sequelize.query(`
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+  `);
+
+  res.json(results);
+});
 // ----------------------
 // Routes
 // ----------------------
