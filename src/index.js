@@ -26,7 +26,7 @@ notificationService.initialize(server);
 // CORS
 // ----------------------
 const allowedOrigins = [
-  'https://teamoff.vercel.app', // URL de production
+  'https://teamoff-app.vercel.app', // URL de production
   'http://localhost:5173', // si tu testes en local
 ];
 
@@ -109,7 +109,7 @@ const startServer = async () => {
     console.log('✅ DB connected');
 
     // 🔥 SYNCHRONISATION DES MODELS
-      await sequelize.sync({ alter: true }); // alter: true crée/modifie les tables sans perte de données
+      await sequelize.sync({ alter: false }); // alter: true crée/modifie les tables sans perte de données
 
     console.log('✅ Models synchronisés avec la DB');
 
