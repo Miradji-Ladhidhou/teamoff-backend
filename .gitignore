@@ -49,5 +49,3 @@ Thumbs.db
 # Prisma généré
 /generated/prisma
 
-# Scripts superadmin
-/scripts/createSuperAdmin.js
