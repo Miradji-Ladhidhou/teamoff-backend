@@ -40,14 +40,22 @@ module.exports = (sequelize, DataTypes) => {
   });
 
   Entreprise.afterCreate(async (entreprise, options) => {
-    await logAction({
+    const payload = {
       entreprise_id: entreprise.id,
       user_id: options?.userId || null,
       action: 'entreprise_created',
+      transaction: options?.transaction || null,
       metadata: {
         new: entreprise.toJSON()
       }
-    });
+    };
+
+    if (options?.transaction?.afterCommit) {
+      options.transaction.afterCommit(() => logAction({ ...payload, transaction: null }));
+      return;
+    }
+
+    await logAction(payload);
   });
 
   Entreprise.afterUpdate(async (entreprise, options) => {
@@ -59,27 +67,43 @@ module.exports = (sequelize, DataTypes) => {
       oldValues[field] = entreprise._previousDataValues[field];
     });
 
-    await logAction({
+    const payload = {
       entreprise_id: entreprise.id,
       user_id: options?.userId || null,
       action: 'entreprise_updated',
+      transaction: options?.transaction || null,
       metadata: {
         changed_fields: changedFields,
         new: entreprise.toJSON(),
         old: entreprise._previousDataValues
       }
-    });
+    };
+
+    if (options?.transaction?.afterCommit) {
+      options.transaction.afterCommit(() => logAction({ ...payload, transaction: null }));
+      return;
+    }
+
+    await logAction(payload);
   });
 
   Entreprise.afterDestroy(async (entreprise, options) => {
-    await logAction({
+    const payload = {
       entreprise_id: entreprise.id,
       user_id: options?.userId || null,
       action: 'entreprise_deleted',
+      transaction: options?.transaction || null,
       metadata: {
         old: entreprise.toJSON()
       }
-    });
+    };
+
+    if (options?.transaction?.afterCommit) {
+      options.transaction.afterCommit(() => logAction({ ...payload, transaction: null }));
+      return;
+    }
+
+    await logAction(payload);
   });
 
   return Entreprise;

@@ -2,10 +2,26 @@
 const { AuditLog } = require('../models'); // ton modèle AuditLog
 const auditActions = require('./auditActions');
 
+function resolveEntrepriseId({ performedBy, entity, entityId, metadata }) {
+  if (performedBy?.entreprise_id) return performedBy.entreprise_id;
+
+  if (entity === 'entreprise' && entityId) return entityId;
+
+  if (metadata?.entreprise_id) return metadata.entreprise_id;
+
+  if (entity === 'entreprise' && metadata?.new?.id) return metadata.new.id;
+
+  return null;
+}
+
 /**
  * Fonction interne pour créer un audit dans la base
  */
 async function logAudit({ action, entity, entity_id, user_id, entreprise_id, ip, userAgent, metadata }) {
+  if (!entreprise_id) {
+    return;
+  }
+
   try {
     await AuditLog.create({
       action,
@@ -13,7 +29,7 @@ async function logAudit({ action, entity, entity_id, user_id, entreprise_id, ip,
       entity_id,
       user_id,
       entreprise_id,
-      ip,
+      ip_address: ip,
       user_agent: userAgent,
       metadata
     });
@@ -27,15 +43,22 @@ async function logAudit({ action, entity, entity_id, user_id, entreprise_id, ip,
  */
 async function auditEntity({ action, entity, entityId, performedBy, req, metadata = {} }) {
   try {
+    const entrepriseId = resolveEntrepriseId({
+      performedBy,
+      entity,
+      entityId,
+      metadata,
+    });
+
     await logAudit({
       action,
       entity,
       entity_id: entityId || null,
       user_id: performedBy?.id || null,
-      entreprise_id: performedBy?.entreprise_id || null,
+      entreprise_id: entrepriseId,
       ip: req?.ip || null,
       userAgent: req?.get?.('User-Agent') || null,
-      metadata: metadata ? JSON.stringify(metadata) : null
+      metadata
     });
   } catch (err) {
     console.error('Erreur audit helper:', err);

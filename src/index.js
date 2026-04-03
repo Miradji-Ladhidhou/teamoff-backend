@@ -25,9 +25,16 @@ notificationService.initialize(server);
 // ----------------------
 // CORS
 // ----------------------
+const envOrigins = String(process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 const allowedOrigins = [
   'https://teamoff-app.vercel.app',
+  'http://localhost:3001',
   'http://localhost:5173',
+  ...envOrigins,
 ];
 
 app.use(cors({

@@ -586,8 +586,6 @@ async function getJoursFeriesByMonth(req, res) {
 
     const yearNum = parseInt(year, 10);
     const monthNum = parseInt(month, 10);
-    // Log temporaire pour debug
-    console.log('[JOURS-FERIES] year:', year, 'month:', month, 'yearNum:', yearNum, 'monthNum:', monthNum, 'user:', req.user, 'query:', req.query);
     if (!yearNum || monthNum < 1 || monthNum > 12) {
       return res.status(400).json({ message: 'Paramètres year/month invalides.' });
     }
@@ -603,7 +601,6 @@ async function getJoursFeriesByMonth(req, res) {
     }
 
     if (!entrepriseId) {
-      console.log('[JOURS-FERIES] entreprise_id manquant', { user: req.user, query: req.query });
       return res.status(400).json({ message: 'entreprise_id est requis.' });
     }
 

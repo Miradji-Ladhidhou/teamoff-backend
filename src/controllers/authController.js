@@ -1,6 +1,6 @@
 const authService = require('../services/authService');
 const { Utilisateur } = require('../models');
-const { auditAuth, auditEntreprise, auditUser } = require('../services/auditHelper');
+const { auditAuth, auditUser } = require('../services/auditHelper');
 const emailService = require('../services/emailService');
 const bcrypt = require('bcrypt');
 
@@ -9,10 +9,8 @@ const bcrypt = require('bcrypt');
 // ---------------------------
 async function register(req, res) {
   try {
-    console.log('register payload', req.body);
     const { entreprise, admin } = await authService.registerEntreprise(req.body);
 
-    await auditEntreprise.created(entreprise, null, req);
     await auditUser.created(admin, admin, req);
 
     res.status(201).json({
@@ -175,7 +173,7 @@ async function changePassword(req, res) {
     }
 
     // === Audit succès changement mot de passe ===
-    await auditAuth.passwordChangeSuccess(user, req);
+    await auditAuth.passwordChanged(user, req);
 
     return res.status(200).json({ message: 'Mot de passe changé avec succès' });
 
