@@ -2,6 +2,7 @@ const { Conge, CompteurConges, CongeType, Utilisateur, Entreprise, sequelize } =
 const notificationService = require('./notificationService');
 const { auditConge } = require('./auditHelper');
 const { ensureCounter } = require('./quotasService');
+const LeavePolicyService = require('./leavePolicyService');
 const joursFeriesService = require('./joursFeriesService');
 const { getLeaveRules, getEffectiveLeaveRules } = require('./politiqueConges');
 const { Op } = require('sequelize');
@@ -1321,8 +1322,21 @@ async function updateConge(id, data, user) {
       throw new Error('Modification impossible');
     }
 
-    if (isFinalValidated && user?.role !== 'admin_entreprise') {
-      throw new Error('Seul un admin entreprise peut modifier un congé validé');
+    if (isFinalValidated) {
+      const policyValidation = await LeavePolicyService.validateModification({
+        entrepriseId: conge.entreprise_id,
+        congeStatus: conge.statut,
+        congeStartDate: conge.date_debut,
+        initiatorRole: user?.role,
+      });
+
+      if (!policyValidation?.allowed) {
+        throw new Error(policyValidation.reason || 'Modification non autorisée selon la politique de congés');
+      }
+
+      if (user?.role !== 'admin_entreprise' && user?.role !== 'super_admin') {
+        throw new Error('Seul un administrateur peut modifier un congé validé');
+      }
     }
 
     // Certains clients envoient l'objet complet, y compris le statut.
@@ -1530,7 +1544,7 @@ async function updateConge(id, data, user) {
       }
     }
 
-    if (isFinalValidated && user?.role === 'admin_entreprise') {
+    if (isFinalValidated && (user?.role === 'admin_entreprise' || user?.role === 'super_admin')) {
       const adminNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Administrateur';
       if (employe.email) {
         await notificationService.sendEmail({
@@ -1584,8 +1598,21 @@ async function deleteConge(id, user, options = {}) {
     const isFinalValidated = conge.statut === 'valide_final';
 
     if (!isPending && !isFinalValidated) throw new Error('Impossible de supprimer');
-    if (isFinalValidated && user?.role !== 'admin_entreprise') {
-      throw new Error('Seul un admin entreprise peut annuler un congé validé');
+    if (isFinalValidated) {
+      const policyValidation = await LeavePolicyService.validateCancellation({
+        entrepriseId: conge.entreprise_id,
+        congeStatus: conge.statut,
+        congeStartDate: conge.date_debut,
+        initiatorRole: user?.role,
+      });
+
+      if (!policyValidation?.allowed) {
+        throw new Error(policyValidation.reason || 'Annulation non autorisée selon la politique de congés');
+      }
+
+      if (user?.role !== 'admin_entreprise' && user?.role !== 'super_admin') {
+        throw new Error('Seul un administrateur peut annuler un congé validé');
+      }
     }
     if (isFinalValidated && !cancellationComment) {
       throw new Error('Le commentaire est obligatoire pour annuler un congé déjà validé');
@@ -1613,7 +1640,7 @@ async function deleteConge(id, user, options = {}) {
     }
     await compteur.save({ transaction: t });
 
-    if (isFinalValidated && user?.role === 'admin_entreprise') {
+    if (isFinalValidated && (user?.role === 'admin_entreprise' || user?.role === 'super_admin')) {
       const adminNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Administrateur';
       if (employe.email) {
         await notificationService.sendEmail({

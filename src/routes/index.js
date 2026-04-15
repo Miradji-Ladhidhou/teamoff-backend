@@ -23,6 +23,7 @@ const joursFeriesRoutes = require('./joursFeries');
 const congesRoutes = require('./conge');
 const notificationRoutes = require('./notification');
 const congeTypesRoutes = require('./congeTypes');
+const leavePoliciesRoutes = require('./leavePolicies');
 const settingsRoutes = require('./settings');
 const quotasRoutes = require('./quotas');
 const calendrierRoutes = require('./calendrier');
@@ -164,5 +165,9 @@ router.use('/settings', authJwt, settingsRoutes);
 // ------------------------------
 router.use('/absences/upload', authJwt, absencesUploadRoutes);
 router.use('/absences', authJwt, absencesRoutes);
+
+// Leave Policies routes (auth requis - admin_entreprise, super_admin pour modification)
+// ------------------------------
+router.use('/leave-policies', authJwt, leavePoliciesRoutes);
 
 module.exports = router;

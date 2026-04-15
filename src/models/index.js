@@ -16,6 +16,7 @@ const Utilisateur = require('./Utilisateur')(sequelize, DataTypes);
 const CongeType = require('./CongeType')(sequelize, DataTypes);
 const CompteurConges = require('./CompteurConges')(sequelize, DataTypes);
 const Conge = require('./Conge')(sequelize, DataTypes);
+const LeavePolicy = require('./LeavePolicy')(sequelize, DataTypes);
 const JoursFeries = require('./JoursFeries')(sequelize, DataTypes);
 const AuditLog = require('./AuditLog')(sequelize, DataTypes);
 const Notification = require('./Notification')(sequelize, DataTypes);
@@ -39,6 +40,7 @@ Entreprise.hasMany(AuditLog, { foreignKey: 'entreprise_id', as: 'audit_logs' });
 Entreprise.hasMany(Notification, { foreignKey: 'entreprise_id', as: 'notifications' });
 Entreprise.hasMany(CompteurConges, { foreignKey: 'entreprise_id', as: 'compteurs_conges' });
 Entreprise.hasMany(Absence, { foreignKey: 'entreprise_id', as: 'absences' });
+Entreprise.hasOne(LeavePolicy, { foreignKey: 'entreprise_id', as: 'leave_policy' });
 
 // ----------------------
 // Utilisateur relations
@@ -112,6 +114,7 @@ module.exports = {
   CongeType,
   CompteurConges,
   Conge,
+  LeavePolicy,
   JoursFeries,
   AuditLog,
   Notification,
