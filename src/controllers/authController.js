@@ -3,6 +3,7 @@ const { Utilisateur } = require('../models');
 const { auditAuth, auditUser } = require('../services/auditHelper');
 const emailService = require('../services/emailService');
 const bcrypt = require('bcrypt');
+const logger = require('../utils/logger');
 
 // ---------------------------
 // Register
@@ -30,7 +31,7 @@ async function register(req, res) {
       },
     });
   } catch (err) {
-    console.error('register error', err);
+    logger.error('register error', err);
     if (
       err.message.includes('requis')
       || err.message.includes('invalide')
@@ -48,15 +49,23 @@ async function register(req, res) {
 // ---------------------------
 // Login
 // ---------------------------
+const REFRESH_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'strict',
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+  path: '/api/auth/refresh',
+};
+
 async function login(req, res) {
   try {
     const data = await authService.loginUtilisateur(req.body);
 
-    // === Audit succès ===
-    // authService renvoie la clé "utilisateur" (pas "user")
     await auditAuth.loginSuccess(data.utilisateur, req);
 
-    res.json(data);
+    res.cookie('refreshToken', data.refreshToken, REFRESH_COOKIE_OPTIONS);
+    const { refreshToken: _rt, ...responseData } = data;
+    res.json(responseData);
   } catch (err) {
     const message = err?.message || '';
 
@@ -79,7 +88,7 @@ async function login(req, res) {
       return res.status(403).json({ message });
     }
 
-    console.error('Login error:', err);
+    logger.error('Login error:', err);
     res.status(500).json({ message: 'Erreur serveur' });
   }
 }
@@ -89,13 +98,56 @@ async function login(req, res) {
 // ---------------------------
 async function logout(req, res) {
   try {
-    await authService.logoutUtilisateur(); // éventuellement passer le token
-
-    // === Audit ===
+    res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
     await auditAuth.logout(req.user, req);
-
     res.json({ message: 'Déconnexion réussie' });
   } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+}
+
+// ---------------------------
+// Refresh access token
+// ---------------------------
+async function refresh(req, res) {
+  try {
+    const jwt = require('jsonwebtoken');
+    const { Utilisateur, Entreprise } = require('../models');
+
+    const token = req.cookies?.refreshToken;
+    if (!token) return res.status(401).json({ message: 'Refresh token manquant' });
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET);
+    } catch {
+      return res.status(401).json({ message: 'Refresh token invalide ou expiré' });
+    }
+
+    if (decoded.type !== 'refresh') {
+      return res.status(401).json({ message: 'Token invalide' });
+    }
+
+    const user = await Utilisateur.findByPk(decoded.id);
+    if (!user || user.statut === 'inactif') {
+      return res.status(401).json({ message: 'Utilisateur introuvable ou inactif' });
+    }
+
+    const entreprise = await Entreprise.findByPk(user.entreprise_id);
+    if (!entreprise || entreprise.statut !== 'active') {
+      return res.status(403).json({ message: 'Entreprise inactive' });
+    }
+
+    const { sessionTimeout } = await require('../services/authService').getRuntimeSecuritySettings ? { sessionTimeout: 60 } : { sessionTimeout: 60 };
+    const newAccessToken = jwt.sign(
+      { id: user.id, role: user.role, entreprise_id: user.entreprise_id },
+      process.env.JWT_SECRET,
+      { expiresIn: '60m' }
+    );
+
+    res.json({ token: newAccessToken });
+  } catch (err) {
+    logger.error('Refresh token error:', err);
     res.status(500).json({ message: 'Erreur serveur' });
   }
 }
@@ -128,7 +180,7 @@ async function resetPassword(req, res) {
     try {
       await emailService.sendPasswordResetConfirmation(user.email);
     } catch (mailErr) {
-      console.error('Erreur envoi email confirmation reset password:', mailErr.message);
+      logger.error('Erreur envoi email confirmation reset password:', mailErr.message);
     }
 
     // === Audit succès reset ===
@@ -169,7 +221,7 @@ async function changePassword(req, res) {
     try {
       await emailService.sendPasswordResetConfirmation(user.email);
     } catch (mailErr) {
-      console.error('Erreur envoi email confirmation changement password:', mailErr.message);
+      logger.error('Erreur envoi email confirmation changement password:', mailErr.message);
     }
 
     // === Audit succès changement mot de passe ===
@@ -178,7 +230,7 @@ async function changePassword(req, res) {
     return res.status(200).json({ message: 'Mot de passe changé avec succès' });
 
   } catch (err) {
-    console.error('Erreur changement mot de passe:', err);
+    logger.error('Erreur changement mot de passe:', err);
     return res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -187,6 +239,7 @@ module.exports = {
   register,
   login,
   logout,
+  refresh,
   forgotPassword,
   resetPassword,
   changePassword

@@ -1,7 +1,9 @@
+const logger = require('../utils/logger');
+
 function errorHandler(err, req, res, next) {
-  console.error(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
-  if (req.user) console.error(`Utilisateur: ${req.user.id} | Role: ${req.user.role}`);
-  console.error(err);
+  logger.error(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  if (req.user) logger.error(`Utilisateur: ${req.user.id} | Role: ${req.user.role}`);
+  logger.error(err);
 
   // JSON syntax error from express.json()
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {

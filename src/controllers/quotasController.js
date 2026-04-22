@@ -1,5 +1,6 @@
 // controllers/quotasController.js
 const quotasService = require('../services/quotasService');
+const logger = require('../utils/logger');
 const UsageService = require('../services/usageService');
 const { Utilisateur } = require('../models');
 
@@ -41,7 +42,7 @@ async function initQuota(req, res) {
     await quotasService.initQuotaAnnuel(req.user.entreprise_id, new Date().getFullYear());
     res.json({ message: 'Quotas annuels initialisés avec succès' });
   } catch (err) {
-    console.error(err);
+    logger.error(err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -54,7 +55,7 @@ async function getSolde(req, res) {
     const solde = await quotasService.getSoldeUtilisateur(utilisateur_id, conge_type_id, annee);
     res.json({ solde });
   } catch (err) {
-    console.error(err);
+    logger.error(err);
     res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -67,7 +68,7 @@ async function getSoldes(req, res) {
     const soldes = await quotasService.getSoldesUtilisateur(utilisateur_id, annee);
     res.json({ soldes });
   } catch (err) {
-    console.error(err);
+    logger.error(err);
     res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -78,7 +79,7 @@ async function getUsageReport(req, res) {
     const report = await UsageService.getUsageReport(entrepriseId);
     res.json({ report });
   } catch (err) {
-    console.error(err);
+    logger.error(err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -93,7 +94,7 @@ async function getUserCounters(req, res) {
     const items = await quotasService.listCountersForUser(entrepriseId, utilisateur_id, annee);
     res.json({ items, annee });
   } catch (err) {
-    console.error(err);
+    logger.error(err);
     res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -120,7 +121,7 @@ async function upsertUserCounter(req, res) {
 
     res.json({ message: 'Compteur mis à jour', item: compteur });
   } catch (err) {
-    console.error(err);
+    logger.error(err);
     res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -135,7 +136,7 @@ async function removeUserCounter(req, res) {
 
     res.json({ message: 'Compteur supprimé' });
   } catch (err) {
-    console.error(err);
+    logger.error(err);
     res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -170,7 +171,7 @@ async function recalculateProrata(req, res) {
       ...result,
     });
   } catch (err) {
-    console.error(err);
+    logger.error(err);
     res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -201,7 +202,7 @@ async function monthlyAccrual(req, res) {
       ...result,
     });
   } catch (err) {
-    console.error(err);
+    logger.error(err);
     res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
   }
 }

@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const logger = require('./utils/logger');
 const compression = require('compression');
 const http = require('http');
 // Import de l'instance sequelize et des modèles
@@ -64,6 +65,7 @@ app.use((req, res, next) => {
 // ----------------------
 // Middlewares
 // ----------------------
+app.use(require('cookie-parser')());
 app.use(express.json());
 app.use(compression());
 app.use(metricsMiddleware);
@@ -87,15 +89,6 @@ app.get('/health', async (req, res) => {
   }
 });
 
-app.get('/debug/tables', async (req, res) => {
-  const [results] = await sequelize.query(`
-    SELECT table_name
-    FROM information_schema.tables
-    WHERE table_schema = 'public'
-  `);
-
-  res.json(results);
-});
 // ----------------------
 // Routes
 // ----------------------
@@ -113,12 +106,12 @@ app.use(errorHandler);
 const startServer = async () => {
   try {
     await sequelize.authenticate();
-    console.log('✅ DB connected');
+    logger.info('✅ DB connected');
 
     // 🔥 SYNCHRONISATION DES MODELS
       await sequelize.sync({ alter: false }); // alter: true crée/modifie les tables sans perte de données
 
-    console.log('✅ Models synchronisés avec la DB');
+    logger.info('✅ Models synchronisés avec la DB');
 
     // Cron jobs
     await initBackupCron();
@@ -127,11 +120,11 @@ const startServer = async () => {
     const PORT = process.env.PORT || 5500;
 
     server.listen(PORT, () => {
-      console.log(`🚀 Server running on port ${PORT}`);
+      logger.info(`🚀 Server running on port ${PORT}`);
     });
 
   } catch (err) {
-    console.error('❌ Startup error:', err);
+    logger.error('❌ Startup error:', err);
     process.exit(1);
   }
 };

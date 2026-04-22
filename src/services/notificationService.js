@@ -1,4 +1,6 @@
 const { Notification, Utilisateur } = require('../models');
+const logger = require('../utils/logger');
+const sseManager = require('./sseManager');
 const nodemailer = require('nodemailer');
 const fs = require('fs').promises;
 const path = require('path');
@@ -145,13 +147,24 @@ async function creerNotification({
   message,
   url = null
 }) {
-  return Notification.create({
+  const notif = await Notification.create({
     entreprise_id,
     utilisateur_id,
     type,
     message,
     url
   });
+
+  sseManager.sendToUser(utilisateur_id, 'notification', {
+    id: notif.id,
+    type: notif.type,
+    message: notif.message,
+    url: notif.url,
+    lu: notif.lu,
+    created_at: notif.created_at,
+  });
+
+  return notif;
 }
 
 /**
@@ -190,7 +203,7 @@ async function notifyUser({
         html: emailHtml || `<p>${message}</p>`
       });
     } catch (error) {
-      console.error('Erreur envoi email:', error.message);
+      logger.error('Erreur envoi email:', error.message);
     }
   }
 

@@ -1,4 +1,5 @@
 const UsageService = require('../services/usageService');
+const logger = require('../utils/logger');
 
 // Middleware pour vérifier les limites d'usage
 const checkUsageLimit = (action) => {
@@ -26,7 +27,7 @@ const checkUsageLimit = (action) => {
       req.usageInfo = limitCheck;
       next();
     } catch (error) {
-      console.error('Erreur lors de la vérification des limites d\'usage:', error);
+      logger.error('Erreur lors de la vérification des limites d\'usage:', error);
       next(); // En cas d'erreur, continuer sans bloquer
     }
   };

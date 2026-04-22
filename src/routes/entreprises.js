@@ -26,18 +26,21 @@ router.delete('/:id', authJwt, authorizeRole(['super_admin']), entreprisesContro
 // changement de statut d'une entreprise (super_admin uniquement)
 router.patch('/:id/statut', authJwt, authorizeRole(['super_admin']), entreprisesController.patchStatutEntreprise);
 
+// jours bloqués — accessible à tous les rôles authentifiés de l'entreprise
+router.get('/:id/blocked-days', authJwt, authorizeRole(['super_admin', 'admin_entreprise', 'manager', 'employe']), entreprisesController.getBlockedDays);
+
 // gestion de la politique de congés d'une entreprise (super_admin et admin_entreprise de l'entreprise concernée)
-router.get('/:id/politique', authJwt, authorizeRole(['super_admin', 'admin_entreprise'], req => req.user.entreprise_id), entreprisesController.getPolitiqueConges);
+router.get('/:id/politique', authJwt, authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id), entreprisesController.getPolitiqueConges);
 
 // mise à jour de la politique de congés d'une entreprise (super_admin et admin_entreprise de l'entreprise concernée)
-router.put('/:id/politique', authJwt, authorizeRole(['super_admin', 'admin_entreprise'], req => req.user.entreprise_id), 
+router.put('/:id/politique', authJwt, authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id),
   body('politique_conges').isObject().withMessage('Politique_conges doit être un objet JSON'),
   entreprisesController.updatePolitiqueConges
 );
 
 // gestion des paramètres généraux d'une entreprise (super_admin et admin_entreprise de l'entreprise concernée)
-router.get('/:id/parametres', authJwt, authorizeRole(['super_admin', 'admin_entreprise'], req => req.user.entreprise_id), entreprisesController.getParametres);
-router.put('/:id/parametres', authJwt, authorizeRole(['super_admin', 'admin_entreprise'], req => req.user.entreprise_id), entreprisesController.updateParametres);
+router.get('/:id/parametres', authJwt, authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id), entreprisesController.getParametres);
+router.put('/:id/parametres', authJwt, authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id), entreprisesController.updateParametres);
 
 // gestion des services d'une entreprise (super_admin et admin_entreprise de l'entreprise concernée)
 router.get('/:id/services', authJwt, authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id), entreprisesController.getEntrepriseServices);

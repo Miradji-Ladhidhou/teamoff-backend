@@ -211,6 +211,9 @@ async function initQuotaAnnuel(entrepriseId, annee) {
           });
           if (!newCounter) continue;
 
+          // Idempotent : ne pas re-appliquer le report si déjà effectué
+          if (toNumber(newCounter.jours_reportes, 0) > 0) continue;
+
           newCounter.jours_acquis = Number((toNumber(newCounter.jours_acquis, 0) + carry).toFixed(2));
           newCounter.jours_reportes = carry;
           await newCounter.save({ transaction: t });

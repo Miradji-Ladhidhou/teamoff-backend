@@ -556,8 +556,11 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     const leaveRules = getEffectiveLeaveRules(baseLeaveRules, utilisateur.service || null);
 
     const daysUntilStart = dayjs(date_debut).startOf('day').diff(dayjs().startOf('day'), 'day');
-    if (daysUntilStart < leaveRules.minimum_notice_days) {
-      throw new Error(`Délai minimum non respecté: ${leaveRules.minimum_notice_days} jour(s) minimum`);
+    const minNoticeDays = Number.isFinite(Number(leaveRules.minimum_notice_days))
+      ? Number(leaveRules.minimum_notice_days)
+      : 0;
+    if (daysUntilStart < minNoticeDays) {
+      throw new Error(`Délai minimum non respecté: ${minNoticeDays} jour(s) minimum`);
     }
 
     // Vérification chevauchement / capacité simultanée selon politique
@@ -619,7 +622,8 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     }
 
     const jours = await calcJoursConges(utilisateur.entreprise_id, date_debut, date_fin, debutDemiJournee, finDemiJournee);
-    if (!Number.isFinite(jours) || jours <= 0) throw new Error('Nombre de jours de congé invalide');
+    if (!Number.isFinite(jours)) throw new Error('Nombre de jours de congé invalide');
+    if (jours <= 0) throw new Error('La période sélectionnée ne contient aucun jour ouvrable. Tous les jours sont bloqués, fériés ou exclus par la politique de l\'entreprise.');
 
     if (jours > leaveRules.max_consecutive_days) {
       throw new Error(`Durée maximale dépassée: ${leaveRules.max_consecutive_days} jour(s) consécutif(s) max`);
@@ -787,7 +791,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
 // ----------------------------
 async function validerConge(congeId, reqUser, commentaire = null, req = null) {
   return sequelize.transaction(async (t) => {
-    const conge = await Conge.findByPk(congeId, { transaction: t });
+    const conge = await Conge.findByPk(congeId, { transaction: t, lock: t.LOCK.UPDATE });
     if (!conge) throw new Error('Congé introuvable');
     const joursConge = await resolveCongeDays(conge);
     const baseLeaveRules = await getEntrepriseLeaveRules(conge.entreprise_id, t);
@@ -1018,7 +1022,8 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
   return sequelize.transaction(async (t) => {
     const conge = await Conge.findByPk(congeId, {
       include: [{ model: CongeType, as: 'conge_type' }],
-      transaction: t
+      transaction: t,
+      lock: t.LOCK.UPDATE
     });
     if (!conge) throw new Error('Congé introuvable');
     const joursConge = await resolveCongeDays(conge);
@@ -1394,6 +1399,19 @@ async function updateConge(id, data, user) {
       throw new Error('Demi-journée incohérente sur une seule journée');
     }
 
+    // Vérifier le délai de préavis sur les nouvelles dates (employe uniquement)
+    if (isPending && user?.role !== 'admin_entreprise' && user?.role !== 'super_admin') {
+      const baseLeaveRulesForUpdate = await getEntrepriseLeaveRules(conge.entreprise_id, t);
+      const leaveRulesForUpdate = getEffectiveLeaveRules(baseLeaveRulesForUpdate, employe?.service || null);
+      const minNotice = Number.isFinite(Number(leaveRulesForUpdate.minimum_notice_days))
+        ? Number(leaveRulesForUpdate.minimum_notice_days)
+        : 0;
+      const daysUntilStart = dayjs(nextDateDebut).startOf('day').diff(dayjs().startOf('day'), 'day');
+      if (daysUntilStart < minNotice) {
+        throw new Error(`Délai minimum non respecté: ${minNotice} jour(s) minimum`);
+      }
+    }
+
     const oldDays = await resolveCongeDays(conge);
     const newDays = await calcJoursConges(
       conge.entreprise_id,
@@ -1586,7 +1604,9 @@ async function deleteConge(id, user, options = {}) {
     });
     if (!employe) throw new Error('Employé introuvable');
 
-    if (user?.role !== 'admin_entreprise' && user?.id !== conge.utilisateur_id) {
+    const isAdminLevel = user?.role === 'admin_entreprise' || user?.role === 'super_admin';
+
+    if (!isAdminLevel && user?.id !== conge.utilisateur_id) {
       throw new Error('Suppression non autorisée');
     }
 
@@ -1595,9 +1615,15 @@ async function deleteConge(id, user, options = {}) {
     }
 
     const isPending = conge.statut === 'en_attente_manager';
+    const isManagerValidated = conge.statut === 'valide_manager';
     const isFinalValidated = conge.statut === 'valide_final';
 
-    if (!isPending && !isFinalValidated) throw new Error('Impossible de supprimer');
+    if (!isPending && !isManagerValidated && !isFinalValidated) throw new Error('Impossible de supprimer');
+
+    if (isManagerValidated && !isAdminLevel) {
+      throw new Error('Seul un administrateur peut annuler un congé validé par le manager');
+    }
+
     if (isFinalValidated) {
       const policyValidation = await LeavePolicyService.validateCancellation({
         entrepriseId: conge.entreprise_id,
@@ -1610,11 +1636,12 @@ async function deleteConge(id, user, options = {}) {
         throw new Error(policyValidation.reason || 'Annulation non autorisée selon la politique de congés');
       }
 
-      if (user?.role !== 'admin_entreprise' && user?.role !== 'super_admin') {
+      if (!isAdminLevel) {
         throw new Error('Seul un administrateur peut annuler un congé validé');
       }
     }
-    if (isFinalValidated && !cancellationComment) {
+
+    if ((isManagerValidated || isFinalValidated) && !cancellationComment) {
       throw new Error('Le commentaire est obligatoire pour annuler un congé déjà validé');
     }
 
@@ -1631,7 +1658,7 @@ async function deleteConge(id, user, options = {}) {
       throw new Error('Compteur introuvable pour annulation: aucune mise à jour de solde appliquée');
     }
 
-    if (isPending) {
+    if (isPending || isManagerValidated) {
       compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
     } else {
       compteur.jours_acquis = safeNumber(compteur.jours_acquis) + safeNumber(joursConge);
@@ -1640,7 +1667,7 @@ async function deleteConge(id, user, options = {}) {
     }
     await compteur.save({ transaction: t });
 
-    if (isFinalValidated && (user?.role === 'admin_entreprise' || user?.role === 'super_admin')) {
+    if ((isManagerValidated || isFinalValidated) && isAdminLevel) {
       const adminNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Administrateur';
       if (employe.email) {
         await notificationService.sendEmail({

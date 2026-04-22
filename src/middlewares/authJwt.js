@@ -13,6 +13,11 @@ module.exports = async (req, res, next) => {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
+    // Bloquer l'usage d'un token de reset-password comme token d'auth
+    if (decoded.type === 'reset') {
+      return res.status(401).json({ message: 'Token invalide pour cette opération' });
+    }
+
     // Récupérer l'utilisateur pour vérifier le statut
     const user = await Utilisateur.findByPk(decoded.id);
     if (!user) return res.status(401).json({ message: 'Utilisateur non trouvé' });

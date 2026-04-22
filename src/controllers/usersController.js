@@ -1,8 +1,9 @@
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const { Utilisateur, Entreprise, sequelize } = require('../models');
-const emailService = require('../services/emailService'); 
+const emailService = require('../services/emailService');
 const { auditUser } = require('../services/auditHelper');
+const logger = require('../utils/logger');
 const { validatePasswordPolicy } = require('../services/authService');
 const quotasService = require('../services/quotasService');
 
@@ -42,10 +43,23 @@ async function serviceExistsInEntreprise(entrepriseId, serviceName) {
   return Object.keys(policies).some((name) => name.toLowerCase() === normalizedService.toLowerCase());
 }
 
-function applyOwnProfileFields(utilisateur, { nom, prenom, email }) {
+async function applyOwnProfileFields(utilisateur, { nom, prenom, email }) {
   if (nom !== undefined) utilisateur.nom = nom;
   if (prenom !== undefined) utilisateur.prenom = prenom;
-  if (email !== undefined) utilisateur.email = email;
+  if (email !== undefined) {
+    const normalized = String(email).trim().toLowerCase();
+    if (normalized !== utilisateur.email) {
+      const existing = await Utilisateur.findOne({
+        where: { entreprise_id: utilisateur.entreprise_id, email: normalized },
+      });
+      if (existing) {
+        const err = new Error('Cette adresse email est déjà utilisée');
+        err.status = 409;
+        throw err;
+      }
+      utilisateur.email = normalized;
+    }
+  }
 }
 
 async function updateOwnPasswordIfRequested(utilisateur, { currentPassword, newPassword, email }) {
@@ -104,7 +118,9 @@ async function createUser(req, res) {
       }
     }
 
-    const tempPassword = crypto.randomBytes(6).toString('hex');
+    // Génère un mot de passe temporaire qui satisfait les politiques les plus strictes
+    const base = crypto.randomBytes(6).toString('hex'); // 12 chars lowercase hex
+    const tempPassword = base.slice(0, 8) + 'A1!';     // garantit majuscule + chiffre + spécial
     const hash = await bcrypt.hash(tempPassword, 10);
 
     let newUser = null;
@@ -156,7 +172,7 @@ async function createUser(req, res) {
       message: 'Utilisateur créé et email envoyé avec mot de passe temporaire'
     });
   } catch (err) {
-    console.error('Erreur création utilisateur:', err);
+    logger.error('Erreur création utilisateur:', err);
     res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -171,10 +187,33 @@ async function getAllUsers(req, res) {
       where.entreprise_id = req.user.entreprise_id;
     }
 
+    const rawPage = parseInt(req.query.page, 10);
+    const rawLimit = parseInt(req.query.limit, 10);
+    const paginate = !Number.isNaN(rawPage) && rawPage > 0;
+
+    if (paginate) {
+      const page = rawPage;
+      const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 200) : 50;
+      const offset = (page - 1) * limit;
+      const { count, rows } = await Utilisateur.findAndCountAll({
+        where,
+        order: [['nom', 'ASC']],
+        limit,
+        offset,
+      });
+      return res.json({
+        items: rows,
+        total: count,
+        page,
+        totalPages: Math.ceil(count / limit),
+        limit,
+      });
+    }
+
     const users = await Utilisateur.findAll({ where, order: [['nom', 'ASC']] });
     res.json(users);
   } catch (err) {
-    console.error('Erreur récupération utilisateurs:', err);
+    logger.error('Erreur récupération utilisateurs:', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -195,7 +234,7 @@ async function getUserById(req, res) {
 
     res.json(utilisateur);
   } catch (err) {
-    console.error('Erreur récupération utilisateur:', err);
+    logger.error('Erreur récupération utilisateur:', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -213,6 +252,17 @@ async function updateUser(req, res) {
     }
 
     let { nom, prenom, email, role, service, statut, password, date_embauche } = req.body;
+
+    if (email !== undefined) {
+      const normalized = String(email).trim().toLowerCase();
+      if (normalized !== utilisateur.email) {
+        const existing = await Utilisateur.findOne({
+          where: { entreprise_id: utilisateur.entreprise_id, email: normalized },
+        });
+        if (existing) return res.status(409).json({ message: 'Cette adresse email est déjà utilisée' });
+        email = normalized;
+      }
+    }
     if (typeof nom === 'string') nom = require('sanitize-html')(nom, { allowedTags: [], allowedAttributes: {} });
     if (typeof prenom === 'string') prenom = require('sanitize-html')(prenom, { allowedTags: [], allowedAttributes: {} });
     const normalizedHiringDate = normalizeOptionalDateOnly(date_embauche);
@@ -270,7 +320,7 @@ async function updateUser(req, res) {
 
     res.json(utilisateur);
   } catch (err) {
-    console.error('Erreur mise à jour utilisateur:', err);
+    logger.error('Erreur mise à jour utilisateur:', err);
     res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -303,7 +353,7 @@ async function changeUserRole(req, res) {
 
     res.json(utilisateur);
   } catch (err) {
-    console.error('Erreur changement de rôle utilisateur:', err);
+    logger.error('Erreur changement de rôle utilisateur:', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -320,6 +370,19 @@ async function deleteUser(req, res) {
       return res.status(403).json({ message: 'Vous ne pouvez supprimer que les utilisateurs de votre entreprise' });
     }
 
+    if (utilisateur.id === req.user.id) {
+      return res.status(403).json({ message: 'Vous ne pouvez pas supprimer votre propre compte' });
+    }
+
+    if (utilisateur.role === 'admin_entreprise') {
+      const remainingAdmins = await Utilisateur.count({
+        where: { entreprise_id: utilisateur.entreprise_id, role: 'admin_entreprise', id: { [require('sequelize').Op.ne]: utilisateur.id } },
+      });
+      if (remainingAdmins === 0) {
+        return res.status(403).json({ message: 'Impossible de supprimer le dernier administrateur de l\'entreprise' });
+      }
+    }
+
     await utilisateur.destroy();
 
     // === Audit ===
@@ -327,7 +390,7 @@ async function deleteUser(req, res) {
 
     res.json({ message: 'Utilisateur supprimé avec succès' });
   } catch (err) {
-    console.error('Erreur suppression utilisateur:', err);
+    logger.error('Erreur suppression utilisateur:', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -344,7 +407,7 @@ async function updateOwnProfile(req, res) {
     const { nom, prenom, email, currentPassword, newPassword } = req.body;
 
     await updateOwnPasswordIfRequested(utilisateur, { currentPassword, newPassword, email });
-    applyOwnProfileFields(utilisateur, { nom, prenom, email });
+    await applyOwnProfileFields(utilisateur, { nom, prenom, email });
 
     await utilisateur.save();
 
@@ -363,7 +426,7 @@ async function updateOwnProfile(req, res) {
       return res.status(err.status).json({ message: err.message });
     }
 
-    console.error('Erreur mise à jour profil:', err);
+    logger.error('Erreur mise à jour profil:', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 }

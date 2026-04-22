@@ -77,11 +77,32 @@ router.use('/conges', authJwt, congesRoutes);
 // ------------------------------
 // Infos utilisateur connecté
 // ------------------------------
-router.get('/me', authJwt, (req, res) => {
-  res.json({ message: 'Accès autorisé', user: req.user });
+router.get('/me', authJwt, async (req, res) => {
+  try {
+    const { Utilisateur, Entreprise } = require('../models');
+    const user = await Utilisateur.findByPk(req.user.id, {
+      attributes: ['id', 'nom', 'prenom', 'email', 'role', 'entreprise_id', 'statut', 'service', 'date_embauche'],
+    });
+    if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
+    const entreprise = await Entreprise.findByPk(user.entreprise_id, { attributes: ['id', 'nom'] });
+    res.json({
+      id: user.id,
+      nom: user.nom,
+      prenom: user.prenom,
+      email: user.email,
+      role: user.role,
+      entreprise_id: user.entreprise_id,
+      entreprise_nom: entreprise?.nom || null,
+      statut: user.statut,
+      service: user.service,
+      date_embauche: user.date_embauche,
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
 });
 
-router.put('/me', authJwt, usersController.updateOwnProfile);
+router.put('/me', authJwt, require('../middlewares/advancedRateLimiter').advancedRateLimiter('login'), usersController.updateOwnProfile);
 
 // ------------------------------
 // Métriques (super_admin uniquement)

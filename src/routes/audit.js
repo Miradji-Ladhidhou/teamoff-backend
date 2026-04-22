@@ -1,4 +1,5 @@
 const express = require('express');
+const logger = require('../utils/logger');
 const router = express.Router();
 const { Op } = require('sequelize');
 const { AuditLog, Utilisateur, Entreprise } = require('../models');
@@ -84,7 +85,7 @@ router.get('/', authorizeRole(['super_admin']), async (req, res) => {
       limit: limitNum,
     });
   } catch (error) {
-    console.error('Erreur récupération logs audit:', error);
+    logger.error('Erreur récupération logs audit:', error);
     res.status(500).json({ message: 'Erreur serveur lors de la récupération des logs d\'audit' });
   }
 });

@@ -1,4 +1,5 @@
 const { Utilisateur, Entreprise, sequelize } = require('../models');
+const logger = require('../utils/logger');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const systemSettingsService = require('./systemSettingsService');
@@ -32,7 +33,7 @@ async function getRuntimeSecuritySettings() {
       requireSpecialChars: Boolean(settings?.requireSpecialChars ?? true),
     };
   } catch (error) {
-    console.error('Impossible de charger les paramètres système, fallback par défaut:', error.message);
+    logger.error('Impossible de charger les paramètres système, fallback par défaut:', error.message);
     return {
       maxLoginAttempts: Number(systemSettingsService.DEFAULT_SETTINGS?.maxLoginAttempts ?? 5),
       sessionTimeout: Number(systemSettingsService.DEFAULT_SETTINGS?.sessionTimeout ?? 60),
@@ -103,9 +104,15 @@ async function loginUtilisateur({ email, password, entreprise_id }) {
   const token = jwt.sign(payload, process.env.JWT_SECRET, {
     expiresIn: `${sessionTimeout}m`,
   });
+  const refreshToken = jwt.sign(
+    { id: user.id, type: 'refresh' },
+    process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
+    { expiresIn: '7d' }
+  );
 
   return {
     token,
+    refreshToken,
     utilisateur: {
       id: user.id,
       prenom: user.prenom,
@@ -184,13 +191,13 @@ async function registerEntreprise(payload) {
   try {
     await emailService.sendRegistrationConfirmation(result.entreprise, result.admin);
   } catch (error) {
-    console.error('Erreur email confirmation inscription entreprise:', error.message);
+    logger.error('Erreur email confirmation inscription entreprise:', error.message);
   }
 
   try {
     await emailService.sendSuperAdminNotification(result.entreprise, result.admin);
   } catch (error) {
-    console.error('Erreur notification inscription entreprise:', error.message);
+    logger.error('Erreur notification inscription entreprise:', error.message);
   }
 
   return result;
@@ -215,7 +222,7 @@ async function forgotPassword(email) {
   if (!user) throw new Error('Utilisateur non trouvé');
 
   // Générer token temporaire pour reset et l'envoyer par email
-  const resetToken = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+  const resetToken = jwt.sign({ id: user.id, type: 'reset' }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
   await emailService.sendPasswordReset(user.email, resetToken);
   return resetToken;
@@ -263,7 +270,7 @@ async function changePassword(userId, currentPassword, newPassword) {
 
     return true;
   } catch (err) {
-    console.error('Erreur changement mot de passe:', err.message);
+    logger.error('Erreur changement mot de passe:', err.message);
     throw err;
   }
 }

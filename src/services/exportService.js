@@ -5,6 +5,15 @@ const PDFDocument = require('pdfkit');
 const pdfTemplate = require('./pdfTemplate');
 
 class ExportService {
+  static async generateEntreprisesCSV() {
+    const rows = (await Entreprise.findAll({
+      attributes: ['id', 'nom', 'statut'],
+      order: [['nom', 'ASC']],
+    })).map((e) => ({ id: e.id, nom: e.nom, statut: e.statut }));
+    if (rows.length === 0) return '';
+    return new Parser({ fields: ['id', 'nom', 'statut'] }).parse(rows);
+  }
+
     static async generateUtilisateursCSV(id, filters) {
       const preview = await this.getUtilisateursPreview(id, filters, 1000);
       return new Parser({ fields: preview.columns }).parse(preview.rows);

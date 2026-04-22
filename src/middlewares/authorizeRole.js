@@ -6,11 +6,7 @@ module.exports = (allowedRoles = [], getTargetEntrepriseId = null) => {
     // Super admin bypass total
     if (user.role === 'super_admin') return next();
 
-    // Vérification du rôle hiérarchique
-    const hierarchy = ['employe', 'manager', 'admin_entreprise', 'super_admin'];
-    const userLevel = hierarchy.indexOf(user.role);
-
-    const allowed = allowedRoles.some(r => userLevel >= hierarchy.indexOf(r));
+    const allowed = allowedRoles.includes(user.role);
     if (!allowed) return res.status(403).json({ message: 'Accès interdit : rôle insuffisant' });
 
     // Vérification multi-tenant si fonction cible

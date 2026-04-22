@@ -132,7 +132,12 @@ router.put(
         return res.status(404).json({message:'Type introuvable'});
       }
 
-      await type.update(req.body);
+      const allowed = ['code', 'libelle', 'quota_annuel', 'demi_journee_autorisee'];
+      const updates = {};
+      for (const field of allowed) {
+        if (field in req.body) updates[field] = req.body[field];
+      }
+      await type.update(updates);
 
       res.json(type);
 

@@ -1,12 +1,13 @@
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const { Utilisateur } = require('../models');
+const logger = require('../utils/logger');
 
 const isSocketDebug = process.env.SOCKET_DEBUG === 'true';
 
 function socketLog(...args) {
   if (isSocketDebug) {
-    console.log(...args);
+    logger.info(...args);
   }
 }
 
@@ -28,7 +29,7 @@ class NotificationService {
       try {
         const token = socket.handshake.auth.token;
         if (!token) {
-          console.warn('Socket auth failed: no token');
+          logger.warn('Socket auth failed: no token');
           return next(new Error('Authentication error'));
         }
 
@@ -36,7 +37,7 @@ class NotificationService {
         const user = await Utilisateur.findByPk(decoded.id);
 
         if (!user) {
-          console.warn('Socket auth failed: user not found', decoded);
+          logger.warn('Socket auth failed: user not found', decoded);
           return next(new Error('User not found'));
         }
 
@@ -44,7 +45,7 @@ class NotificationService {
         socket.user = user;
         next();
       } catch (err) {
-        console.warn('Socket auth failed:', err.message);
+        logger.warn('Socket auth failed:', err.message);
         next(new Error('Authentication error'));
       }
     });

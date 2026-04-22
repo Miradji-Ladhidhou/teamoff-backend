@@ -1,4 +1,5 @@
 const cron = require('node-cron');
+const logger = require('../utils/logger');
 const systemSettingsService = require('../services/systemSettingsService');
 const { runDatabaseBackup, cleanupOldBackups } = require('../services/backupService');
 
@@ -16,21 +17,21 @@ async function runBackupJob() {
   try {
     const { dbRetentionDays } = await systemSettingsService.getSettings();
 
-    console.log('[BackupCron] Démarrage sauvegarde automatique...');
+    logger.info('[BackupCron] Démarrage sauvegarde automatique...');
     const result = await runDatabaseBackup();
 
     // Mettre à jour lastBackupAt dans les settings
     await systemSettingsService.updateSettings({ lastBackupAt: result.createdAt });
 
-    console.log(`[BackupCron] Sauvegarde créée : ${result.filename} (${result.sizeBytes} bytes)`);
+    logger.info(`[BackupCron] Sauvegarde créée : ${result.filename} (${result.sizeBytes} bytes)`);
 
     // Nettoyage des anciens backups
     const cleanup = cleanupOldBackups(dbRetentionDays);
     if (cleanup.deleted.length > 0) {
-      console.log(`[BackupCron] Nettoyage : ${cleanup.deleted.length} fichier(s) supprimé(s) (rétention ${dbRetentionDays} jours)`);
+      logger.info(`[BackupCron] Nettoyage : ${cleanup.deleted.length} fichier(s) supprimé(s) (rétention ${dbRetentionDays} jours)`);
     }
   } catch (err) {
-    console.error('[BackupCron] Erreur lors de la sauvegarde automatique :', err.message);
+    logger.error('[BackupCron] Erreur lors de la sauvegarde automatique :', err.message);
   }
 }
 
@@ -57,9 +58,9 @@ async function initBackupCron() {
     currentTask = cron.schedule(expression, runBackupJob, { scheduled: true });
     currentFrequency = dbBackupFrequency;
 
-    console.log(`[BackupCron] Sauvegarde automatique planifiée : fréquence "${dbBackupFrequency}" (${expression})`);
+    logger.info(`[BackupCron] Sauvegarde automatique planifiée : fréquence "${dbBackupFrequency}" (${expression})`);
   } catch (err) {
-    console.error('[BackupCron] Impossible d\'initialiser le cron de sauvegarde :', err.message);
+    logger.error('[BackupCron] Impossible d\'initialiser le cron de sauvegarde :', err.message);
   }
 }
 

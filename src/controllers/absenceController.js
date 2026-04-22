@@ -1,7 +1,7 @@
-// Contrôleur Absence pour TeamOff
-// Gère la création, la récupération, la modification et l’upload de justificatifs
 const { Absence, Utilisateur } = require('../models');
+const { Op } = require('sequelize');
 const emailService = require('../services/emailService');
+const logger = require('../utils/logger');
 const path = require('path');
 
 // POST /api/absences
@@ -93,11 +93,11 @@ exports.createAbsence = async (req, res) => {
         }
       }
     } catch (err) {
-      console.error('Erreur envoi email absence', err);
+      logger.error('Erreur envoi email absence', err);
     }
     res.status(201).json(absence);
   } catch (err) {
-    console.error('Erreur création absence', err);
+    logger.error('Erreur création absence', err);
     res.status(500).json({ message: 'Erreur création absence', error: err.message });
   }
 };
@@ -120,7 +120,7 @@ exports.listAbsences = async (req, res) => {
     });
     res.json(absences);
   } catch (err) {
-    console.error('Erreur récupération absences', err);
+    logger.error('Erreur récupération absences', err);
     res.status(500).json({ message: 'Erreur récupération absences', error: err.message });
   }
 };
@@ -130,6 +130,9 @@ exports.updateAbsence = async (req, res) => {
   try {
     const absence = await Absence.findByPk(req.params.id);
     if (!absence) return res.status(404).json({ message: 'Absence non trouvée' });
+    if (req.user.role !== 'super_admin' && absence.entreprise_id !== req.user.entreprise_id) {
+      return res.status(403).json({ message: 'Accès interdit' });
+    }
     // Seul l'auteur ou un admin/manager peut modifier le justificatif/commentaire
     if (["manager", "admin_entreprise", "super_admin"].includes(req.user.role) || (req.user.role === 'employe' && absence.utilisateur_id === req.user.id)) {
       if (req.body.justificatif) absence.justificatif = req.body.justificatif;
@@ -139,7 +142,7 @@ exports.updateAbsence = async (req, res) => {
     }
     return res.status(403).json({ message: 'Accès interdit' });
   } catch (err) {
-    console.error('Erreur mise à jour absence', err);
+    logger.error('Erreur mise à jour absence', err);
     res.status(500).json({ message: 'Erreur mise à jour absence', error: err.message });
   }
 };

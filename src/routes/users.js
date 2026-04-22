@@ -2,9 +2,13 @@ const express = require('express');
 const router = express.Router();
 const authJwt = require('../middlewares/authJwt');
 const authorizeRole = require('../middlewares/authorizeRole');
+const multer = require('multer');
 
 const { advancedRateLimiter } = require('../middlewares/advancedRateLimiter');
 const usersController = require('../controllers/usersController');
+const { importUsersCSV } = require('../controllers/usersImportController');
+
+const csvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
 
 // Routes pour la gestion des utilisateurs
 
@@ -53,6 +57,15 @@ router.put(
   authJwt,
   authorizeRole(['super_admin']),
   usersController.changeUserRole
+);
+
+// Import CSV utilisateurs
+router.post(
+  '/import/csv',
+  authJwt,
+  authorizeRole(['super_admin', 'admin_entreprise']),
+  csvUpload.single('file'),
+  importUsersCSV
 );
 
 // Supprimer un utilisateur

@@ -1,3 +1,5 @@
+const logger = require('../utils/logger');
+
 async function logAction({ action, entity, entity_id, user_id, entreprise_id, ip, userAgent, metadata, transaction = null }) {
   try {
     const { AuditLog } = require('../models');
@@ -14,7 +16,7 @@ async function logAction({ action, entity, entity_id, user_id, entreprise_id, ip
       transaction,
     });
   } catch (err) {
-    console.error('Erreur audit logger:', err);
+    logger.error('Erreur audit logger:', err);
   }
 }
 

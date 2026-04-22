@@ -1,4 +1,5 @@
 const { Conge, CongeType, Utilisateur } = require('../models');
+const logger = require('../utils/logger');
 const { Op } = require('sequelize');
 const dayjs = require('dayjs');
 
@@ -68,7 +69,7 @@ async function getCalendrier(req, res) {
 
     res.json(conges);
   } catch (err) {
-    console.error(err);
+    logger.error(err);
     res.status(500).json({ message: err.message });
   }
 }

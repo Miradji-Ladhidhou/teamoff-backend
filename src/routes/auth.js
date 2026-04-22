@@ -19,10 +19,7 @@ router.post('/login', advancedRateLimiter('login'), authController.login);
 router.post('/forgot-password', advancedRateLimiter('forgotPassword'), authController.forgotPassword);
 router.post('/reset-password', advancedRateLimiter('forgotPassword'), authController.resetPassword);
 router.post('/change-password', authJwt, advancedRateLimiter('login'), authController.changePassword);
+router.post('/refresh', authController.refresh);
 router.post('/logout', authController.logout);
-// Les routes suivantes sont accessibles sans rate limit strict (ou protégées ailleurs)
-router.post('/forgot-password', authController.forgotPassword);
-router.post('/reset-password', authController.resetPassword);
-router.post('/change-password', authJwt, authController.changePassword);
 
 module.exports = router;

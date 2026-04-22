@@ -1,4 +1,5 @@
 const { Entreprise, Utilisateur } = require('../models');
+const logger = require('../utils/logger');
 const { validationResult } = require('express-validator');
 const { auditEntreprise } = require('../services/auditHelper');
 const emailService = require('../services/emailService');
@@ -79,7 +80,7 @@ async function createEntreprise(req, res) {
     res.status(201).json(entreprise);
 
   } catch (err) {
-    console.error('Erreur création entreprise:', err);
+    logger.error('Erreur création entreprise:', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -92,7 +93,7 @@ async function getAllEntreprises(req, res) {
     const entreprises = await Entreprise.findAll({ order: [['nom', 'ASC']] });
     res.json(entreprises);
   } catch (err) {
-    console.error('Erreur récupération entreprises:', err);
+    logger.error('Erreur récupération entreprises:', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -106,7 +107,7 @@ async function getEntrepriseById(req, res) {
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
     res.json(entreprise);
   } catch (err) {
-    console.error('Erreur récupération entreprise:', err);
+    logger.error('Erreur récupération entreprise:', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -143,7 +144,7 @@ async function updateEntreprise(req, res) {
 
     res.json(entreprise);
   } catch (err) {
-    console.error('Erreur mise à jour entreprise:', err);
+    logger.error('Erreur mise à jour entreprise:', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -163,7 +164,7 @@ async function deleteEntreprise(req, res) {
 
     res.json({ message: 'Entreprise supprimée' });
   } catch (err) {
-    console.error('Erreur suppression entreprise:', err);
+    logger.error('Erreur suppression entreprise:', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
@@ -188,12 +189,40 @@ async function patchStatutEntreprise(req, res) {
 
     res.json({ message: 'Statut entreprise mis à jour', entreprise });
   } catch (err) {
-    console.error('Erreur mise à jour statut:', err);
+    logger.error('Erreur mise à jour statut:', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 }
 
 // ----------------------------
+// Jours bloqués — accessible à tous les rôles de l'entreprise
+// ----------------------------
+async function getBlockedDays(req, res) {
+  try {
+    const entreprise = await Entreprise.findByPk(req.params.id, {
+      attributes: ['id', 'politique_conges'],
+    });
+    if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
+
+    // Isolation multi-tenant : un non-super_admin ne peut lire que sa propre entreprise
+    if (req.user.role !== 'super_admin' && req.user.entreprise_id !== req.params.id) {
+      return res.status(403).json({ message: 'Accès interdit' });
+    }
+
+    const pol = entreprise.politique_conges || {};
+    res.json({
+      blocked_days: pol.blocked_days || {},
+      allow_employee_cancel_own_pending: pol.allow_employee_cancel_own_pending !== undefined
+        ? Boolean(pol.allow_employee_cancel_own_pending) : true,
+      allow_manager_cancel_own_pending: pol.allow_manager_cancel_own_pending !== undefined
+        ? Boolean(pol.allow_manager_cancel_own_pending) : true,
+    });
+  } catch (err) {
+    logger.error('Erreur récupération blocked_days:', err);
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+}
+
 // Politique de congés
 // ----------------------------
 async function getPolitiqueConges(req, res) {
@@ -203,7 +232,7 @@ async function getPolitiqueConges(req, res) {
 
     res.json({ politique_conges: entreprise.politique_conges });
   } catch (err) {
-    console.error('Erreur récupération politique:', err);
+    logger.error('Erreur récupération politique:', err);
     res.status(500).json({ message: 'Erreur serveur' });
   }
 }
@@ -225,7 +254,7 @@ async function updatePolitiqueConges(req, res) {
 
     res.json({ message: 'Politique de congés mise à jour', politique_conges: entreprise.politique_conges });
   } catch (err) {
-    console.error('Erreur mise à jour politique:', err);
+    logger.error('Erreur mise à jour politique:', err);
     res.status(500).json({ message: 'Erreur serveur' });
   }
 }
@@ -244,7 +273,7 @@ async function getParametres(req, res) {
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
     res.json({ parametres: entreprise.parametres || {} });
   } catch (err) {
-    console.error('Erreur récupération paramètres:', err);
+    logger.error('Erreur récupération paramètres:', err);
     res.status(500).json({ message: 'Erreur serveur' });
   }
 }
@@ -273,7 +302,7 @@ async function updateParametres(req, res) {
 
     res.json({ message: 'Paramètres mis à jour', parametres: entreprise.parametres });
   } catch (err) {
-    console.error('Erreur mise à jour paramètres:', err);
+    logger.error('Erreur mise à jour paramètres:', err);
     res.status(500).json({ message: 'Erreur serveur' });
   }
 }
@@ -312,7 +341,7 @@ async function getEntrepriseServices(req, res) {
 
     res.json({ items: services });
   } catch (err) {
-    console.error('Erreur récupération services entreprise:', err);
+    logger.error('Erreur récupération services entreprise:', err);
     res.status(500).json({ message: 'Erreur serveur' });
   }
 }
@@ -350,7 +379,7 @@ async function createEntrepriseService(req, res) {
 
     res.status(201).json({ message: 'Service créé', item: { name, policy: nextServicePolicy, employeesCount: 0 } });
   } catch (err) {
-    console.error('Erreur création service entreprise:', err);
+    logger.error('Erreur création service entreprise:', err);
     res.status(500).json({ message: 'Erreur serveur' });
   }
 }
@@ -425,7 +454,7 @@ async function updateEntrepriseService(req, res) {
       },
     });
   } catch (err) {
-    console.error('Erreur mise à jour service entreprise:', err);
+    logger.error('Erreur mise à jour service entreprise:', err);
     res.status(500).json({ message: 'Erreur serveur' });
   }
 }
@@ -468,7 +497,7 @@ async function deleteEntrepriseService(req, res) {
 
     res.json({ message: 'Service supprimé' });
   } catch (err) {
-    console.error('Erreur suppression service entreprise:', err);
+    logger.error('Erreur suppression service entreprise:', err);
     res.status(500).json({ message: 'Erreur serveur' });
   }
 }
@@ -480,6 +509,7 @@ module.exports = {
   updateEntreprise,
   deleteEntreprise,
   patchStatutEntreprise,
+  getBlockedDays,
   getPolitiqueConges,
   updatePolitiqueConges,
   getParametres,

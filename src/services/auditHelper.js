@@ -1,6 +1,7 @@
 // src/services/auditHelper.js
 const { AuditLog } = require('../models'); // ton modèle AuditLog
 const auditActions = require('./auditActions');
+const logger = require('../utils/logger');
 
 function resolveEntrepriseId({ performedBy, entity, entityId, metadata }) {
   if (performedBy?.entreprise_id) return performedBy.entreprise_id;
@@ -34,7 +35,7 @@ async function logAudit({ action, entity, entity_id, user_id, entreprise_id, ip,
       metadata
     });
   } catch (err) {
-    console.error('Erreur logAudit:', err);
+    logger.error('Erreur logAudit:', err);
   }
 }
 
@@ -61,7 +62,7 @@ async function auditEntity({ action, entity, entityId, performedBy, req, metadat
       metadata
     });
   } catch (err) {
-    console.error('Erreur audit helper:', err);
+    logger.error('Erreur audit helper:', err);
   }
 }
 

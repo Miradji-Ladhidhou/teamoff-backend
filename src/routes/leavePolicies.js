@@ -4,6 +4,7 @@
  */
 
 const express = require('express');
+const logger = require('../utils/logger');
 const router = express.Router();
 const { LeavePolicy } = require('../models');
 const LeavePolicyService = require('../services/leavePolicyService');
@@ -36,7 +37,7 @@ router.get(
         data: policy,
       });
     } catch (error) {
-      console.error('Erreur lors de la récupération de la politique:', error);
+      logger.error('Erreur lors de la récupération de la politique:', error);
       res.status(500).json({
         error: 'Erreur lors de la récupération de la politique',
       });
@@ -125,7 +126,7 @@ router.put(
         data: policy,
       });
     } catch (error) {
-      console.error('Erreur lors de la mise à jour de la politique:', error);
+      logger.error('Erreur lors de la mise à jour de la politique:', error);
       res.status(500).json({
         error: error.message || 'Erreur lors de la mise à jour de la politique',
       });
@@ -168,7 +169,7 @@ router.post(
         data: result,
       });
     } catch (error) {
-      console.error('Erreur lors de la validation:', error);
+      logger.error('Erreur lors de la validation:', error);
       res.status(500).json({
         error: 'Erreur lors de la validation',
       });
@@ -210,7 +211,7 @@ router.post(
         data: result,
       });
     } catch (error) {
-      console.error('Erreur lors de la validation:', error);
+      logger.error('Erreur lors de la validation:', error);
       res.status(500).json({
         error: 'Erreur lors de la validation',
       });

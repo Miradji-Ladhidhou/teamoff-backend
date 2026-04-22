@@ -1,4 +1,5 @@
 const { Op } = require('sequelize');
+const logger = require('../utils/logger');
 const { Notification, Utilisateur, sequelize, AuditLog } = require('../models');
 const emailService = require('./emailService');
 
@@ -71,7 +72,7 @@ class MonitoringService {
       }
 
     } catch (error) {
-      console.error('Erreur lors de l\'envoi de l\'alerte:', error);
+      logger.error('Erreur lors de l\'envoi de l\'alerte:', error);
     }
   }
 

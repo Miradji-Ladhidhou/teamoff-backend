@@ -1,4 +1,5 @@
 const cron = require('node-cron');
+const logger = require('../utils/logger');
 const quotasService = require('../services/quotasService');
 const { Entreprise } = require('../models');
 
@@ -15,11 +16,11 @@ async function processAllEnterprises(handler) {
 
 async function runAnnualInit() {
   const year = new Date().getFullYear();
-  console.log(`[quotas-cron] Initialisation des compteurs pour ${year}...`);
+  logger.info(`[quotas-cron] Initialisation des compteurs pour ${year}...`);
 
   await processAllEnterprises(async (entreprise) => {
     await quotasService.initQuotaAnnuel(entreprise.id, year);
-    console.log(`[quotas-cron] Initialisation OK: ${entreprise.nom} (${entreprise.id})`);
+    logger.info(`[quotas-cron] Initialisation OK: ${entreprise.nom} (${entreprise.id})`);
   });
 }
 
@@ -27,11 +28,11 @@ async function runMonthlyAccrual() {
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth() + 1;
-  console.log(`[quotas-cron] Crédit mensuel ${year}-${String(month).padStart(2, '0')}...`);
+  logger.info(`[quotas-cron] Crédit mensuel ${year}-${String(month).padStart(2, '0')}...`);
 
   await processAllEnterprises(async (entreprise) => {
     const result = await quotasService.ajouterAcquisitionMensuelle(entreprise.id, year, month);
-    console.log(
+    logger.info(
       `[quotas-cron] Crédit OK: ${entreprise.nom} (${entreprise.id}) - appliqués=${result.applied}, ignorés=${result.skipped}, ajouté=${result.total_added}`
     );
   });
@@ -43,7 +44,7 @@ function initQuotasCron() {
     try {
       await runAnnualInit();
     } catch (error) {
-      console.error('[quotas-cron] Erreur initialisation annuelle:', error);
+      logger.error('[quotas-cron] Erreur initialisation annuelle:', error);
     }
   });
 
@@ -52,11 +53,11 @@ function initQuotasCron() {
     try {
       await runMonthlyAccrual();
     } catch (error) {
-      console.error('[quotas-cron] Erreur crédit mensuel:', error);
+      logger.error('[quotas-cron] Erreur crédit mensuel:', error);
     }
   });
 
-  console.log('[quotas-cron] Planification activée');
+  logger.info('[quotas-cron] Planification activée');
 }
 
 module.exports = {
