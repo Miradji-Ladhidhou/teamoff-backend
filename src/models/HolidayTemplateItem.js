@@ -8,6 +8,8 @@ module.exports = (sequelize, DataTypes) => {
     template_id: {
       type: DataTypes.UUID,
       allowNull: false,
+      references: { model: 'holiday_templates', key: 'id' },
+      onDelete: 'CASCADE',
     },
     date: {
       type: DataTypes.DATEONLY,
@@ -33,10 +35,7 @@ module.exports = (sequelize, DataTypes) => {
     createdAt: 'created_at',
     updatedAt: 'updated_at',
     indexes: [
-      {
-        unique: true,
-        fields: ['template_id', 'date'],
-      },
+      { unique: true, fields: ['template_id', 'date'] },
     ],
   });
 };

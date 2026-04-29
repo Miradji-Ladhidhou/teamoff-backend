@@ -9,18 +9,17 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.UUID,
       allowNull: false,
       references: { model: 'utilisateur', key: 'id' },
+      onDelete: 'CASCADE',
     },
     entreprise_id: {
       type: DataTypes.UUID,
       allowNull: false,
       references: { model: 'entreprise', key: 'id' },
+      onDelete: 'CASCADE',
     },
     type_absence: {
-      type: DataTypes.STRING,
+      type: DataTypes.ENUM('maladie', 'absence_exceptionnelle'),
       allowNull: false,
-      validate: {
-        isIn: [['maladie', 'absence_exceptionnelle']],
-      },
     },
     date_debut: {
       type: DataTypes.DATEONLY,
@@ -38,7 +37,7 @@ module.exports = (sequelize, DataTypes) => {
       },
     },
     justificatif: {
-      type: DataTypes.STRING,
+      type: DataTypes.STRING(500),
       allowNull: true,
     },
     commentaire: {
@@ -46,23 +45,23 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
     },
     statut: {
-      type: DataTypes.STRING,
+      type: DataTypes.ENUM('signalée', 'approuvée', 'rejetée'),
       allowNull: false,
       defaultValue: 'signalée',
-      validate: {
-        isIn: [['signalée']],
-      }
-    }
+    },
   }, {
     tableName: 'Absences',
     underscored: true,
     timestamps: true,
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
+    indexes: [
+      { fields: ['utilisateur_id'] },
+      { fields: ['entreprise_id'] },
+      { fields: ['entreprise_id', 'statut'] },
+      { fields: ['date_debut', 'date_fin'] },
+    ],
   });
-
-  Absence.associate = (models) => {
-    Absence.belongsTo(models.Utilisateur, { foreignKey: 'utilisateur_id', as: 'utilisateur' });
-    Absence.belongsTo(models.Entreprise, { foreignKey: 'entreprise_id', as: 'entreprise' });
-  };
 
   return Absence;
 };

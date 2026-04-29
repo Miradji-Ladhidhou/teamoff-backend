@@ -8,18 +8,15 @@ const checkUsageLimit = (action) => {
       const entrepriseId = req.user?.entreprise_id || req.body?.entreprise_id;
 
       if (!entrepriseId) {
-        return res.status(400).json({
-          error: 'Entreprise ID manquant'
-        });
+        return res.status(400).json({ message: 'Entreprise ID manquant' });
       }
 
       const limitCheck = await UsageService.checkUsageLimit(entrepriseId, action);
 
       if (!limitCheck.allowed) {
         return res.status(429).json({
-          error: 'Limite d\'usage dépassée',
-          message: `Vous avez atteint la limite de votre plan pour cette fonctionnalité.`,
-          remaining: limitCheck.remaining
+          message: 'Vous avez atteint la limite de votre plan pour cette fonctionnalité.',
+          remaining: limitCheck.remaining,
         });
       }
 

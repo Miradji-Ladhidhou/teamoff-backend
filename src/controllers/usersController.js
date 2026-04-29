@@ -1,11 +1,21 @@
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
+const sanitizeHtml = require('sanitize-html');
+const { Op } = require('sequelize');
 const { Utilisateur, Entreprise, sequelize } = require('../models');
 const emailService = require('../services/emailService');
 const { auditUser } = require('../services/auditHelper');
 const logger = require('../utils/logger');
 const { validatePasswordPolicy } = require('../services/authService');
 const quotasService = require('../services/quotasService');
+
+// Champs jamais exposés dans les réponses API
+const EXCLUDED_FIELDS = { exclude: ['password_hash', 'refresh_token_hash'] };
+
+// Sanitize HTML (nom/prenom)
+function sanitize(value) {
+  return sanitizeHtml(value, { allowedTags: [], allowedAttributes: {} });
+}
 
 function normalizeServiceName(value) {
   return String(value || '').trim();
@@ -30,6 +40,13 @@ function normalizeOptionalDateOnly(value) {
   }
 
   return raw;
+}
+
+// Retire password_hash d'un objet JSON avant envoi
+function safeUser(utilisateur) {
+  const obj = utilisateur.toJSON ? utilisateur.toJSON() : { ...utilisateur };
+  delete obj.password_hash;
+  return obj;
 }
 
 async function serviceExistsInEntreprise(entrepriseId, serviceName) {
@@ -85,14 +102,13 @@ async function updateOwnPasswordIfRequested(utilisateur, { currentPassword, newP
   await emailService.sendPasswordResetConfirmation(notificationEmail);
 }
 
-/**
- * Création utilisateur
- */
-async function createUser(req, res) {
-  const sanitizeHtml = require('sanitize-html');
+// ---------------------------------------------------------------------------
+// Création utilisateur
+// ---------------------------------------------------------------------------
+async function createUser(req, res, next) {
   let { nom, prenom, email, role, entreprise_id, service, date_embauche } = req.body;
-  if (typeof nom === 'string') nom = sanitizeHtml(nom, { allowedTags: [], allowedAttributes: {} });
-  if (typeof prenom === 'string') prenom = sanitizeHtml(prenom, { allowedTags: [], allowedAttributes: {} });
+  if (typeof nom === 'string') nom = sanitize(nom);
+  if (typeof prenom === 'string') prenom = sanitize(prenom);
   const user = req.user;
   const normalizedService = normalizeServiceName(service);
 
@@ -100,7 +116,6 @@ async function createUser(req, res) {
     return res.status(400).json({ message: 'Le service est obligatoire pour un employé' });
   }
 
-  // Vérifications hiérarchiques
   if (user.role === 'admin_entreprise' && !['manager', 'employe'].includes(role)) {
     return res.status(403).json({ message: 'Vous ne pouvez créer que manager ou employe' });
   }
@@ -118,9 +133,8 @@ async function createUser(req, res) {
       }
     }
 
-    // Génère un mot de passe temporaire qui satisfait les politiques les plus strictes
-    const base = crypto.randomBytes(6).toString('hex'); // 12 chars lowercase hex
-    const tempPassword = base.slice(0, 8) + 'A1!';     // garantit majuscule + chiffre + spécial
+    const base = crypto.randomBytes(6).toString('hex');
+    const tempPassword = base.slice(0, 8) + 'A1!';
     const hash = await bcrypt.hash(tempPassword, 10);
 
     let newUser = null;
@@ -146,18 +160,8 @@ async function createUser(req, res) {
       });
     });
 
-    const entreprise = entreprise_id
-      ? await Entreprise.findByPk(entreprise_id)
-      : null;
-
-    // --- Envoi email via EmailService
-    await emailService.sendWelcomeEmail(
-      newUser,
-      entreprise,
-      tempPassword
-    );
-
-    // === Audit ===
+    const entreprise = entreprise_id ? await Entreprise.findByPk(entreprise_id) : null;
+    await emailService.sendWelcomeEmail(newUser, entreprise, tempPassword);
     await auditUser.created(newUser, req.user, req);
 
     res.status(201).json({
@@ -169,38 +173,41 @@ async function createUser(req, res) {
       entreprise_id: newUser.entreprise_id,
       date_embauche: newUser.date_embauche,
       statut: newUser.statut,
-      message: 'Utilisateur créé et email envoyé avec mot de passe temporaire'
+      message: 'Utilisateur créé et email envoyé avec mot de passe temporaire',
     });
   } catch (err) {
-    logger.error('Erreur création utilisateur:', err);
-    res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
+    logger.error('Erreur création utilisateur', { error: err.message });
+    res.status(err.status || 500).json({ message: err.status ? err.message : 'Erreur serveur' });
   }
 }
 
-/**
- * Récupération de tous les utilisateurs
- */
-async function getAllUsers(req, res) {
+// ---------------------------------------------------------------------------
+// Liste des utilisateurs
+// ---------------------------------------------------------------------------
+async function getAllUsers(req, res, next) {
   try {
-    let where = {};
+    const where = {};
     if (['admin_entreprise', 'manager'].includes(req.user.role)) {
       where.entreprise_id = req.user.entreprise_id;
     }
 
-    const rawPage = parseInt(req.query.page, 10);
+    const rawPage  = parseInt(req.query.page,  10);
     const rawLimit = parseInt(req.query.limit, 10);
     const paginate = !Number.isNaN(rawPage) && rawPage > 0;
 
     if (paginate) {
-      const page = rawPage;
-      const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 200) : 50;
+      const page   = rawPage;
+      const limit  = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 200) : 50;
       const offset = (page - 1) * limit;
+
       const { count, rows } = await Utilisateur.findAndCountAll({
         where,
+        attributes: EXCLUDED_FIELDS,
         order: [['nom', 'ASC']],
         limit,
         offset,
       });
+
       return res.json({
         items: rows,
         total: count,
@@ -210,39 +217,47 @@ async function getAllUsers(req, res) {
       });
     }
 
-    const users = await Utilisateur.findAll({ where, order: [['nom', 'ASC']] });
+    // Non paginé — limité à 500 pour éviter un OOM sur grande base
+    const users = await Utilisateur.findAll({
+      where,
+      attributes: EXCLUDED_FIELDS,
+      order: [['nom', 'ASC']],
+      limit: 500,
+    });
     res.json(users);
   } catch (err) {
-    logger.error('Erreur récupération utilisateurs:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    logger.error('Erreur récupération utilisateurs', { error: err.message });
+    next(err);
   }
 }
 
-/**
- * Récupération utilisateur par ID
- */
-async function getUserById(req, res) {
+// ---------------------------------------------------------------------------
+// Utilisateur par ID
+// ---------------------------------------------------------------------------
+async function getUserById(req, res, next) {
   try {
-    const utilisateur = await Utilisateur.findByPk(req.params.id);
+    const utilisateur = await Utilisateur.findByPk(req.params.id, { attributes: EXCLUDED_FIELDS });
     if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
-    if (['admin_entreprise', 'manager', 'employe'].includes(req.user.role) &&
-        utilisateur.entreprise_id !== req.user.entreprise_id &&
-        req.user.role !== 'super_admin') {
+    if (
+      ['admin_entreprise', 'manager', 'employe'].includes(req.user.role) &&
+      req.user.role !== 'super_admin' &&
+      utilisateur.entreprise_id !== req.user.entreprise_id
+    ) {
       return res.status(403).json({ message: 'Accès interdit : entreprise différente' });
     }
 
     res.json(utilisateur);
   } catch (err) {
-    logger.error('Erreur récupération utilisateur:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    logger.error('Erreur récupération utilisateur', { error: err.message });
+    next(err);
   }
 }
 
-/**
- * Mise à jour utilisateur
- */
-async function updateUser(req, res) {
+// ---------------------------------------------------------------------------
+// Mise à jour utilisateur
+// ---------------------------------------------------------------------------
+async function updateUser(req, res, next) {
   try {
     const utilisateur = await Utilisateur.findByPk(req.params.id);
     if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
@@ -263,12 +278,12 @@ async function updateUser(req, res) {
         email = normalized;
       }
     }
-    if (typeof nom === 'string') nom = require('sanitize-html')(nom, { allowedTags: [], allowedAttributes: {} });
-    if (typeof prenom === 'string') prenom = require('sanitize-html')(prenom, { allowedTags: [], allowedAttributes: {} });
-    const normalizedHiringDate = normalizeOptionalDateOnly(date_embauche);
+    if (typeof nom === 'string')   nom   = sanitize(nom);
+    if (typeof prenom === 'string') prenom = sanitize(prenom);
 
-    const nextRole = role || utilisateur.role;
-    const nextService = typeof service !== 'undefined' ? service : utilisateur.service;
+    const normalizedHiringDate = normalizeOptionalDateOnly(date_embauche);
+    const nextRole             = role || utilisateur.role;
+    const nextService          = typeof service !== 'undefined' ? service : utilisateur.service;
     const normalizedNextService = normalizeServiceName(nextService);
 
     if (nextRole === 'employe' && !normalizedNextService) {
@@ -291,44 +306,36 @@ async function updateUser(req, res) {
     if (password) {
       await validatePasswordPolicy(password);
       utilisateur.password_hash = await bcrypt.hash(password, 10);
-      // --- Envoi email de changement de mot de passe
-      await emailService.sendPasswordResetConfirmation(email);
+      try {
+        await emailService.sendPasswordResetConfirmation(email || utilisateur.email);
+      } catch (emailErr) {
+        logger.error('Erreur envoi email confirmation mot de passe', { error: emailErr.message });
+      }
     }
 
-    const updatePayload = {
-      nom,
-      prenom,
-      email,
-      role,
-      service: normalizedNextService || null,
-      statut,
-    };
-
+    const updatePayload = { nom, prenom, email, role, service: normalizedNextService || null, statut };
     if (typeof date_embauche !== 'undefined') {
       updatePayload.date_embauche = normalizedHiringDate;
     }
 
     await utilisateur.update(updatePayload);
-
-    // === Audit général ===
     await auditUser.updated(utilisateur, req.user, req);
 
-    // === Audit spécifique changement de rôle ===
     if (role && role !== oldData.role) {
       await auditUser.roleChanged(utilisateur, oldData.role, role, req.user, req);
     }
 
-    res.json(utilisateur);
+    res.json(safeUser(utilisateur));
   } catch (err) {
-    logger.error('Erreur mise à jour utilisateur:', err);
-    res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
+    logger.error('Erreur mise à jour utilisateur', { error: err.message });
+    res.status(err.status || 500).json({ message: err.status ? err.message : 'Erreur serveur' });
   }
 }
 
-/**
- * Changement de rôle utilisateur
- */
-async function changeUserRole(req, res) {
+// ---------------------------------------------------------------------------
+// Changement de rôle
+// ---------------------------------------------------------------------------
+async function changeUserRole(req, res, next) {
   try {
     const utilisateur = await Utilisateur.findByPk(req.params.id);
     if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
@@ -346,22 +353,21 @@ async function changeUserRole(req, res) {
     const oldRole = utilisateur.role;
     await utilisateur.update({ role });
 
-    // === Audit spécifique changement de rôle ===
     if (role !== oldRole) {
       await auditUser.roleChanged(utilisateur, oldRole, role, req.user, req);
     }
 
-    res.json(utilisateur);
+    res.json(safeUser(utilisateur));
   } catch (err) {
-    logger.error('Erreur changement de rôle utilisateur:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    logger.error('Erreur changement de rôle utilisateur', { error: err.message });
+    next(err);
   }
 }
 
-/**
- * Suppression utilisateur
- */
-async function deleteUser(req, res) {
+// ---------------------------------------------------------------------------
+// Suppression utilisateur
+// ---------------------------------------------------------------------------
+async function deleteUser(req, res, next) {
   try {
     const utilisateur = await Utilisateur.findByPk(req.params.id);
     if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
@@ -376,7 +382,11 @@ async function deleteUser(req, res) {
 
     if (utilisateur.role === 'admin_entreprise') {
       const remainingAdmins = await Utilisateur.count({
-        where: { entreprise_id: utilisateur.entreprise_id, role: 'admin_entreprise', id: { [require('sequelize').Op.ne]: utilisateur.id } },
+        where: {
+          entreprise_id: utilisateur.entreprise_id,
+          role: 'admin_entreprise',
+          id: { [Op.ne]: utilisateur.id },
+        },
       });
       if (remainingAdmins === 0) {
         return res.status(403).json({ message: 'Impossible de supprimer le dernier administrateur de l\'entreprise' });
@@ -384,22 +394,19 @@ async function deleteUser(req, res) {
     }
 
     await utilisateur.destroy();
-
-    // === Audit ===
     await auditUser.deleted(utilisateur, req.user, req);
 
     res.json({ message: 'Utilisateur supprimé avec succès' });
   } catch (err) {
-    logger.error('Erreur suppression utilisateur:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    logger.error('Erreur suppression utilisateur', { error: err.message });
+    next(err);
   }
 }
 
-
-/**
- * Mise à jour du propre profil utilisateur
- */
-async function updateOwnProfile(req, res) {
+// ---------------------------------------------------------------------------
+// Profil propre
+// ---------------------------------------------------------------------------
+async function updateOwnProfile(req, res, next) {
   try {
     const utilisateur = await Utilisateur.findByPk(req.user.id);
     if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
@@ -408,26 +415,21 @@ async function updateOwnProfile(req, res) {
 
     await updateOwnPasswordIfRequested(utilisateur, { currentPassword, newPassword, email });
     await applyOwnProfileFields(utilisateur, { nom, prenom, email });
-
     await utilisateur.save();
-
     await auditUser.updated(utilisateur, req.user, req);
 
     res.json({
-      id: utilisateur.id,
-      nom: utilisateur.nom,
-      prenom: utilisateur.prenom,
-      email: utilisateur.email,
-      role: utilisateur.role,
-      message: 'Profil mis à jour avec succès'
+      id:      utilisateur.id,
+      nom:     utilisateur.nom,
+      prenom:  utilisateur.prenom,
+      email:   utilisateur.email,
+      role:    utilisateur.role,
+      message: 'Profil mis à jour avec succès',
     });
   } catch (err) {
-    if (err.status) {
-      return res.status(err.status).json({ message: err.message });
-    }
-
-    logger.error('Erreur mise à jour profil:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    if (err.status) return res.status(err.status).json({ message: err.message });
+    logger.error('Erreur mise à jour profil', { error: err.message });
+    next(err);
   }
 }
 
@@ -438,5 +440,5 @@ module.exports = {
   updateUser,
   deleteUser,
   changeUserRole,
-  updateOwnProfile
+  updateOwnProfile,
 };

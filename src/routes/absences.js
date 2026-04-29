@@ -2,8 +2,8 @@
 // Routes Express pour la gestion des absences TeamOff
 const express = require('express');
 const router = express.Router();
-const authJwt = require('../middlewares/authJwt');
 const upload = require('../middlewares/uploadJustificatif');
+const validateUUIDParam = require('../middlewares/validateUUIDParam');
 const absenceController = require('../controllers/absenceController');
 
 // Middleware de droits pour la consultation des absences
@@ -15,8 +15,6 @@ function canViewAbsences(req, res, next) {
   next();
 }
 
-// Toutes les routes nécessitent l'authentification JWT
-router.use(authJwt);
 
 /**
  * POST /api/absences
@@ -36,6 +34,6 @@ router.get('/', canViewAbsences, absenceController.listAbsences);
  * PATCH /api/absences/:id
  * Mise à jour du justificatif ou commentaire (selon droits)
  */
-router.patch('/:id', absenceController.updateAbsence);
+router.patch('/:id', validateUUIDParam('id'), absenceController.updateAbsence);
 
 module.exports = router;

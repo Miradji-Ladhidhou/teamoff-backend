@@ -87,7 +87,7 @@ function parseHolidayCsv(csvContent = '') {
 // ----------------------------
 // Lister tous les jours fériés
 // ----------------------------
-async function listerJoursFeries(req, res) {
+async function listerJoursFeries(req, res, next) {
   try {
     const entrepriseId = getTargetEntrepriseId(req);
     if (!entrepriseId) {
@@ -100,14 +100,14 @@ async function listerJoursFeries(req, res) {
     });
     res.json(joursFeries);
   } catch (err) {
-    res.status(500).json({ message: "Erreur serveur", error: err.message });
+    next(err);
   }
 }
 
 // ----------------------------
 // Création d'un jour férié
 // ----------------------------
-async function creerJourFerie(req, res) {
+async function creerJourFerie(req, res, next) {
   const t = await sequelize.transaction();
   try {
     const { date, libelle, recurrent, est_travail } = req.body;
@@ -134,14 +134,14 @@ async function creerJourFerie(req, res) {
     if (err.name === 'SequelizeUniqueConstraintError') {
       return res.status(409).json({ message: "Jour férié déjà existant" });
     }
-    res.status(500).json({ message: "Erreur serveur", error: err.message });
+    next(err);
   }
 }
 
 // ----------------------------
 // Détail d'un jour férié
 // ----------------------------
-async function getJourFerie(req, res) {
+async function getJourFerie(req, res, next) {
   try {
     const entrepriseId = getTargetEntrepriseId(req);
     if (!entrepriseId) {
@@ -154,14 +154,14 @@ async function getJourFerie(req, res) {
     if (!jourFerie) return res.status(404).json({ message: "Jour férié introuvable" });
     res.json(jourFerie);
   } catch (err) {
-    res.status(500).json({ message: "Erreur serveur", error: err.message });
+    next(err);
   }
 }
 
 // ----------------------------
 // Mise à jour d'un jour férié
 // ----------------------------
-async function updateJourFerie(req, res) {
+async function updateJourFerie(req, res, next) {
   const t = await sequelize.transaction();
   try {
     const { date, libelle, recurrent, est_travail } = req.body;
@@ -212,14 +212,14 @@ async function updateJourFerie(req, res) {
     if (err.name === 'SequelizeUniqueConstraintError') {
       return res.status(409).json({ message: "Jour férié déjà existant" });
     }
-    res.status(500).json({ message: "Erreur serveur", error: err.message });
+    next(err);
   }
 }
 
 // ----------------------------
 // Suppression d'un jour férié
 // ----------------------------
-async function supprimerJourFerie(req, res) {
+async function supprimerJourFerie(req, res, next) {
   const t = await sequelize.transaction();
   try {
     const entrepriseId = getTargetEntrepriseId(req);
@@ -242,11 +242,11 @@ async function supprimerJourFerie(req, res) {
     res.status(204).send();
   } catch (err) {
     await t.rollback();
-    res.status(500).json({ message: "Erreur serveur", error: err.message });
+    next(err);
   }
 }
 
-async function importerJoursFeriesNationaux(req, res) {
+async function importerJoursFeriesNationaux(req, res, next) {
   const t = await sequelize.transaction();
   try {
     const entrepriseId = getTargetEntrepriseId(req, { allowBody: true });
@@ -314,11 +314,11 @@ async function importerJoursFeriesNationaux(req, res) {
     });
   } catch (err) {
     await t.rollback();
-    return res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
-async function listerModelesJoursFeries(req, res) {
+async function listerModelesJoursFeries(req, res, next) {
   try {
     const region = req.query.region;
     const search = req.query.search;
@@ -358,11 +358,11 @@ async function listerModelesJoursFeries(req, res) {
 
     return res.json(payload);
   } catch (err) {
-    return res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
-async function creerModeleJoursFeries(req, res) {
+async function creerModeleJoursFeries(req, res, next) {
   const t = await sequelize.transaction();
   try {
     const { name, region, countryCode, sourceEntrepriseId } = req.body || {};
@@ -415,11 +415,11 @@ async function creerModeleJoursFeries(req, res) {
     });
   } catch (err) {
     await t.rollback();
-    return res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
-async function exporterModeleJoursFeriesCsv(req, res) {
+async function exporterModeleJoursFeriesCsv(req, res, next) {
   try {
     const template = await HolidayTemplate.findByPk(req.params.id, {
       include: [
@@ -450,11 +450,11 @@ async function exporterModeleJoursFeriesCsv(req, res) {
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     return res.status(200).send(csv);
   } catch (err) {
-    return res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
-async function importerModeleJoursFeriesCsv(req, res) {
+async function importerModeleJoursFeriesCsv(req, res, next) {
   const t = await sequelize.transaction();
   try {
     const { name, region, countryCode, csvContent } = req.body || {};
@@ -500,11 +500,11 @@ async function importerModeleJoursFeriesCsv(req, res) {
     });
   } catch (err) {
     await t.rollback();
-    return res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
-async function appliquerModeleJoursFeries(req, res) {
+async function appliquerModeleJoursFeries(req, res, next) {
   const t = await sequelize.transaction();
   try {
     const template = await HolidayTemplate.findByPk(req.params.id, {
@@ -573,14 +573,14 @@ async function appliquerModeleJoursFeries(req, res) {
     });
   } catch (err) {
     await t.rollback();
-    return res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
 // ----------------------------
 // Jours fériés par mois (accessible à tous les rôles — pour le calendrier)
 // ----------------------------
-async function getJoursFeriesByMonth(req, res) {
+async function getJoursFeriesByMonth(req, res, next) {
   try {
     const { year, month } = req.params;
 
@@ -627,7 +627,7 @@ async function getJoursFeriesByMonth(req, res) {
     });
     res.json(joursFeries);
   } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 

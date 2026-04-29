@@ -11,49 +11,58 @@ async function resolveEntrepriseId(req) {
   return null;
 }
 
-function handleExportError(res, err) {
-  console.error('Erreur export:', err);
-  res.status(500).json({ error: err.message || 'Erreur lors de la génération de l\'export' });
+function handleExportError(next, err) {
+  next(err);
+}
+
+function sendCSV(res, data, filename) {
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(data);
+}
+
+function sendPDF(res, data, filename) {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(data);
 }
 
 class ExportController {
   // =========================
   // STATISTIQUES
   // =========================
-  static async exportStatistiquesCSV(req, res) {
+  static async exportStatistiquesCSV(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
       const data = await ExportService.generateStatistiquesCSV(entrepriseId, req.query);
-      res.setHeader('Content-Type', 'text/csv');
-      res.send(data);
-    } catch (err) { handleExportError(res, err); }
+      sendCSV(res, data, 'statistiques.csv');
+    } catch (err) { handleExportError(next, err); }
   }
 
   // =========================
   // PREVIEW
   // =========================
-  static async previewExport(req, res) {
+  static async previewExport(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
       const type = req.query.type || 'conges';
       const preview = await ExportService.getPreview(type, entrepriseId, req.query, req.query.limit);
       res.json({ type, ...preview });
-    } catch (err) { handleExportError(res, err); }
+    } catch (err) { handleExportError(next, err); }
   }
 
   // =========================
   // CONGÉS
   // =========================
-  static async exportCongesCSV(req, res) {
+  static async exportCongesCSV(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
       const data = await ExportService.generateCongesCSV(entrepriseId, req.query, req.user.role);
-      res.setHeader('Content-Type', 'text/csv');
-      res.send(data);
-    } catch (err) { handleExportError(res, err); }
+      sendCSV(res, data, 'conges.csv');
+    } catch (err) { handleExportError(next, err); }
   }
 
-  static async exportCongesPDF(req, res) {
+  static async exportCongesPDF(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
       let entrepriseName = null;
@@ -62,24 +71,22 @@ class ExportController {
         entrepriseName = ent?.nom || null;
       }
       const data = await ExportService.generateCongesPDF(entrepriseId, req.query, entrepriseName);
-      res.setHeader('Content-Type', 'application/pdf');
-      res.send(data);
-    } catch (err) { handleExportError(res, err); }
+      sendPDF(res, data, 'conges.pdf');
+    } catch (err) { handleExportError(next, err); }
   }
 
   // =========================
   // ABSENCES
   // =========================
-  static async exportAbsencesCSV(req, res) {
+  static async exportAbsencesCSV(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
       const data = await ExportService.generateAbsencesCSV(entrepriseId, req.query);
-      res.setHeader('Content-Type', 'text/csv');
-      res.send(data);
-    } catch (err) { handleExportError(res, err); }
+      sendCSV(res, data, 'absences.csv');
+    } catch (err) { handleExportError(next, err); }
   }
 
-  static async exportAbsencesPDF(req, res) {
+  static async exportAbsencesPDF(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
       let entrepriseName = null;
@@ -88,24 +95,22 @@ class ExportController {
         entrepriseName = ent?.nom || null;
       }
       const data = await ExportService.generateAbsencesPDF(entrepriseId, req.query, entrepriseName);
-      res.setHeader('Content-Type', 'application/pdf');
-      res.send(data);
-    } catch (err) { handleExportError(res, err); }
+      sendPDF(res, data, 'absences.pdf');
+    } catch (err) { handleExportError(next, err); }
   }
 
   // =========================
   // ARRÊTS MALADIE
   // =========================
-  static async exportArretsMaladieCSV(req, res) {
+  static async exportArretsMaladieCSV(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
       const data = await ExportService.generateArretsMaladieCSV(entrepriseId, req.query);
-      res.setHeader('Content-Type', 'text/csv');
-      res.send(data);
-    } catch (err) { handleExportError(res, err); }
+      sendCSV(res, data, 'arrets-maladie.csv');
+    } catch (err) { handleExportError(next, err); }
   }
 
-  static async exportArretsMaladiePDF(req, res) {
+  static async exportArretsMaladiePDF(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
       let entrepriseName = null;
@@ -114,56 +119,51 @@ class ExportController {
         entrepriseName = ent?.nom || null;
       }
       const data = await ExportService.generateArretsMaladiePDF(entrepriseId, req.query, entrepriseName);
-      res.setHeader('Content-Type', 'application/pdf');
-      res.send(data);
-    } catch (err) { handleExportError(res, err); }
+      sendPDF(res, data, 'arrets-maladie.pdf');
+    } catch (err) { handleExportError(next, err); }
   }
 
   // =========================
   // UTILISATEURS
   // =========================
-  static async exportUtilisateursCSV(req, res) {
+  static async exportUtilisateursCSV(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
       const data = await ExportService.generateUtilisateursCSV(entrepriseId);
-      res.setHeader('Content-Type', 'text/csv');
-      res.send(data);
-    } catch (err) { handleExportError(res, err); }
+      sendCSV(res, data, 'utilisateurs.csv');
+    } catch (err) { handleExportError(next, err); }
   }
 
   // =========================
   // ENTREPRISES
   // =========================
-  static async exportEntreprisesCSV(req, res) {
+  static async exportEntreprisesCSV(req, res, next) {
     try {
       const data = await ExportService.generateEntreprisesCSV();
-      res.setHeader('Content-Type', 'text/csv');
-      res.send(data);
-    } catch (err) { handleExportError(res, err); }
+      sendCSV(res, data, 'entreprises.csv');
+    } catch (err) { handleExportError(next, err); }
   }
 
   // =========================
   // AUDIT
   // =========================
-  static async exportAuditCSV(req, res) {
+  static async exportAuditCSV(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
       const data = await ExportService.generateAuditLogsCSV(entrepriseId, req.query);
-      res.setHeader('Content-Type', 'text/csv');
-      res.send(data);
-    } catch (err) { handleExportError(res, err); }
+      sendCSV(res, data, 'audit.csv');
+    } catch (err) { handleExportError(next, err); }
   }
 
   // =========================
   // USAGE
   // =========================
-  static async exportUsagePDF(req, res) {
+  static async exportUsagePDF(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
       const data = await ExportService.generateUsageReportPDF(entrepriseId);
-      res.setHeader('Content-Type', 'application/pdf');
-      res.send(data);
-    } catch (err) { handleExportError(res, err); }
+      sendPDF(res, data, 'usage.pdf');
+    } catch (err) { handleExportError(next, err); }
   }
 }
 

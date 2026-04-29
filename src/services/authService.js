@@ -1,6 +1,7 @@
 const { Utilisateur, Entreprise, sequelize } = require('../models');
 const logger = require('../utils/logger');
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const systemSettingsService = require('./systemSettingsService');
 const emailService = require('./emailService');
@@ -22,6 +23,10 @@ const DEFAULT_LEAVE_POLICY = {
     by_service: {},
   },
 };
+
+function hashRefreshToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
 
 async function getRuntimeSecuritySettings() {
   try {
@@ -56,6 +61,10 @@ async function validatePasswordPolicy(password) {
   }
 }
 
+// Dummy hash utilisé quand l'utilisateur n'existe pas — maintient un timing constant
+// pour éviter l'énumération d'emails par différence de temps de réponse.
+const DUMMY_HASH = '$2b$10$CwTycUXWue0Thq9StjUM0uJ8e2Q1rQy4u9n2pV0Xl1yZ9XKp1JfG2';
+
 // ---------------------------
 // Login utilisateur
 // ---------------------------
@@ -64,13 +73,29 @@ async function loginUtilisateur({ email, password, entreprise_id }) {
 
   const whereClause = entreprise_id ? { email, entreprise_id } : { email };
   const user = await Utilisateur.findOne({ where: whereClause });
-  if (!user) throw new Error('Utilisateur non trouvé');
 
-  // Vérifier si le compte est temporairement bloqué
+  // bcrypt.compare s'exécute toujours (DUMMY_HASH si user inexistant) pour garantir
+  // un timing identique quel que soit l'email fourni — empêche l'énumération par timing.
+  const hashToCompare = user ? user.password_hash : DUMMY_HASH;
+  const isMatch = await bcrypt.compare(password, hashToCompare);
+
+  if (!user || !isMatch) {
+    // Incrémenter le compteur uniquement si l'utilisateur existe —
+    // pas de différence de message ou de comportement observable côté client.
+    if (user) {
+      const newAttempts = (user.failed_login_attempts || 0) + 1;
+      const updates = { failed_login_attempts: newAttempts };
+      if (newAttempts >= maxLoginAttempts) {
+        updates.locked_until = new Date(Date.now() + 30 * 60 * 1000);
+      }
+      await user.update(updates);
+    }
+    throw new Error('Identifiants invalides');
+  }
+
+  // Message identique à "mauvais mot de passe" — aucune fuite sur l'état du compte.
   if (user.locked_until && new Date(user.locked_until) > new Date()) {
-    const remainingMs = new Date(user.locked_until) - new Date();
-    const remainingMin = Math.ceil(remainingMs / 1000 / 60);
-    throw new Error(`Compte temporairement bloqué suite à trop de tentatives. Réessayez dans ${remainingMin} minute(s).`);
+    throw new Error('Identifiants invalides');
   }
 
   const entreprise = await Entreprise.findByPk(user.entreprise_id);
@@ -81,23 +106,7 @@ async function loginUtilisateur({ email, password, entreprise_id }) {
   if (user.statut === 'en_attente') throw new Error('Votre compte est en attente de validation.');
   if (user.statut === 'inactif') throw new Error('Votre compte est désactivé. Contactez l\'administrateur.');
 
-  const isMatch = await bcrypt.compare(password, user.password_hash);
-  if (!isMatch) {
-    const newAttempts = (user.failed_login_attempts || 0) + 1;
-    const updates = { failed_login_attempts: newAttempts };
-    if (newAttempts >= maxLoginAttempts) {
-      // Bloquer le compte pendant 30 minutes
-      updates.locked_until = new Date(Date.now() + 30 * 60 * 1000);
-    }
-    await user.update(updates);
-    const remaining = maxLoginAttempts - newAttempts;
-    if (remaining > 0) {
-      throw new Error(`Mot de passe incorrect. Il vous reste ${remaining} tentative(s) avant blocage temporaire.`);
-    }
-    throw new Error('Compte temporairement bloqué suite à trop de tentatives. Réessayez dans 30 minute(s).');
-  }
-
-  // Réinitialiser le compteur après succès
+  // Réinitialiser le compteur après authentification complète
   await user.update({ failed_login_attempts: 0, locked_until: null });
 
   const payload = { id: user.id, role: user.role, entreprise_id: user.entreprise_id };
@@ -109,6 +118,9 @@ async function loginUtilisateur({ email, password, entreprise_id }) {
     process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
     { expiresIn: '7d' }
   );
+
+  // Store hash of refresh token — enables server-side rotation & replay detection
+  await user.update({ refresh_token_hash: hashRefreshToken(refreshToken) });
 
   return {
     token,
@@ -275,6 +287,14 @@ async function changePassword(userId, currentPassword, newPassword) {
   }
 }
 
+function generateAccessToken(user, expiresInMinutes = 60) {
+  return jwt.sign(
+    { id: user.id, role: user.role, entreprise_id: user.entreprise_id },
+    process.env.JWT_SECRET,
+    { expiresIn: `${expiresInMinutes}m` }
+  );
+}
+
 module.exports = {
   loginUtilisateur,
   registerEntreprise,
@@ -282,5 +302,7 @@ module.exports = {
   forgotPassword,
   resetPassword,
   changePassword,
-  validatePasswordPolicy
+  validatePasswordPolicy,
+  generateAccessToken,
+  hashRefreshToken,
 };

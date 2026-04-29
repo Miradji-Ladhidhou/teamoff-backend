@@ -1,12 +1,13 @@
 // services/quotasService.js
 const { CompteurConges, CongeType, Utilisateur, Entreprise, sequelize } = require('../models');
 const { getLeaveRules } = require('./politiqueConges');
+const logger = require('../utils/logger');
 
 const isQuotasDebug = process.env.QUOTAS_DEBUG === 'true';
 
 function quotasLog(...args) {
   if (isQuotasDebug) {
-    console.log(...args);
+    logger.debug(...args);
   }
 }
 

@@ -3,12 +3,13 @@ const fs = require('fs').promises;
 const path = require('path');
 const { Utilisateur, Entreprise } = require('../models');
 const systemSettingsService = require('./systemSettingsService');
+const logger = require('../utils/logger');
 
 const isEmailDebug = process.env.EMAIL_DEBUG === 'true';
 
 function emailLog(...args) {
   if (isEmailDebug) {
-    console.log(...args);
+    logger.debug(...args);
   }
 }
 
@@ -53,7 +54,8 @@ class EmailService {
   }
 
   // Méthode générique d'envoi d'email
-  async sendEmail(to, subject, templateName, data = {}) {
+  // attachments: tableau nodemailer [{ filename, content (Buffer), contentType }]
+  async sendEmail(to, subject, templateName, data = {}, attachments = []) {
     try {
       const smtpConfig = await this.getSmtpConfig();
 
@@ -85,6 +87,7 @@ class EmailService {
         subject,
         html,
         text: this.htmlToText(html),
+        ...(attachments.length > 0 && { attachments }),
       };
 
       if (process.env.MAIL_SIMULATE === 'true') {
@@ -97,7 +100,7 @@ class EmailService {
       emailLog(`Email envoye a ${to}: ${info.messageId}`);
       return { success: true, messageId: info.messageId };
     } catch (error) {
-      console.error('❌ Erreur envoi email:', error);
+      logger.error('email_send_error', { error: error.message });
       throw error;
     }
   }
@@ -491,7 +494,7 @@ class EmailService {
         }
       );
     } catch (error) {
-      console.error('❌ Erreur envoi rapport mensuel:', error);
+      logger.error('email_monthly_report_error', { error: error.message });
       throw error;
     }
   }

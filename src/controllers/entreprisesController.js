@@ -49,7 +49,7 @@ function getEntreprisePolicies(entreprise) {
 // ----------------------------
 // Création d'une entreprise
 // ----------------------------
-async function createEntreprise(req, res) {
+async function createEntreprise(req, res, next) {
 
   const { nom, politique_conges, parametres, statut } = req.body;
 
@@ -81,41 +81,41 @@ async function createEntreprise(req, res) {
 
   } catch (err) {
     logger.error('Erreur création entreprise:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
 // ----------------------------
 // Liste toutes les entreprises
 // ----------------------------
-async function getAllEntreprises(req, res) {
+async function getAllEntreprises(req, res, next) {
   try {
     const entreprises = await Entreprise.findAll({ order: [['nom', 'ASC']] });
     res.json(entreprises);
   } catch (err) {
     logger.error('Erreur récupération entreprises:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
 // ----------------------------
 // Détail d'une entreprise
 // ----------------------------
-async function getEntrepriseById(req, res) {
+async function getEntrepriseById(req, res, next) {
   try {
     const entreprise = await Entreprise.findByPk(req.params.id);
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
     res.json(entreprise);
   } catch (err) {
     logger.error('Erreur récupération entreprise:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
 // ----------------------------
 // Mise à jour d'une entreprise
 // ----------------------------
-async function updateEntreprise(req, res) {
+async function updateEntreprise(req, res, next) {
   try {
     const entreprise = await Entreprise.findByPk(req.params.id);
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
@@ -145,14 +145,14 @@ async function updateEntreprise(req, res) {
     res.json(entreprise);
   } catch (err) {
     logger.error('Erreur mise à jour entreprise:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
 // ----------------------------
 // Suppression d'une entreprise
 // ----------------------------
-async function deleteEntreprise(req, res) {
+async function deleteEntreprise(req, res, next) {
   try {
     const entreprise = await Entreprise.findByPk(req.params.id);
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
@@ -165,14 +165,14 @@ async function deleteEntreprise(req, res) {
     res.json({ message: 'Entreprise supprimée' });
   } catch (err) {
     logger.error('Erreur suppression entreprise:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
 // ----------------------------
 // Changement de statut entreprise
 // ----------------------------
-async function patchStatutEntreprise(req, res) {
+async function patchStatutEntreprise(req, res, next) {
   const { statut } = req.body;
   const allowed = ['active', 'inactive', 'suspendue'];
   if (!allowed.includes(statut)) return res.status(400).json({ message: 'Statut invalide' });
@@ -190,14 +190,14 @@ async function patchStatutEntreprise(req, res) {
     res.json({ message: 'Statut entreprise mis à jour', entreprise });
   } catch (err) {
     logger.error('Erreur mise à jour statut:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
 // ----------------------------
 // Jours bloqués — accessible à tous les rôles de l'entreprise
 // ----------------------------
-async function getBlockedDays(req, res) {
+async function getBlockedDays(req, res, next) {
   try {
     const entreprise = await Entreprise.findByPk(req.params.id, {
       attributes: ['id', 'politique_conges'],
@@ -219,13 +219,13 @@ async function getBlockedDays(req, res) {
     });
   } catch (err) {
     logger.error('Erreur récupération blocked_days:', err);
-    res.status(500).json({ message: 'Erreur serveur' });
+    next(err);
   }
 }
 
 // Politique de congés
 // ----------------------------
-async function getPolitiqueConges(req, res) {
+async function getPolitiqueConges(req, res, next) {
   try {
     const entreprise = await Entreprise.findByPk(req.params.id);
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
@@ -233,11 +233,11 @@ async function getPolitiqueConges(req, res) {
     res.json({ politique_conges: entreprise.politique_conges });
   } catch (err) {
     logger.error('Erreur récupération politique:', err);
-    res.status(500).json({ message: 'Erreur serveur' });
+    next(err);
   }
 }
 
-async function updatePolitiqueConges(req, res) {
+async function updatePolitiqueConges(req, res, next) {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
@@ -255,7 +255,7 @@ async function updatePolitiqueConges(req, res) {
     res.json({ message: 'Politique de congés mise à jour', politique_conges: entreprise.politique_conges });
   } catch (err) {
     logger.error('Erreur mise à jour politique:', err);
-    res.status(500).json({ message: 'Erreur serveur' });
+    next(err);
   }
 }
 
@@ -267,18 +267,18 @@ function isValidTimezone(tz) {
   try { Intl.DateTimeFormat(undefined, { timeZone: tz }); return true; } catch { return false; }
 }
 
-async function getParametres(req, res) {
+async function getParametres(req, res, next) {
   try {
     const entreprise = await Entreprise.findByPk(req.params.id);
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
     res.json({ parametres: entreprise.parametres || {} });
   } catch (err) {
     logger.error('Erreur récupération paramètres:', err);
-    res.status(500).json({ message: 'Erreur serveur' });
+    next(err);
   }
 }
 
-async function updateParametres(req, res) {
+async function updateParametres(req, res, next) {
   try {
     const entreprise = await Entreprise.findByPk(req.params.id);
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
@@ -303,11 +303,11 @@ async function updateParametres(req, res) {
     res.json({ message: 'Paramètres mis à jour', parametres: entreprise.parametres });
   } catch (err) {
     logger.error('Erreur mise à jour paramètres:', err);
-    res.status(500).json({ message: 'Erreur serveur' });
+    next(err);
   }
 }
 
-async function getEntrepriseServices(req, res) {
+async function getEntrepriseServices(req, res, next) {
   try {
     const entreprise = await Entreprise.findByPk(req.params.id);
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
@@ -342,11 +342,11 @@ async function getEntrepriseServices(req, res) {
     res.json({ items: services });
   } catch (err) {
     logger.error('Erreur récupération services entreprise:', err);
-    res.status(500).json({ message: 'Erreur serveur' });
+    next(err);
   }
 }
 
-async function createEntrepriseService(req, res) {
+async function createEntrepriseService(req, res, next) {
   try {
     const entreprise = await Entreprise.findByPk(req.params.id);
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
@@ -380,11 +380,11 @@ async function createEntrepriseService(req, res) {
     res.status(201).json({ message: 'Service créé', item: { name, policy: nextServicePolicy, employeesCount: 0 } });
   } catch (err) {
     logger.error('Erreur création service entreprise:', err);
-    res.status(500).json({ message: 'Erreur serveur' });
+    next(err);
   }
 }
 
-async function updateEntrepriseService(req, res) {
+async function updateEntrepriseService(req, res, next) {
   try {
     const entreprise = await Entreprise.findByPk(req.params.id);
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
@@ -455,11 +455,11 @@ async function updateEntrepriseService(req, res) {
     });
   } catch (err) {
     logger.error('Erreur mise à jour service entreprise:', err);
-    res.status(500).json({ message: 'Erreur serveur' });
+    next(err);
   }
 }
 
-async function deleteEntrepriseService(req, res) {
+async function deleteEntrepriseService(req, res, next) {
   try {
     const entreprise = await Entreprise.findByPk(req.params.id);
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
@@ -498,7 +498,7 @@ async function deleteEntrepriseService(req, res) {
     res.json({ message: 'Service supprimé' });
   } catch (err) {
     logger.error('Erreur suppression service entreprise:', err);
-    res.status(500).json({ message: 'Erreur serveur' });
+    next(err);
   }
 }
 

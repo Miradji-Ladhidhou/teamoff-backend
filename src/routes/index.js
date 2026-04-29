@@ -30,7 +30,6 @@ const calendrierRoutes = require('./calendrier');
 const exportRoutes = require('./exports');
 const auditRoutes = require('./audit');
 const absencesRoutes = require('./absences');
-const absencesUploadRoutes = require('./absencesUpload');
 
 // ------------------------------
 // Appliquer les métriques à toutes les routes
@@ -45,7 +44,7 @@ router.get('/health', async (req, res) => {
     await sequelize.authenticate();
     res.status(200).json({ status: 'ok', db: 'connected' });
   } catch (err) {
-    res.status(500).json({ status: 'error', db: 'disconnected', error: err.message });
+    res.status(500).json({ status: 'error', db: 'disconnected' });
   }
 });
 
@@ -98,7 +97,7 @@ router.get('/me', authJwt, async (req, res) => {
       date_embauche: user.date_embauche,
     });
   } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    res.status(500).json({ message: 'Erreur serveur' });
   }
 });
 
@@ -121,7 +120,6 @@ router.get('/monitoring/health', authJwt, authorizeRole(['super_admin']), async 
     res.status(500).json({
       status: 'unhealthy',
       message: 'Impossible de récupérer le rapport de santé',
-      error: error.message,
     });
   }
 });
@@ -142,7 +140,7 @@ router.post('/monitoring/cleanup', authJwt, authorizeRole(['super_admin']), asyn
     const result = await MonitoringService.cleanupOldMetrics(daysToKeep);
     res.status(200).json({ message: 'Nettoyage des métriques terminé', ...result });
   } catch (error) {
-    res.status(500).json({ message: 'Impossible de nettoyer les métriques', error: error.message });
+    res.status(500).json({ message: 'Impossible de nettoyer les métriques' });
   }
 });
 
@@ -184,7 +182,6 @@ router.use('/settings', authJwt, settingsRoutes);
 // ------------------------------
 // Absences routes (auth requis)
 // ------------------------------
-router.use('/absences/upload', authJwt, absencesUploadRoutes);
 router.use('/absences', authJwt, absencesRoutes);
 
 // Leave Policies routes (auth requis - admin_entreprise, super_admin pour modification)

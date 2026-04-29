@@ -23,6 +23,13 @@ module.exports = {
       burst: 250,
       blockDuration: 10,
     },
+    refresh: {
+      key: 'refresh',
+      points: 20,
+      duration: 60,
+      burst: 30,
+      blockDuration: 60,
+    },
     getData: {
       key: 'getData',
       points: 500,

@@ -10,7 +10,7 @@ const authorizeRole = require('../middlewares/authorizeRole');
  * Liste paginée des logs d'audit — super_admin uniquement
  * Paramètres query : page, limit, action, entity, dateDebut, dateFin, search
  */
-router.get('/', authorizeRole(['super_admin']), async (req, res) => {
+router.get('/', authorizeRole(['super_admin']), async (req, res, next) => {
   try {
     const {
       page = 1,
@@ -32,12 +32,12 @@ router.get('/', authorizeRole(['super_admin']), async (req, res) => {
     if (entity) where.entity = entity;
 
     if (dateDebut || dateFin) {
-      where.createdAt = {};
-      if (dateDebut) where.createdAt[Op.gte] = new Date(dateDebut);
+      where.created_at = {};
+      if (dateDebut) where.created_at[Op.gte] = new Date(dateDebut);
       if (dateFin) {
         const fin = new Date(dateFin);
         fin.setHours(23, 59, 59, 999);
-        where.createdAt[Op.lte] = fin;
+        where.created_at[Op.lte] = fin;
       }
     }
 
@@ -50,13 +50,14 @@ router.get('/', authorizeRole(['super_admin']), async (req, res) => {
 
     // Filtre texte : cherche dans action, entity ou email/nom de l'utilisateur
     if (search) {
+      const s = String(search).slice(0, 100);
       where[Op.or] = [
-        { action: { [Op.iLike]: `%${search}%` } },
-        { entity: { [Op.iLike]: `%${search}%` } },
-        { ip_address: { [Op.iLike]: `%${search}%` } },
-        { '$utilisateur.prenom$': { [Op.iLike]: `%${search}%` } },
-        { '$utilisateur.nom$': { [Op.iLike]: `%${search}%` } },
-        { '$utilisateur.email$': { [Op.iLike]: `%${search}%` } },
+        { action: { [Op.iLike]: `%${s}%` } },
+        { entity: { [Op.iLike]: `%${s}%` } },
+        { ip_address: { [Op.iLike]: `%${s}%` } },
+        { '$utilisateur.prenom$': { [Op.iLike]: `%${s}%` } },
+        { '$utilisateur.nom$': { [Op.iLike]: `%${s}%` } },
+        { '$utilisateur.email$': { [Op.iLike]: `%${s}%` } },
       ];
     }
 
@@ -85,8 +86,7 @@ router.get('/', authorizeRole(['super_admin']), async (req, res) => {
       limit: limitNum,
     });
   } catch (error) {
-    logger.error('Erreur récupération logs audit:', error);
-    res.status(500).json({ message: 'Erreur serveur lors de la récupération des logs d\'audit' });
+    next(error);
   }
 });
 

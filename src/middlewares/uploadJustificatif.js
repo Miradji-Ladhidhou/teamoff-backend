@@ -1,22 +1,8 @@
 // Middleware Multer pour upload de justificatifs d'absence
+// Le fichier reste en mémoire (Buffer) — il est transmis en pièce jointe par email, jamais écrit sur disque.
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 
-// Dossier de destination (à adapter si besoin)
-const uploadDir = path.join(__dirname, '../../uploads/justificatifs');
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const name = `${Date.now()}_${Math.round(Math.random()*1e6)}${ext}`;
-    cb(null, name);
-  }
-});
+const storage = multer.memoryStorage();
 
 const fileFilter = (req, file, cb) => {
   // Accepte PDF, JPG, PNG

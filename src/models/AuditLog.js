@@ -8,54 +8,60 @@ module.exports = (sequelize, DataTypes) => {
       id: {
         type: DataTypes.UUID,
         defaultValue: DataTypes.UUIDV4,
-        primaryKey: true
+        primaryKey: true,
       },
-
       action: {
         type: DataTypes.STRING,
-        allowNull: false
+        allowNull: false,
       },
-
       entity: {
-        type: DataTypes.STRING
+        type: DataTypes.STRING,
+        allowNull: true,
       },
-
       entity_id: {
-        type: DataTypes.UUID
+        type: DataTypes.UUID,
+        allowNull: true,
       },
-
       user_id: {
         type: DataTypes.UUID,
         allowNull: true,
-        references: {
-          model: 'utilisateur',
-          key: 'id'
-        },
-        onDelete: 'SET NULL'
+        references: { model: 'utilisateur', key: 'id' },
+        onDelete: 'SET NULL',
       },
-
       entreprise_id: {
         type: DataTypes.UUID,
         allowNull: false,
-        references: {
-          model: 'entreprise',
-          key: 'id'
-        },
-        onDelete: 'CASCADE'
+        references: { model: 'entreprise', key: 'id' },
+        onDelete: 'CASCADE',
       },
-
-      ip_address: DataTypes.STRING,
-
-      user_agent: DataTypes.STRING,
-
-      metadata: DataTypes.JSON
+      ip_address: {
+        type: DataTypes.STRING,
+        allowNull: true,
+      },
+      user_agent: {
+        type: DataTypes.STRING,
+        allowNull: true,
+      },
+      metadata: {
+        type: DataTypes.JSON,
+        allowNull: true,
+      },
     },
     {
       sequelize,
       modelName: 'AuditLog',
       tableName: 'audit_logs',
-      timestamps: true
-    }
+      underscored: true,
+      timestamps: true,
+      createdAt: 'created_at',
+      updatedAt: 'updated_at',
+      indexes: [
+        { fields: ['entreprise_id'] },
+        { fields: ['user_id'] },
+        { fields: ['entreprise_id', 'created_at'] },
+        { fields: ['entity', 'entity_id'] },
+      ],
+    },
   );
 
   return AuditLog;

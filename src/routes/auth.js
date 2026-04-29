@@ -3,23 +3,21 @@ const router = express.Router();
 const { advancedRateLimiter } = require('../middlewares/advancedRateLimiter');
 const authController = require('../controllers/authController');
 const authJwt = require('../middlewares/authJwt');
+const validate = require('../middlewares/validate');
+const {
+  loginRules,
+  registerRules,
+  forgotPasswordRules,
+  resetPasswordRules,
+  changePasswordRules,
+} = require('../validators/auth.validators');
 
-// -------------------------------
-// Rate limiter pour le login
-// -------------------------------
-
-
-// -------------------------------
-// Routes auth
-// -------------------------------
-
-// Auth endpoints avec rate limiting avancé
-router.post('/register', authController.register);
-router.post('/login', advancedRateLimiter('login'), authController.login);
-router.post('/forgot-password', advancedRateLimiter('forgotPassword'), authController.forgotPassword);
-router.post('/reset-password', advancedRateLimiter('forgotPassword'), authController.resetPassword);
-router.post('/change-password', authJwt, advancedRateLimiter('login'), authController.changePassword);
-router.post('/refresh', authController.refresh);
+router.post('/register', advancedRateLimiter('forgotPassword'), validate(registerRules), authController.register);
+router.post('/login', advancedRateLimiter('login'), validate(loginRules), authController.login);
+router.post('/forgot-password', advancedRateLimiter('forgotPassword'), validate(forgotPasswordRules), authController.forgotPassword);
+router.post('/reset-password', advancedRateLimiter('forgotPassword'), validate(resetPasswordRules), authController.resetPassword);
+router.post('/change-password', authJwt, advancedRateLimiter('login'), validate(changePasswordRules), authController.changePassword);
+router.post('/refresh', advancedRateLimiter('refresh'), authController.refresh);
 router.post('/logout', authController.logout);
 
 module.exports = router;

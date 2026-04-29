@@ -1,6 +1,4 @@
-require('dotenv').config({
-  path: '/Users/utilisateur/Desktop/Projet en cours/SaaS_TeamOff/teamoff-backend/.env'
-});
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
 const { sequelize } = require('../src/models');
 
 const TEST_ENTREPRISE_ID = 'e3dff5e3-21c4-459c-8a78-43bb60002c65';

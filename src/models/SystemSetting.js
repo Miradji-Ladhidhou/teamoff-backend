@@ -1,4 +1,4 @@
-module.exports = (sequelize, DataTypes) => { 
+module.exports = (sequelize, DataTypes) => {
   const SystemSetting = sequelize.define('SystemSetting', {
     id: {
       type: DataTypes.UUID,
@@ -18,10 +18,15 @@ module.exports = (sequelize, DataTypes) => {
     updated_by: {
       type: DataTypes.UUID,
       allowNull: true,
+      references: { model: 'utilisateur', key: 'id' },
+      onDelete: 'SET NULL',
     },
   }, {
     tableName: 'system_settings',
     underscored: true,
+    timestamps: true,
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
   });
 
   return SystemSetting;

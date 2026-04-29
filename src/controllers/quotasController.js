@@ -37,17 +37,16 @@ async function ensureUserAccess(req, utilisateurId) {
   return utilisateur;
 }
 
-async function initQuota(req, res) {
+async function initQuota(req, res, next) {
   try {
     await quotasService.initQuotaAnnuel(req.user.entreprise_id, new Date().getFullYear());
     res.json({ message: 'Quotas annuels initialisés avec succès' });
   } catch (err) {
-    logger.error(err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
-async function getSolde(req, res) {
+async function getSolde(req, res, next) {
   try {
     const { utilisateur_id, conge_type_id } = req.params;
     await ensureUserAccess(req, utilisateur_id);
@@ -55,12 +54,11 @@ async function getSolde(req, res) {
     const solde = await quotasService.getSoldeUtilisateur(utilisateur_id, conge_type_id, annee);
     res.json({ solde });
   } catch (err) {
-    logger.error(err);
-    res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
-async function getSoldes(req, res) {
+async function getSoldes(req, res, next) {
   try {
     const { utilisateur_id } = req.params;
     await ensureUserAccess(req, utilisateur_id);
@@ -68,23 +66,21 @@ async function getSoldes(req, res) {
     const soldes = await quotasService.getSoldesUtilisateur(utilisateur_id, annee);
     res.json({ soldes });
   } catch (err) {
-    logger.error(err);
-    res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
-async function getUsageReport(req, res) {
+async function getUsageReport(req, res, next) {
   try {
     const entrepriseId = req.user.entreprise_id;
     const report = await UsageService.getUsageReport(entrepriseId);
     res.json({ report });
   } catch (err) {
-    logger.error(err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
-async function getUserCounters(req, res) {
+async function getUserCounters(req, res, next) {
   try {
     const { utilisateur_id } = req.params;
     const utilisateur = await ensureUserAccess(req, utilisateur_id);
@@ -94,12 +90,11 @@ async function getUserCounters(req, res) {
     const items = await quotasService.listCountersForUser(entrepriseId, utilisateur_id, annee);
     res.json({ items, annee });
   } catch (err) {
-    logger.error(err);
-    res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
-async function upsertUserCounter(req, res) {
+async function upsertUserCounter(req, res, next) {
   try {
     const { utilisateur_id } = req.params;
     const utilisateur = await ensureUserAccess(req, utilisateur_id);
@@ -121,12 +116,11 @@ async function upsertUserCounter(req, res) {
 
     res.json({ message: 'Compteur mis à jour', item: compteur });
   } catch (err) {
-    logger.error(err);
-    res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
-async function removeUserCounter(req, res) {
+async function removeUserCounter(req, res, next) {
   try {
     const { counter_id } = req.params;
     await quotasService.deleteCounter({
@@ -136,12 +130,11 @@ async function removeUserCounter(req, res) {
 
     res.json({ message: 'Compteur supprimé' });
   } catch (err) {
-    logger.error(err);
-    res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
-async function recalculateProrata(req, res) {
+async function recalculateProrata(req, res, next) {
   try {
     const annee = Number(req.body?.annee || req.query?.annee || new Date().getFullYear());
     const apply = req.body?.apply === true || req.query?.apply === 'true';
@@ -171,12 +164,11 @@ async function recalculateProrata(req, res) {
       ...result,
     });
   } catch (err) {
-    logger.error(err);
-    res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 
-async function monthlyAccrual(req, res) {
+async function monthlyAccrual(req, res, next) {
   try {
     const annee = Number(req.body?.annee || req.query?.annee || new Date().getFullYear());
     const mois = Number(req.body?.mois || req.query?.mois || (new Date().getMonth() + 1));
@@ -202,8 +194,7 @@ async function monthlyAccrual(req, res) {
       ...result,
     });
   } catch (err) {
-    logger.error(err);
-    res.status(err.status || 500).json({ message: 'Erreur serveur', error: err.message });
+    next(err);
   }
 }
 

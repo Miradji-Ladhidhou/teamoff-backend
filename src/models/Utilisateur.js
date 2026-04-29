@@ -8,7 +8,6 @@ module.exports = (sequelize, DataTypes) => {
     entreprise_id: {
       type: DataTypes.UUID,
       allowNull: false,
-      field: 'entreprise_id',
     },
     prenom: {
       type: DataTypes.STRING(255),
@@ -44,7 +43,6 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DATEONLY,
       allowNull: true,
       defaultValue: null,
-      field: 'date_embauche',
     },
     failed_login_attempts: {
       type: DataTypes.INTEGER,
@@ -53,6 +51,11 @@ module.exports = (sequelize, DataTypes) => {
     },
     locked_until: {
       type: DataTypes.DATE,
+      allowNull: true,
+      defaultValue: null,
+    },
+    refresh_token_hash: {
+      type: DataTypes.STRING(64), // SHA-256 hex of the refresh JWT
       allowNull: true,
       defaultValue: null,
     },

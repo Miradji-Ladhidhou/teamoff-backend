@@ -14,7 +14,7 @@ const dayjs = require('dayjs');
  *  - statut       : ex. 'valide_final'
  *  - utilisateurId: UUID
  */
-async function getCalendrier(req, res) {
+async function getCalendrier(req, res, next) {
   try {
     const { year, month } = req.params;
     const { entrepriseId, statut, utilisateurId } = req.query;
@@ -38,14 +38,25 @@ async function getCalendrier(req, res) {
       where.statut = statut;
     }
 
-    if (utilisateurId && utilisateurId !== 'all') {
+    const canFilterByUser = ['super_admin', 'admin_entreprise', 'manager'].includes(req.user.role);
+    if (req.user.role === 'employe') {
+      where.utilisateur_id = req.user.id;
+    } else if (canFilterByUser && utilisateurId && utilisateurId !== 'all') {
       where.utilisateur_id = utilisateurId;
     }
 
     // filtre sur le mois si year/month sont fournis
-    if (year && month) {
-      const firstDay = dayjs(`${year}-${String(month).padStart(2, '0')}-01`).startOf('month').toDate();
-      const lastDay  = dayjs(`${year}-${String(month).padStart(2, '0')}-01`).endOf('month').toDate();
+    if (year || month) {
+      const y = Number(year);
+      const m = Number(month);
+      if (!Number.isInteger(y) || y < 2000 || y > 2100) {
+        return res.status(400).json({ message: 'Paramètre year invalide (attendu : entier entre 2000 et 2100)' });
+      }
+      if (!Number.isInteger(m) || m < 1 || m > 12) {
+        return res.status(400).json({ message: 'Paramètre month invalide (attendu : entier entre 1 et 12)' });
+      }
+      const firstDay = dayjs(`${y}-${String(m).padStart(2, '0')}-01`).startOf('month').toDate();
+      const lastDay  = dayjs(`${y}-${String(m).padStart(2, '0')}-01`).endOf('month').toDate();
       where.date_debut = { [Op.lte]: lastDay };
       where.date_fin   = { [Op.gte]: firstDay };
     }
@@ -70,7 +81,7 @@ async function getCalendrier(req, res) {
     res.json(conges);
   } catch (err) {
     logger.error(err);
-    res.status(500).json({ message: err.message });
+    next(err);
   }
 }
 

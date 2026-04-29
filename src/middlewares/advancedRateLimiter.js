@@ -1,21 +1,52 @@
 // middlewares/advancedRateLimiter.js
-const { RateLimiterMemory } = require('rate-limiter-flexible');
+const { RateLimiterMemory, RateLimiterRedis } = require('rate-limiter-flexible');
 const rateLimitConfig = require('../config/rateLimitConfig');
+const logger = require('../utils/logger');
+
+// ---------------------------------------------------------------------------
+// Redis client (optional) — falls back to memory if REDIS_URL is absent or
+// ioredis is not installed, and automatically via insuranceLimiter on errors.
+// ---------------------------------------------------------------------------
+let redisClient = null;
+if (process.env.REDIS_URL) {
+  try {
+    const Redis = require('ioredis');
+    redisClient = new Redis(process.env.REDIS_URL, {
+      enableOfflineQueue: false, // fail fast so insuranceLimiter kicks in
+      maxRetriesPerRequest: 0,
+    });
+    redisClient.on('ready', () => logger.info('Rate limiter: Redis connected'));
+    redisClient.on('error', (err) => logger.warn('Rate limiter: Redis error', { error: err.message }));
+  } catch {
+    logger.warn('Rate limiter: ioredis not installed — using in-memory fallback (npm install ioredis to enable Redis)');
+  }
+}
 
 // Stockage des limiters par endpoint
 const limiters = {};
 
+function buildLimiter(endpointKey) {
+  const conf = rateLimitConfig.endpoints[endpointKey] || rateLimitConfig.endpoints.default;
+  const opts = {
+    points: conf.points,
+    duration: conf.duration,
+    keyPrefix: endpointKey,
+    blockDuration: conf.blockDuration,
+  };
+
+  const memoryLimiter = new RateLimiterMemory({ ...opts, inmemoryBlockOnConsumed: conf.burst });
+
+  if (redisClient) {
+    // insuranceLimiter = automatic in-memory fallback if Redis is temporarily unavailable
+    return new RateLimiterRedis({ ...opts, storeClient: redisClient, insuranceLimiter: memoryLimiter });
+  }
+
+  return memoryLimiter;
+}
+
 function getLimiter(endpointKey) {
   if (!limiters[endpointKey]) {
-    const conf = rateLimitConfig.endpoints[endpointKey] || rateLimitConfig.endpoints.default;
-    limiters[endpointKey] = new RateLimiterMemory({
-      points: conf.points,
-      duration: conf.duration,
-      execEvenly: false,
-      keyPrefix: endpointKey,
-      inmemoryBlockOnConsumed: conf.burst,
-      blockDuration: conf.blockDuration,
-    });
+    limiters[endpointKey] = buildLimiter(endpointKey);
   }
   return limiters[endpointKey];
 }

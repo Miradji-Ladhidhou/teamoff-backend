@@ -8,7 +8,6 @@ const logger = require('../utils/logger');
 const router = express.Router();
 const { LeavePolicy } = require('../models');
 const LeavePolicyService = require('../services/leavePolicyService');
-const authJwt = require('../middlewares/authJwt');
 const authorizeRole = require('../middlewares/authorizeRole');
 
 /**
@@ -18,9 +17,8 @@ const authorizeRole = require('../middlewares/authorizeRole');
  */
 router.get(
   '/',
-  authJwt,
   authorizeRole(['admin_entreprise', 'super_admin']),
-  async (req, res) => {
+  async (req, res, next) => {
     try {
       const entrepriseId = req.user.role === 'super_admin'
         ? (req.query.entreprise_id || req.user.entreprise_id)
@@ -37,10 +35,7 @@ router.get(
         data: policy,
       });
     } catch (error) {
-      logger.error('Erreur lors de la récupération de la politique:', error);
-      res.status(500).json({
-        error: 'Erreur lors de la récupération de la politique',
-      });
+      next(error);
     }
   }
 );
@@ -52,9 +47,8 @@ router.get(
  */
 router.put(
   '/',
-  authJwt,
   authorizeRole(['admin_entreprise', 'super_admin']),
-  async (req, res) => {
+  async (req, res, next) => {
     try {
       const entrepriseId = req.user.role === 'super_admin'
         ? (req.body.entreprise_id || req.user.entreprise_id)
@@ -126,10 +120,7 @@ router.put(
         data: policy,
       });
     } catch (error) {
-      logger.error('Erreur lors de la mise à jour de la politique:', error);
-      res.status(500).json({
-        error: error.message || 'Erreur lors de la mise à jour de la politique',
-      });
+      next(error);
     }
   }
 );
@@ -142,8 +133,7 @@ router.put(
  */
 router.post(
   '/validate-modification',
-  authJwt,
-  async (req, res) => {
+  async (req, res, next) => {
     try {
       const {
         conge_id,
@@ -152,27 +142,23 @@ router.post(
       } = req.body;
 
       if (!conge_id || !conge_status || !conge_start_date) {
-        return res.status(400).json({
-          error: 'Paramètres manquants',
-        });
+        return res.status(400).json({ error: 'Paramètres manquants' });
+      }
+      const parsedDate = new Date(conge_start_date);
+      if (isNaN(parsedDate.getTime())) {
+        return res.status(400).json({ error: 'conge_start_date invalide' });
       }
 
       const result = await LeavePolicyService.validateModification({
         entrepriseId: req.user.entreprise_id,
         congeStatus: conge_status,
-        congeStartDate: new Date(conge_start_date),
+        congeStartDate: parsedDate,
         initiatorRole: req.user.role,
       });
 
-      res.json({
-        success: true,
-        data: result,
-      });
+      res.json({ success: true, data: result });
     } catch (error) {
-      logger.error('Erreur lors de la validation:', error);
-      res.status(500).json({
-        error: 'Erreur lors de la validation',
-      });
+      next(error);
     }
   }
 );
@@ -184,8 +170,7 @@ router.post(
  */
 router.post(
   '/validate-cancellation',
-  authJwt,
-  async (req, res) => {
+  async (req, res, next) => {
     try {
       const {
         conge_id,
@@ -194,27 +179,23 @@ router.post(
       } = req.body;
 
       if (!conge_id || !conge_status || !conge_start_date) {
-        return res.status(400).json({
-          error: 'Paramètres manquants',
-        });
+        return res.status(400).json({ error: 'Paramètres manquants' });
+      }
+      const parsedDate = new Date(conge_start_date);
+      if (isNaN(parsedDate.getTime())) {
+        return res.status(400).json({ error: 'conge_start_date invalide' });
       }
 
       const result = await LeavePolicyService.validateCancellation({
         entrepriseId: req.user.entreprise_id,
         congeStatus: conge_status,
-        congeStartDate: new Date(conge_start_date),
+        congeStartDate: parsedDate,
         initiatorRole: req.user.role,
       });
 
-      res.json({
-        success: true,
-        data: result,
-      });
+      res.json({ success: true, data: result });
     } catch (error) {
-      logger.error('Erreur lors de la validation:', error);
-      res.status(500).json({
-        error: 'Erreur lors de la validation',
-      });
+      next(error);
     }
   }
 );

@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
 
 const { sequelize, Conge, CompteurConges } = require('../src/models');
 const { createIsolatedContext, cleanupIsolatedContext } = require('./verifyTestContext');

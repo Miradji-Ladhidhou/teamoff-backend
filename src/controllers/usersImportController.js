@@ -4,6 +4,7 @@ const { parse } = require('csv-parse/sync');
 const { Utilisateur, Entreprise, sequelize } = require('../models');
 const emailService = require('../services/emailService');
 const quotasService = require('../services/quotasService');
+const logger = require('../utils/logger');
 
 const ALLOWED_ROLES = ['employe', 'manager', 'admin_entreprise'];
 const MAX_ROWS = 200;
@@ -27,7 +28,7 @@ function normalizeRow(raw, defaultEntrepriseId) {
   return { nom, prenom, email, role, service, date_embauche, entreprise_id, errors };
 }
 
-async function importUsersCSV(req, res) {
+async function importUsersCSV(req, res, next) {
   try {
     if (!req.file?.buffer) {
       return res.status(400).json({ message: 'Fichier CSV manquant' });
@@ -102,19 +103,22 @@ async function importUsersCSV(req, res) {
       try {
         const entreprise = await Entreprise.findByPk(row.entreprise_id);
         await emailService.sendWelcomeEmail(newUser, entreprise, tempPassword);
-      } catch { /* email non bloquant */ }
+      } catch (emailErr) {
+        logger.error('Erreur envoi email bienvenue import CSV', { email: newUser.email, error: emailErr.message });
+      }
 
       created.push({ id: newUser.id, email: newUser.email, nom: newUser.nom, prenom: newUser.prenom });
     }
 
-    res.status(201).json({
+    const status = created.length > 0 && skipped.length === 0 ? 201 : 200;
+    res.status(status).json({
       message: `${created.length} utilisateur(s) créé(s), ${skipped.length} ignoré(s)`,
       created,
       skipped,
     });
   } catch (err) {
-    console.error('Import CSV utilisateurs:', err);
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    logger.error('Import CSV utilisateurs', { error: err.message });
+    next(err);
   }
 }
 

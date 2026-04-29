@@ -326,6 +326,9 @@ async function checkOverlapConge({ utilisateur_id, conge_type_id, date_debut, da
   if (congeType.entreprise_id !== utilisateur.entreprise_id) {
     throw new Error('Le type de congé ne correspond pas à l entreprise de l utilisateur');
   }
+  if (!congeType.demi_journee_autorisee && (debutDemiJournee === 'apres_midi' || finDemiJournee === 'matin')) {
+    throw Object.assign(new Error('Les demi-journées ne sont pas autorisées pour ce type de congé'), { status: 422 });
+  }
 
   const baseLeaveRules = await getEntrepriseLeaveRules(utilisateur.entreprise_id);
   const leaveRules = getEffectiveLeaveRules(baseLeaveRules, utilisateur.service || null);
@@ -1447,6 +1450,10 @@ async function updateConge(id, data, user) {
       transaction: t
     });
     if (!nextCongeType) throw new Error('Type de congé introuvable');
+
+    if (!nextCongeType.demi_journee_autorisee && (nextDebutDemiJournee === 'apres_midi' || nextFinDemiJournee === 'matin')) {
+      throw Object.assign(new Error('Les demi-journées ne sont pas autorisées pour ce type de congé'), { status: 422 });
+    }
 
     const sameCounter = conge.conge_type_id === nextCongeTypeId && oldYear === nextYear;
 

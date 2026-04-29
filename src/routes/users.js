@@ -1,78 +1,69 @@
 const express = require('express');
 const router = express.Router();
-const authJwt = require('../middlewares/authJwt');
 const authorizeRole = require('../middlewares/authorizeRole');
 const multer = require('multer');
 
 const { advancedRateLimiter } = require('../middlewares/advancedRateLimiter');
+const validateUUIDParam = require('../middlewares/validateUUIDParam');
+const validate = require('../middlewares/validate');
+const { createUserRules, updateUserRules, changeRoleRules } = require('../validators/users.validators');
+const { forUserCreate, forUserUpdate } = require('../middlewares/stripForbiddenFields');
 const usersController = require('../controllers/usersController');
 const { importUsersCSV } = require('../controllers/usersImportController');
 
 const csvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
 
-// Routes pour la gestion des utilisateurs
-
-// Créer un nouvel utilisateur
-
-// Création utilisateur (pas de rate limit strict, réservé admin)
 router.post(
   '/',
-  authJwt,
   authorizeRole(['super_admin', 'admin_entreprise']),
+  forUserCreate,
+  validate(createUserRules),
   usersController.createUser
 );
 
-// Récupérer tous les utilisateurs
-
-// GET utilisateurs (rate limit permissif)
 router.get(
   '/',
-  authJwt,
   authorizeRole(['super_admin', 'admin_entreprise', 'manager']),
   advancedRateLimiter('getData'),
   usersController.getAllUsers
 );
 
-// Récupérer un utilisateur par ID
-
 router.get(
   '/:id',
-  authJwt,
   authorizeRole(['super_admin', 'admin_entreprise', 'manager', 'employe']),
+  validateUUIDParam('id'),
   advancedRateLimiter('getData'),
   usersController.getUserById
 );
 
-// Mettre à jour un utilisateur
 router.put(
   '/:id',
-  authJwt,
   authorizeRole(['super_admin', 'admin_entreprise']),
+  validateUUIDParam('id'),
+  forUserUpdate,
+  validate(updateUserRules),
   usersController.updateUser
 );
 
-// Changer le rôle d'un utilisateur
 router.put(
   '/:id/role',
-  authJwt,
   authorizeRole(['super_admin']),
+  validateUUIDParam('id'),
+  validate(changeRoleRules),
   usersController.changeUserRole
 );
 
-// Import CSV utilisateurs
 router.post(
   '/import/csv',
-  authJwt,
   authorizeRole(['super_admin', 'admin_entreprise']),
   csvUpload.single('file'),
   importUsersCSV
 );
 
-// Supprimer un utilisateur
 router.delete(
   '/:id',
-  authJwt,
   authorizeRole(['super_admin', 'admin_entreprise']),
+  validateUUIDParam('id'),
   usersController.deleteUser
 );
 

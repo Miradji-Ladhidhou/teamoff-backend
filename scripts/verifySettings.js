@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
 
 const jwt = require('jsonwebtoken');
 const { sequelize, Utilisateur, SystemSetting, AuditLog } = require('../src/models');

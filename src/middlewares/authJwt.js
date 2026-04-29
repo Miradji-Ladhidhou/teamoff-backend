@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const { Utilisateur, Entreprise } = require('../models');
+const logger = require('../utils/logger');
 
 module.exports = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -71,6 +72,10 @@ module.exports = async (req, res, next) => {
 
     next();
   } catch (err) {
-    return res.status(401).json({ message: 'Token invalide ou expiré' });
+    if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError' || err.name === 'NotBeforeError') {
+      return res.status(401).json({ message: 'Token invalide ou expiré' });
+    }
+    logger.error('authJwt error', { error: err.message });
+    return res.status(500).json({ message: 'Erreur serveur lors de l\'authentification' });
   }
 };

@@ -1,14 +1,15 @@
 const authService = require('../services/authService');
-const { Utilisateur } = require('../models');
+const { Utilisateur, Entreprise } = require('../models');
 const { auditAuth, auditUser } = require('../services/auditHelper');
 const emailService = require('../services/emailService');
 const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 const logger = require('../utils/logger');
 
 // ---------------------------
 // Register
 // ---------------------------
-async function register(req, res) {
+async function register(req, res, next) {
   try {
     const { entreprise, admin } = await authService.registerEntreprise(req.body);
 
@@ -42,7 +43,7 @@ async function register(req, res) {
       return res.status(400).json({ message: err.message });
     }
 
-    return res.status(500).json({ message: 'Erreur serveur' });
+    return next(err);
   }
 }
 
@@ -57,7 +58,7 @@ const REFRESH_COOKIE_OPTIONS = {
   path: '/api/auth/refresh',
 };
 
-async function login(req, res) {
+async function login(req, res, next) {
   try {
     const data = await authService.loginUtilisateur(req.body);
 
@@ -88,32 +89,38 @@ async function login(req, res) {
       return res.status(403).json({ message });
     }
 
-    logger.error('Login error:', err);
-    res.status(500).json({ message: 'Erreur serveur' });
+    next(err);
   }
 }
 
 // ---------------------------
 // Logout
 // ---------------------------
-async function logout(req, res) {
+async function logout(req, res, next) {
   try {
+    // Invalidate the refresh token server-side (decode only — no verify needed)
+    const cookieToken = req.cookies?.refreshToken;
+    if (cookieToken) {
+      try {
+        const decoded = jwt.decode(cookieToken);
+        if (decoded?.id) {
+          await Utilisateur.update({ refresh_token_hash: null }, { where: { id: decoded.id } });
+        }
+      } catch {}
+    }
     res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
     await auditAuth.logout(req.user, req);
     res.json({ message: 'Déconnexion réussie' });
   } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur' });
+    next(err);
   }
 }
 
 // ---------------------------
-// Refresh access token
+// Refresh access token (with rotation)
 // ---------------------------
-async function refresh(req, res) {
+async function refresh(req, res, next) {
   try {
-    const jwt = require('jsonwebtoken');
-    const { Utilisateur, Entreprise } = require('../models');
-
     const token = req.cookies?.refreshToken;
     if (!token) return res.status(401).json({ message: 'Refresh token manquant' });
 
@@ -128,27 +135,44 @@ async function refresh(req, res) {
       return res.status(401).json({ message: 'Token invalide' });
     }
 
+    // 4. Charger l'utilisateur
     const user = await Utilisateur.findByPk(decoded.id);
     if (!user || user.statut === 'inactif') {
       return res.status(401).json({ message: 'Utilisateur introuvable ou inactif' });
     }
 
+    // 5. Vérifier l'entreprise AVANT la rotation — si inactive après rotation,
+    //    l'ancien token serait consommé mais l'accès refusé → lockout involontaire.
     const entreprise = await Entreprise.findByPk(user.entreprise_id);
     if (!entreprise || entreprise.statut !== 'active') {
       return res.status(403).json({ message: 'Entreprise inactive' });
     }
 
-    const { sessionTimeout } = await require('../services/authService').getRuntimeSecuritySettings ? { sessionTimeout: 60 } : { sessionTimeout: 60 };
-    const newAccessToken = jwt.sign(
-      { id: user.id, role: user.role, entreprise_id: user.entreprise_id },
-      process.env.JWT_SECRET,
-      { expiresIn: '60m' }
+    // 6. UPDATE atomique — rotation du refresh token.
+    //    WHERE sur refresh_token_hash : une seule requête concurrente peut réussir.
+    const receivedHash = authService.hashRefreshToken(token);
+    const newRefreshToken = jwt.sign(
+      { id: user.id, type: 'refresh' },
+      process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    const [rotated] = await Utilisateur.update(
+      { refresh_token_hash: authService.hashRefreshToken(newRefreshToken) },
+      { where: { id: user.id, refresh_token_hash: receivedHash } }
     );
 
+    if (rotated === 0) {
+      // Token déjà consommé (replay) — invalider toutes les sessions
+      await Utilisateur.update({ refresh_token_hash: null }, { where: { id: user.id } });
+      return res.status(401).json({ message: 'Refresh token invalide ou déjà utilisé' });
+    }
+
+    // 7. Répondre avec le nouveau couple access + refresh token
+    res.cookie('refreshToken', newRefreshToken, REFRESH_COOKIE_OPTIONS);
+    const newAccessToken = authService.generateAccessToken(user, 60);
     res.json({ token: newAccessToken });
   } catch (err) {
-    logger.error('Refresh token error:', err);
-    res.status(500).json({ message: 'Erreur serveur' });
+    next(err);
   }
 }
 
@@ -195,7 +219,7 @@ async function resetPassword(req, res) {
 // ---------------------------
 // Change password
 // ---------------------------
-async function changePassword(req, res) {
+async function changePassword(req, res, next) {
   try {
     const { currentPassword, newPassword } = req.body || {};
     const userId = req.user?.id;
@@ -230,8 +254,7 @@ async function changePassword(req, res) {
     return res.status(200).json({ message: 'Mot de passe changé avec succès' });
 
   } catch (err) {
-    logger.error('Erreur changement mot de passe:', err);
-    return res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    return next(err);
   }
 }
 

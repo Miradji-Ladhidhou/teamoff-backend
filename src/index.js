@@ -15,6 +15,10 @@ const maintenanceMode = require('./middlewares/maintenanceMode');
 const { initBackupCron } = require('./cron/backupCron');
 const { initQuotasCron } = require('./cron/quotasCron');
 const cors = require('cors');
+const helmet = require('helmet');
+const sanitizeInput = require('./middlewares/sanitizeInput');
+const requestId = require('./middlewares/requestId');
+const requestLogger = require('./middlewares/requestLogger');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -26,10 +30,16 @@ notificationService.initialize(server);
 // ----------------------
 // CORS
 // ----------------------
+// Seules les origines HTTPS ou http://localhost sont acceptées depuis FRONTEND_URL
 const envOrigins = String(process.env.FRONTEND_URL || '')
   .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+  .map((o) => o.trim())
+  .filter((o) => {
+    try {
+      const u = new URL(o);
+      return u.protocol === 'https:' || (u.protocol === 'http:' && u.hostname === 'localhost');
+    } catch { return false; }
+  });
 
 const allowedOrigins = [
   'https://teamoff-app.vercel.app',
@@ -38,44 +48,84 @@ const allowedOrigins = [
   ...envOrigins,
 ];
 
+function isSameOrigin(a, b) {
+  try {
+    const ua = new URL(a);
+    const ub = new URL(b);
+    return ua.protocol === ub.protocol && ua.hostname === ub.hostname && ua.port === ub.port;
+  } catch { return false; }
+}
+
+// Security headers — CSP off (pure API), CORP relaxed pour SSE EventSource
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  hsts: { maxAge: 31536000, includeSubDomains: true }, // HTTPS only, 1 an
+  frameguard: { action: 'deny' },                      // X-Frame-Options: DENY
+  noSniff: true,                                        // X-Content-Type-Options: nosniff
+}));
+
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true); 
-    if (allowedOrigins.includes(origin)) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.some((allowed) => isSameOrigin(origin, allowed))) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'), false);
     }
   },
-  credentials: true, // important si tu envoies cookies ou JWT
+  credentials: true,
 }));
-
-// Autoriser les requêtes preflight OPTIONS
-app.use((req, res, next) => {
-  if (req.method === 'OPTIONS') {
-    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-    res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    return res.sendStatus(200);
-  }
-  next();
-});
 
 // ----------------------
 // Middlewares
 // ----------------------
+app.use(requestId);                            // UUID par requête — doit être en premier
 app.use(require('cookie-parser')());
-app.use(express.json());
-app.use(compression());
-app.use(metricsMiddleware);
+app.use(express.json({ limit: '100kb' }));
 
+// Rejette les requêtes POST/PUT/PATCH sans Content-Type application/json
+// (exclut multipart/form-data pour les uploads de fichiers)
 app.use((req, res, next) => {
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
+    const ct = req.headers['content-type'] || '';
+    if (ct.includes('multipart/form-data') || ct.includes('application/x-www-form-urlencoded')) {
+      return next(); // uploads et formulaires — gérés par leurs propres middlewares
+    }
+    if (req.headers['content-length'] === '0' || !req.headers['content-length']) {
+      return next(); // body vide autorisé (ex: POST /logout)
+    }
+    if (!ct.includes('application/json')) {
+      return res.status(415).json({ message: 'Content-Type application/json requis' });
+    }
+  }
   next();
 });
 
+app.use(compression());
+app.use(sanitizeInput);
+app.use(requestLogger);
+app.use(metricsMiddleware);
+
 app.use(generalLimiter);
+
+// 30s timeout sur toutes les requêtes non-SSE
+app.use((req, res, next) => {
+  if (req.path.includes('/stream')) return next();
+  const ac = new AbortController();
+  req.signal = ac.signal;
+  const timer = setTimeout(() => {
+    ac.abort();
+    req.timedOut = true;
+    if (!res.headersSent) {
+      res.setHeader('Retry-After', '30');
+      res.status(503).json({ message: 'Délai de traitement dépassé' });
+    }
+  }, 30_000);
+  res.on('finish', () => clearTimeout(timer));
+  res.on('close', () => clearTimeout(timer));
+  next();
+});
 
 // ----------------------
 // Health check
@@ -83,9 +133,19 @@ app.use(generalLimiter);
 app.get('/health', async (req, res) => {
   try {
     await sequelize.authenticate();
-    res.json({ status: 'ok' });
-  } catch (error) {
-    res.status(503).json({ status: 'error' });
+    res.json({
+      status:    'ok',
+      db:        'up',
+      uptime:    Math.floor(process.uptime()),
+      timestamp: new Date().toISOString(),
+    });
+  } catch {
+    res.status(503).json({
+      status:    'error',
+      db:        'down',
+      uptime:    Math.floor(process.uptime()),
+      timestamp: new Date().toISOString(),
+    });
   }
 });
 
@@ -108,14 +168,9 @@ const startServer = async () => {
     await sequelize.authenticate();
     logger.info('✅ DB connected');
 
-    // 🔥 SYNCHRONISATION DES MODELS
-      await sequelize.sync({ alter: false }); // alter: true crée/modifie les tables sans perte de données
-
-    logger.info('✅ Models synchronisés avec la DB');
-
-    // Cron jobs
-    await initBackupCron();
-    initQuotasCron();
+    // Cron jobs — isolated so one failure doesn't block startup
+    try { await initBackupCron(); } catch (e) { logger.error('initBackupCron failed', { error: e.message }); }
+    try { initQuotasCron(); } catch (e) { logger.error('initQuotasCron failed', { error: e.message }); }
 
     const PORT = process.env.PORT || 5500;
 

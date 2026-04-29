@@ -21,15 +21,24 @@ module.exports = (sequelize, DataTypes) => {
     created_by: {
       type: DataTypes.UUID,
       allowNull: true,
+      references: { model: 'utilisateur', key: 'id' },
+      onDelete: 'SET NULL',
     },
     source_entreprise_id: {
       type: DataTypes.UUID,
       allowNull: true,
+      references: { model: 'entreprise', key: 'id' },
+      onDelete: 'CASCADE',
     },
   }, {
     tableName: 'holiday_templates',
     timestamps: true,
     createdAt: 'created_at',
     updatedAt: 'updated_at',
+    indexes: [
+      { fields: ['source_entreprise_id'] },
+      { fields: ['created_by'] },
+      { fields: ['country_code'] },
+    ],
   });
 };

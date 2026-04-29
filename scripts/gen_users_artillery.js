@@ -1,11 +1,11 @@
 // Génère un fichier users_artillery.json avec 200 utilisateurs uniques et un conge_type_id valide
 // Usage : node scripts/gen_users_artillery.js
 
-
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
-const { Sequelize, CongeType, Utilisateur, sequelize } = require('../src/models');
+const { CongeType, Utilisateur, sequelize } = require('../src/models');
 
 const OUTPUT = path.join(__dirname, '../users_artillery.jsonl');
 const NB_USERS = 200;
@@ -24,7 +24,7 @@ async function main() {
   const lines = [];
   for (let i = 0; i < NB_USERS; i++) {
     const id = uuidv4();
-    const email = `artillery_user_${i}_${Date.now()}@example.com`;
+    const email = `artillery_user_${i}_${uuidv4().slice(0, 8)}@example.com`;
     const entreprise_id = entreprises[i % entreprises.length];
     const user = { id, email, password: PASSWORD, conge_type_id, entreprise_id };
     lines.push(JSON.stringify(user));

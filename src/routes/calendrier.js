@@ -1,9 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const authJwt = require('../middlewares/authJwt');
 const { getCalendrier } = require('../controllers/calendrierController');
 
-router.get('/', authJwt, getCalendrier);
-router.get('/:year/:month', authJwt, getCalendrier);
+router.get('/', getCalendrier);
+router.get('/:year/:month', getCalendrier);
 
 module.exports = router;

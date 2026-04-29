@@ -34,4 +34,17 @@ function sendToUser(userId, eventName, data) {
   }
 }
 
+// Purge connections that have already closed (res.writableEnded = true)
+setInterval(() => {
+  for (const [userId, set] of clients) {
+    for (const res of set) {
+      if (res.writableEnded) {
+        set.delete(res);
+        logger.info(`SSE: purged dead connection userId=${userId}`);
+      }
+    }
+    if (set.size === 0) clients.delete(userId);
+  }
+}, 60_000);
+
 module.exports = { addClient, removeClient, sendToUser };
