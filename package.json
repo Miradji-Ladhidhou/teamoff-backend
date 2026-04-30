@@ -2,7 +2,11 @@
   "name": "teamoff-backend",
   "version": "1.0.0",
   "description": "",
-  "main": "test-mail.js",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
   "scripts": {
     "dev": "NODE_ENV=development nodemon src/index.js",
     "start": "NODE_ENV=production node src/index.js",

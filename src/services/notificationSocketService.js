@@ -20,7 +20,9 @@ class NotificationService {
   initialize(server) {
     this.io = new Server(server, {
       cors: {
-        origin: process.env.FRONTEND_URL || "http://localhost:3001",
+        origin: process.env.FRONTEND_URL
+          ? process.env.FRONTEND_URL.split(',').map((o) => o.trim())
+          : ['http://localhost:3001', 'http://localhost:5173'],
         methods: ["GET", "POST"]
       }
     });

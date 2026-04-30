@@ -132,7 +132,7 @@ function getBackupPathByFilename(filename) {
  * @param {number} retentionDays
  * @returns {{ deleted: string[], kept: number }}
  */
-function cleanupOldBackups(retentionDays = 30) {
+function cleanupOldBackups(retentionDays = 7) {
   ensureBackupDirectory();
   const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
   const files = fs.readdirSync(backupsDir).filter((f) => f.endsWith('.sql'));

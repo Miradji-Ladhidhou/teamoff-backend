@@ -114,7 +114,7 @@ class EmailService {
     const globals = {
       year: new Date().getFullYear(),
       app_name: process.env.EMAIL_NAME || 'TeamOff',
-      frontend_url: process.env.FRONTEND_URL || 'http://localhost:3000',
+      frontend_url: process.env.FRONTEND_URL?.split(',')[0].trim() || 'http://localhost:3001',
     };
 
     Object.keys(globals).forEach(key => {
@@ -304,7 +304,7 @@ class EmailService {
   }
 
   async sendRegistrationConfirmation(entreprise, admin) {
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontendUrl = process.env.FRONTEND_URL?.split(',')[0].trim() || 'http://localhost:3001';
     const loginUrl = `${frontendUrl}/login`;
     const dashboardUrl = `${frontendUrl}/dashboard`;
     const servicesUrl = `${frontendUrl}/services`;

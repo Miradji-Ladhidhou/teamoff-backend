@@ -12,7 +12,7 @@ const {
   changePasswordRules,
 } = require('../validators/auth.validators');
 
-router.post('/register', advancedRateLimiter('forgotPassword'), validate(registerRules), authController.register);
+router.post('/register', advancedRateLimiter('register'), validate(registerRules), authController.register);
 router.post('/login', advancedRateLimiter('login'), validate(loginRules), authController.login);
 router.post('/forgot-password', advancedRateLimiter('forgotPassword'), validate(forgotPasswordRules), authController.forgotPassword);
 router.post('/reset-password', advancedRateLimiter('forgotPassword'), validate(resetPasswordRules), authController.resetPassword);

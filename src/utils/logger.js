@@ -24,13 +24,13 @@ const logger = createLogger({
   format: combine(
     injectRequestId(),
     timestamp({ format: 'YYYY-MM-DDTHH:mm:ssZ' }),
-    errors({ stack: true }),
+    errors({ stack: !isProduction }),
     json()
   ),
   transports: [
     new transports.Console({
       format: isProduction
-        ? combine(injectRequestId(), timestamp(), errors({ stack: true }), json())
+        ? combine(injectRequestId(), timestamp(), errors({ stack: false }), json())
         : combine(colorize(), simple()),
     }),
   ],

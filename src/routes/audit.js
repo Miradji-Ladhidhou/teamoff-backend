@@ -72,7 +72,7 @@ router.get('/', authorizeRole(['super_admin']), async (req, res, next) => {
           required: false,
         },
       ],
-      order: [['createdAt', 'DESC']],
+      order: [['created_at', 'DESC']],
       limit: limitNum,
       offset,
       distinct: true,

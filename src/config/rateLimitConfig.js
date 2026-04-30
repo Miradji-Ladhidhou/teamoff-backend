@@ -4,17 +4,24 @@ module.exports = {
   endpoints: {
     login: {
       key: 'login',
-      points: 25, // 5x plus permissif pour les tests
+      points: 8,
       duration: 60,
-      burst: 50,
-      blockDuration: 10, // block plus court pour tests
+      burst: 12,
+      blockDuration: 60,
+    },
+    register: {
+      key: 'register',
+      points: 5,
+      duration: 60,
+      burst: 5,
+      blockDuration: 300,
     },
     forgotPassword: {
       key: 'forgotPassword',
-      points: 10,
+      points: 5,
       duration: 60,
-      burst: 15,
-      blockDuration: 20,
+      burst: 5,
+      blockDuration: 120,
     },
     conges: {
       key: 'conges',
@@ -25,10 +32,10 @@ module.exports = {
     },
     refresh: {
       key: 'refresh',
-      points: 20,
+      points: 8,
       duration: 60,
-      burst: 30,
-      blockDuration: 60,
+      burst: 10,
+      blockDuration: 120,
     },
     getData: {
       key: 'getData',

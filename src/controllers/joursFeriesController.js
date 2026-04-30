@@ -263,7 +263,8 @@ async function importerJoursFeriesNationaux(req, res, next) {
       return res.status(400).json({ message: 'Année invalide.' });
     }
 
-    const response = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${year}/${countryCode}`);
+    const nagerBase = process.env.NAGER_API_URL || 'https://date.nager.at/api/v3';
+    const response = await fetch(`${nagerBase}/PublicHolidays/${year}/${countryCode}`);
     if (!response.ok) {
       await t.rollback();
       return res.status(502).json({ message: 'Impossible de récupérer les jours fériés depuis l\'API externe.' });

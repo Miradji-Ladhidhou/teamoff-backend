@@ -45,6 +45,6 @@ setInterval(() => {
     }
     if (set.size === 0) clients.delete(userId);
   }
-}, 60_000);
+}, 30_000);
 
 module.exports = { addClient, removeClient, sendToUser };

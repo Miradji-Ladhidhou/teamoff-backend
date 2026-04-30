@@ -49,3 +49,6 @@ Thumbs.db
 # Prisma généré
 /generated/prisma
 
+# Schémas et dumps SQL (contiennent la structure de la DB)
+../BDD/
+

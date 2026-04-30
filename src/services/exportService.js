@@ -301,7 +301,7 @@ class ExportService {
 
     const rowsDB = await AuditLog.findAll({
       where: { entreprise_id: entrepriseId },
-      order: [['createdAt','DESC']],
+      order: [['created_at','DESC']],
       limit
     });
 

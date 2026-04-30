@@ -164,7 +164,7 @@ router.get('/history/csv', async (req, res, next) => {
           required: true,
         },
       ],
-      order: [['createdAt', 'DESC']],
+      order: [['created_at', 'DESC']],
       limit: 1000,
     });
 
@@ -211,17 +211,17 @@ router.get('/history', async (req, res, next) => {
     const requestedSortOrder = String(req.query.sortOrder || 'desc').toLowerCase();
     const sortOrder = requestedSortOrder === 'asc' ? 'ASC' : 'DESC';
 
-    let order = [['createdAt', 'DESC']];
+    let order = [['created_at', 'DESC']];
     if (sortBy === 'date') {
-      order = [['createdAt', sortOrder]];
+      order = [['created_at', sortOrder]];
     } else if (sortBy === 'action') {
-      order = [['action', sortOrder], ['createdAt', 'DESC']];
+      order = [['action', sortOrder], ['created_at', 'DESC']];
     } else if (sortBy === 'actor') {
       order = [
         [{ model: Utilisateur, as: 'utilisateur' }, 'nom', sortOrder],
         [{ model: Utilisateur, as: 'utilisateur' }, 'prenom', sortOrder],
         [{ model: Utilisateur, as: 'utilisateur' }, 'email', sortOrder],
-        ['createdAt', 'DESC'],
+        ['created_at', 'DESC'],
       ];
     }
 

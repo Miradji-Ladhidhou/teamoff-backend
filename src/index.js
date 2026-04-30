@@ -41,12 +41,8 @@ const envOrigins = String(process.env.FRONTEND_URL || '')
     } catch { return false; }
   });
 
-const allowedOrigins = [
-  'https://teamoff-app.vercel.app',
-  'http://localhost:3001',
-  'http://localhost:5173',
-  ...envOrigins,
-];
+// Toutes les origines CORS passent par FRONTEND_URL (virgule-séparées)
+const allowedOrigins = envOrigins;
 
 function isSameOrigin(a, b) {
   try {
@@ -163,7 +159,20 @@ app.use(errorHandler);
 // ----------------------
 // START SERVER
 // ----------------------
+const REQUIRED_ENV = ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'DATABASE_URL', 'MAIL_USER', 'MAIL_PASS'];
+
 const startServer = async () => {
+  // Vérification des variables d'environnement critiques
+  const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
+  if (missing.length > 0) {
+    logger.error(`❌ Variables d'environnement manquantes : ${missing.join(', ')}`);
+    process.exit(1);
+  }
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+    logger.error('❌ JWT_SECRET trop court (minimum 32 caractères)');
+    process.exit(1);
+  }
+
   try {
     await sequelize.authenticate();
     logger.info('✅ DB connected');

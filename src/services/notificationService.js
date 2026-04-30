@@ -7,7 +7,7 @@ const path = require('path');
 
 const APP_NAME = process.env.EMAIL_NAME || 'TeamOff';
 const APP_FROM = process.env.EMAIL_FROM || process.env.MAIL_USER;
-const APP_FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+const APP_FRONTEND_URL = process.env.FRONTEND_URL?.split(',')[0].trim() || 'http://localhost:3001';
 const DEFAULT_SIGNATURE = process.env.EMAIL_SIGNATURE || `L'equipe ${APP_NAME}`;
 
 /**

@@ -9,9 +9,8 @@ const MAX_STR = 300;
  */
 const loginRules = [
   body('email')
-    .isString().withMessage('email requis')
-    .trim()
-    .notEmpty().withMessage('email requis'),
+    .isEmail().withMessage('email invalide')
+    .trim().toLowerCase(),
   body('password')
     .isString().withMessage('password requis')
     .notEmpty().withMessage('password requis')
@@ -24,7 +23,8 @@ const loginRules = [
  */
 const registerRules = [
   body('email')
-    .isString().trim().notEmpty(),
+    .isEmail().withMessage('email invalide')
+    .trim().toLowerCase(),
   body('password')
     .isString().notEmpty()
     .isLength({ max: MAX_STR }),
@@ -44,7 +44,8 @@ const registerRules = [
  */
 const forgotPasswordRules = [
   body('email')
-    .isString().trim().notEmpty(),
+    .isEmail().withMessage('email invalide')
+    .trim().toLowerCase(),
 ];
 
 /**

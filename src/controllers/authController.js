@@ -72,7 +72,8 @@ async function login(req, res, next) {
 
     // === Audit échec login ===
     if (
-      message.includes('Utilisateur non trouvé')
+      message.includes('Identifiants invalides')
+      || message.includes('Utilisateur non trouvé')
       || message.includes('Mot de passe incorrect')
       || message.includes('tentative(s)')
     ) {
