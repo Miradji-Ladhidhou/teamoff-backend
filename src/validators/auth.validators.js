@@ -27,8 +27,9 @@ const registerRules = [
   body('entreprise_telephone').isString().notEmpty().withMessage('Téléphone requis').isLength({ max: 50 }),
   body('admin_email').isEmail().withMessage('Email admin invalide').trim().toLowerCase(),
   body('admin_password').isString().notEmpty().isLength({ max: MAX_STR }),
-  body('admin_nom').optional({ nullable: true }).isString().isLength({ max: 255 }),
-  body('admin_prenom').optional({ nullable: true }).isString().isLength({ max: 255 }),
+  body('admin_nom').isString().notEmpty().withMessage('Nom administrateur requis').isLength({ max: 255 }),
+  body('admin_prenom').isString().notEmpty().withMessage('Prénom administrateur requis').isLength({ max: 255 }),
+  body('admin_confirm_password').isString().notEmpty().withMessage('Confirmation mot de passe requise').isLength({ max: MAX_STR }),
 ];
 
 /**
