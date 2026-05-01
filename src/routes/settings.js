@@ -54,7 +54,7 @@ async function resolveEntrepriseId(req) {
 
   const firstEntreprise = await Entreprise.findOne({
     attributes: ['id'],
-    order: [['createdAt', 'ASC']],
+    order: [['created_at', 'ASC']],
   });
 
   return firstEntreprise?.id || null;

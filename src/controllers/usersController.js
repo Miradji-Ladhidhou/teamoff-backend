@@ -160,7 +160,10 @@ async function createUser(req, res, next) {
       });
     });
 
-    const entreprise = entreprise_id ? await Entreprise.findByPk(entreprise_id) : null;
+    const entreprise = entreprise_id ? (await Entreprise.findByPk(entreprise_id)) : null;
+    if (entreprise_id && !entreprise) {
+      logger.warn('Entreprise introuvable pour email de bienvenue', { entreprise_id });
+    }
     await emailService.sendWelcomeEmail(newUser, entreprise, tempPassword);
     await auditUser.created(newUser, req.user, req);
 

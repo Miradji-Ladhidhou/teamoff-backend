@@ -7,6 +7,10 @@ const logger = require('../utils/logger');
 
 const isEmailDebug = process.env.EMAIL_DEBUG === 'true';
 
+function getFrontendUrl() {
+  return (process.env.FRONTEND_URL || 'http://localhost:3001').split(',')[0].trim();
+}
+
 function emailLog(...args) {
   if (isEmailDebug) {
     logger.debug(...args);
@@ -114,7 +118,7 @@ class EmailService {
     const globals = {
       year: new Date().getFullYear(),
       app_name: process.env.EMAIL_NAME || 'TeamOff',
-      frontend_url: process.env.FRONTEND_URL?.split(',')[0].trim() || 'http://localhost:3001',
+      frontend_url: getFrontendUrl(),
     };
 
     Object.keys(globals).forEach(key => {
@@ -133,7 +137,7 @@ class EmailService {
         <p><strong>Administrateur :</strong> ${data.admin_nom || 'Non renseigné'}</p>
         <p><strong>Email administrateur :</strong> ${data.admin_email || 'Non renseigné'}</p>
         <p><strong>Date :</strong> ${data.created_at || 'Non renseignée'}</p>
-        <p><a href="${data.validation_url || process.env.FRONTEND_URL || '#'}">Ouvrir la gestion des entreprises</a></p>
+        <p><a href="${data.validation_url || getFrontendUrl() || '#'}">Ouvrir la gestion des entreprises</a></p>
       `,
       'password-reset': `
         <p>Bonjour,</p>
@@ -250,7 +254,7 @@ class EmailService {
 
   async sendWelcomeEmail(user, entreprise, temporaryPassword) {
     const entrepriseNom = entreprise?.nom || 'Votre entreprise';
-    const loginUrl = `${process.env.FRONTEND_URL}/login`;
+    const loginUrl = `${getFrontendUrl()}/login`;
 
     return this.sendEmail(
       user.email,
@@ -264,7 +268,7 @@ class EmailService {
         email: user.email,
         password_temporaire: temporaryPassword,
         login_url: loginUrl,
-        change_password_url: `${process.env.FRONTEND_URL}/reset-password`,
+        change_password_url: `${getFrontendUrl()}/reset-password`,
         content: `
           <p>Bonjour ${user.prenom} ${user.nom},</p>
           <p>Votre compte ${process.env.EMAIL_NAME || 'TeamOff'} a été créé${entreprise?.nom ? ` pour ${entrepriseNom}` : ''}.</p>
@@ -293,7 +297,7 @@ class EmailService {
         entreprise_nom: entreprise.nom,
         entreprise_statut: entreprise.statut,
         created_at: new Date().toLocaleString('fr-FR'),
-        dashboard_url: `${process.env.FRONTEND_URL}/super-admin/entreprises`,
+        dashboard_url: `${getFrontendUrl()}/superadmin/companies`,
         content: `
           <p>Bonjour ${nomComplet},</p>
           <p>L'entreprise <strong>${entreprise.nom}</strong> a été créée avec le statut <strong>${entreprise.statut}</strong>.</p>
@@ -304,7 +308,7 @@ class EmailService {
   }
 
   async sendRegistrationConfirmation(entreprise, admin) {
-    const frontendUrl = process.env.FRONTEND_URL?.split(',')[0].trim() || 'http://localhost:3001';
+    const frontendUrl = getFrontendUrl();
     const loginUrl = `${frontendUrl}/login`;
     const dashboardUrl = `${frontendUrl}/dashboard`;
     const servicesUrl = `${frontendUrl}/services`;
@@ -359,7 +363,7 @@ class EmailService {
         admin_nom: `${admin.prenom} ${admin.nom}`,
         admin_email: admin.email,
         created_at: new Date().toLocaleDateString('fr-FR'),
-        validation_url: `${process.env.FRONTEND_URL}/superadmin/companies`,
+        validation_url: `${getFrontendUrl()}/superadmin/companies`,
         content: `
           <p>Bonjour ${superAdmin.prenom || 'Super admin'},</p>
           <p>Une nouvelle entreprise vient de s'inscrire sur ${process.env.EMAIL_NAME || 'TeamOff'}.</p>
@@ -367,7 +371,7 @@ class EmailService {
           <p><strong>Administrateur :</strong> ${admin.prenom} ${admin.nom}</p>
           <p><strong>Email administrateur :</strong> ${admin.email}</p>
           <p><strong>Date :</strong> ${new Date().toLocaleString('fr-FR')}</p>
-          <p>Consultez la liste des entreprises ici : <a href="${process.env.FRONTEND_URL}/superadmin/companies">${process.env.FRONTEND_URL}/superadmin/companies</a></p>
+          <p>Consultez la liste des entreprises ici : <a href="${getFrontendUrl()}/superadmin/companies">${getFrontendUrl()}/superadmin/companies</a></p>
         `,
       }
     );
@@ -379,7 +383,7 @@ class EmailService {
       'Réinitialisation de votre mot de passe',
       'password-reset',
       {
-        reset_url: `${process.env.FRONTEND_URL}/reset-password/${resetToken}`,
+        reset_url: `${getFrontendUrl()}/reset-password/${resetToken}`,
         expiry_hours: 1,
       }
     );
@@ -390,7 +394,7 @@ class EmailService {
       email,
       'Mot de passe mis à jour',
       'password-reset-confirmation',
-      { login_url: `${process.env.FRONTEND_URL}/login` }
+      { login_url: `${getFrontendUrl()}/login` }
     );
   }
 
@@ -405,7 +409,7 @@ class EmailService {
         type_conge: conge.conge_type.libelle,
         jours_pris: conge.jours_calcules || '?',
         commentaire: conge.commentaire_employe || 'Aucun commentaire',
-        validation_url: `${process.env.FRONTEND_URL}/manager/approvals`,
+        validation_url: `${getFrontendUrl()}/conges`,
         delai_jours: 7,
       }
     );
@@ -428,7 +432,7 @@ class EmailService {
         commentaire: conge.commentaire_manager || conge.commentaire_admin || 'Aucun commentaire',
         solde_restant_conges: employee.solde_conges,
         solde_restant_rtt: employee.solde_rtt,
-        dashboard_url: `${process.env.FRONTEND_URL}/employee/dashboard`,
+        dashboard_url: `${getFrontendUrl()}/dashboard`,
       }
     );
   }
@@ -446,7 +450,7 @@ class EmailService {
         raison: conge.commentaire_rh || conge.commentaire_manager || 'Non spécifiée',
         solde_restant_conges: employee.solde_conges,
         solde_restant_rtt: employee.solde_rtt,
-        dashboard_url: `${process.env.FRONTEND_URL}/employee/dashboard`,
+        dashboard_url: `${getFrontendUrl()}/dashboard`,
       }
     );
   }
@@ -460,7 +464,7 @@ class EmailService {
         inviter_nom: inviterName,
         email,
         password_temporaire: temporaryPassword,
-        login_url: `${process.env.FRONTEND_URL}/login`,
+        login_url: `${getFrontendUrl()}/login`,
       }
     );
   }
@@ -522,7 +526,7 @@ class EmailService {
         alert_type: alert.type,
         message: alert.message,
         timestamp: new Date().toLocaleString('fr-FR'),
-        dashboard_url: `${process.env.FRONTEND_URL}/admin/dashboard`,
+        dashboard_url: `${getFrontendUrl()}/dashboard`,
       }
     );
   }
