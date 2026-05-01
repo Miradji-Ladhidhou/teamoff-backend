@@ -22,21 +22,13 @@ const loginRules = [
  * Les validations métier restent dans authService.registerEntreprise
  */
 const registerRules = [
-  body('email')
-    .isEmail().withMessage('email invalide')
-    .trim().toLowerCase(),
-  body('password')
-    .isString().notEmpty()
-    .isLength({ max: MAX_STR }),
-  // Nom entreprise (champ le plus courant dans les payloads register)
-  body('nom')
-    .optional({ nullable: true })
-    .isString()
-    .isLength({ max: 255 }),
-  body('prenom')
-    .optional({ nullable: true })
-    .isString()
-    .isLength({ max: 255 }),
+  body('entreprise_nom').isString().notEmpty().withMessage('Nom entreprise requis').isLength({ max: 255 }),
+  body('entreprise_email').isEmail().withMessage('Email entreprise invalide').trim().toLowerCase(),
+  body('entreprise_telephone').isString().notEmpty().withMessage('Téléphone requis').isLength({ max: 50 }),
+  body('admin_email').isEmail().withMessage('Email admin invalide').trim().toLowerCase(),
+  body('admin_password').isString().notEmpty().isLength({ max: MAX_STR }),
+  body('admin_nom').optional({ nullable: true }).isString().isLength({ max: 255 }),
+  body('admin_prenom').optional({ nullable: true }).isString().isLength({ max: 255 }),
 ];
 
 /**
