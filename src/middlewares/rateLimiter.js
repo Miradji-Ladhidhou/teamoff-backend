@@ -3,10 +3,16 @@ const rateLimit = require('express-rate-limit');
 // Rate limiter général
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'development' ? 10000 : 100, // allow more in dev
+  max: process.env.NODE_ENV === 'development' ? 10000 : 500,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.path.startsWith('/socket.io'), // avoid blocking socket handshake
+  // Skip socket.io + requests with a Bearer token (authenticated users are already
+  // protected by per-route advancedRateLimiter — no need to double-limit them here)
+  skip: (req) => {
+    if (req.path.startsWith('/socket.io')) return true;
+    const auth = req.headers.authorization;
+    return Boolean(auth && auth.startsWith('Bearer '));
+  },
   message: { message: 'Trop de requêtes. Réessayez plus tard.' },
 });
 
