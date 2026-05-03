@@ -398,63 +398,6 @@ class EmailService {
     );
   }
 
-  async sendNewLeaveRequest(conge, manager) {
-    return this.sendEmail(
-      manager.email,
-      'Nouvelle demande de congé à valider',
-      'new-leave-request',
-      {
-        employe_nom: `${conge.utilisateur.prenom} ${conge.utilisateur.nom}`,
-        dates: `${conge.date_debut} au ${conge.date_fin}`,
-        type_conge: conge.conge_type.libelle,
-        jours_pris: conge.jours_calcules || '?',
-        commentaire: conge.commentaire_employe || 'Aucun commentaire',
-        validation_url: `${getFrontendUrl()}/conges`,
-        delai_jours: 7,
-      }
-    );
-  }
-
-  async sendLeaveStatusUpdate(conge, employee, status) {
-    const subject = status === 'valide'
-      ? 'Votre demande de congé a été approuvée'
-      : 'Votre demande de congé a été refusée';
-
-    return this.sendEmail(
-      employee.email,
-      subject,
-      'leave-status-update',
-      {
-        prenom: employee.prenom,
-        statut: status,
-        dates: `${conge.date_debut} au ${conge.date_fin}`,
-        type_conge: conge.conge_type.libelle,
-        commentaire: conge.commentaire_manager || conge.commentaire_admin || 'Aucun commentaire',
-        solde_restant_conges: employee.solde_conges,
-        solde_restant_rtt: employee.solde_rtt,
-        dashboard_url: `${getFrontendUrl()}/dashboard`,
-      }
-    );
-  }
-
-  async sendLeaveCancellation(conge, employee, cancelledBy) {
-    return this.sendEmail(
-      employee.email,
-      'Votre congé a été annulé',
-      'leave-cancellation',
-      {
-        prenom: employee.prenom,
-        annule_par: cancelledBy,
-        dates: `${conge.date_debut} au ${conge.date_fin}`,
-        type_conge: conge.conge_type.libelle,
-        raison: conge.commentaire_rh || conge.commentaire_manager || 'Non spécifiée',
-        solde_restant_conges: employee.solde_conges,
-        solde_restant_rtt: employee.solde_rtt,
-        dashboard_url: `${getFrontendUrl()}/dashboard`,
-      }
-    );
-  }
-
   async sendNewUserInvitation(email, temporaryPassword, inviterName) {
     return this.sendEmail(
       email,

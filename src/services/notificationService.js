@@ -3,6 +3,7 @@ const logger = require('../utils/logger');
 const sseManager = require('./sseManager');
 const nodemailer = require('nodemailer');
 const fs = require('fs').promises;
+const systemSettingsService = require('./systemSettingsService');
 const path = require('path');
 
 const APP_NAME = process.env.EMAIL_NAME || 'TeamOff';
@@ -11,17 +12,33 @@ const APP_FRONTEND_URL = process.env.FRONTEND_URL?.split(',')[0].trim() || 'http
 const DEFAULT_SIGNATURE = process.env.EMAIL_SIGNATURE || `L'equipe ${APP_NAME}`;
 
 /**
- * Configuration SMTP
+ * Crée un transporter SMTP dynamique depuis la config DB (avec fallback env vars).
+ * Appelé à chaque envoi pour refléter les changements de config admin.
  */
-const transporter = nodemailer.createTransport({
-  host: process.env.MAIL_HOST,
-  port: Number(process.env.MAIL_PORT),
-  secure: process.env.MAIL_SECURE === 'true',
-  auth: {
-    user: process.env.MAIL_USER,
-    pass: process.env.MAIL_PASS
+async function createTransporter() {
+  try {
+    const settings = await systemSettingsService.getSettings();
+    return nodemailer.createTransport({
+      host: settings.smtpHost || process.env.MAIL_HOST,
+      port: Number(settings.smtpPort || process.env.MAIL_PORT || 587),
+      secure: process.env.MAIL_SECURE === 'true',
+      auth: {
+        user: settings.smtpUser || process.env.MAIL_USER,
+        pass: settings.smtpPassword || process.env.MAIL_PASS,
+      },
+    });
+  } catch {
+    return nodemailer.createTransport({
+      host: process.env.MAIL_HOST,
+      port: Number(process.env.MAIL_PORT || 587),
+      secure: process.env.MAIL_SECURE === 'true',
+      auth: {
+        user: process.env.MAIL_USER,
+        pass: process.env.MAIL_PASS,
+      },
+    });
   }
-});
+}
 
 function htmlToText(html = '') {
   return String(html)
@@ -128,6 +145,7 @@ async function sendEmail({ to, subject, html, templateName, data }) {
 
   const text = htmlToText(professionalHtml);
 
+  const transporter = await createTransporter();
   return transporter.sendMail({
     from: `"${APP_NAME}" <${APP_FROM}>`,
     to,
