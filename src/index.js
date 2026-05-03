@@ -160,7 +160,7 @@ app.use(errorHandler);
 // ----------------------
 // START SERVER
 // ----------------------
-const REQUIRED_ENV = ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'DATABASE_URL', 'MAIL_USER', 'MAIL_PASS'];
+const REQUIRED_ENV = ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'DATABASE_URL', 'MAIL_HOST', 'MAIL_USER', 'MAIL_PASS', 'FRONTEND_URL'];
 
 const startServer = async () => {
   // Vérification des variables d'environnement critiques
