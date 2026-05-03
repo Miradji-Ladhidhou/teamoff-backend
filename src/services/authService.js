@@ -114,6 +114,16 @@ async function loginUtilisateur({ email, password, entreprise_id }) {
   // Réinitialiser le compteur après authentification complète
   await user.update({ failed_login_attempts: 0, locked_until: null, last_login: new Date() });
 
+  // 2FA check — return pending token instead of full session
+  if (user.totp_enabled) {
+    const pendingToken = jwt.sign(
+      { id: user.id, type: '2fa_pending' },
+      process.env.JWT_SECRET,
+      { expiresIn: '5m' }
+    );
+    return { requires2fa: true, pending_token: pendingToken };
+  }
+
   const payload = { id: user.id, role: user.role, entreprise_id: user.entreprise_id };
   const token = jwt.sign(payload, process.env.JWT_SECRET, {
     expiresIn: `${sessionTimeout}m`,

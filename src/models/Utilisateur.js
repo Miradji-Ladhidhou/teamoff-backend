@@ -74,6 +74,8 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       defaultValue: null,
     },
+    totp_secret: { type: DataTypes.TEXT, allowNull: true, defaultValue: null },
+    totp_enabled: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   }, {
     tableName: 'utilisateur',
     timestamps: true,

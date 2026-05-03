@@ -17,6 +17,7 @@ const MonitoringService = require('../services/monitoringService');
 // Route modules
 // ------------------------------
 const authRoutes = require('./auth');
+const twoFactorRoutes = require('./twoFactor');
 const usersRoutes = require('./users');
 const entrepriseRoutes = require('./entreprises');
 const joursFeriesRoutes = require('./joursFeries');
@@ -52,6 +53,11 @@ router.get('/health', async (req, res) => {
 // Auth routes (open)
 // ------------------------------
 router.use('/auth', authRoutes);
+
+// ------------------------------
+// 2FA routes (mixed: some open, some auth-protected)
+// ------------------------------
+router.use('/auth/2fa', twoFactorRoutes);
 
 // ------------------------------
 // Users routes (auth requis)
