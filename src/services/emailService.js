@@ -473,6 +473,132 @@ class EmailService {
       }
     );
   }
+
+  // ---------------------------
+  // Rappel congé à venir (J-3 / J-1)
+  // ---------------------------
+  async sendLeaveReminder(conge, utilisateur, joursAvant) {
+    const delaiLabel = joursAvant === 1 ? 'demain' : `dans ${joursAvant} jours`;
+    return this.sendEmail(
+      utilisateur.email,
+      `Rappel : votre congé commence ${delaiLabel}`,
+      'leave-reminder',
+      {
+        destinataire_prenom: utilisateur.prenom || 'Collaborateur',
+        type_conge: conge.conge_type?.libelle || 'Congé',
+        delai_label: delaiLabel,
+        date_debut: conge.date_debut,
+        date_fin: conge.date_fin,
+        jours_calcules: conge.jours_calcules || '?',
+        action_url: `${getFrontendUrl()}/dashboard`,
+      }
+    );
+  }
+
+  // ---------------------------
+  // Compte bloqué après trop de tentatives
+  // ---------------------------
+  async sendAccountLocked(user, nbTentatives) {
+    return this.sendEmail(
+      user.email,
+      'Votre compte a été temporairement bloqué',
+      'account-locked',
+      {
+        destinataire_prenom: user.prenom || 'Utilisateur',
+        nb_tentatives: nbTentatives,
+        reset_url: `${getFrontendUrl()}/forgot-password`,
+      }
+    );
+  }
+
+  // ---------------------------
+  // Solde de congés faible après validation
+  // ---------------------------
+  async sendLowBalance(utilisateur, typeConge, soldeRestant, annee) {
+    return this.sendEmail(
+      utilisateur.email,
+      `Solde faible : il vous reste ${soldeRestant} jour(s) de ${typeConge}`,
+      'low-balance',
+      {
+        destinataire_prenom: utilisateur.prenom || 'Collaborateur',
+        type_conge: typeConge,
+        solde_restant: soldeRestant,
+        annee: annee || new Date().getFullYear(),
+        action_url: `${getFrontendUrl()}/dashboard`,
+      }
+    );
+  }
+
+  // ---------------------------
+  // Relance demande en attente (cron)
+  // ---------------------------
+  async sendLeavePendingReminder(conge, manager, joursAttente) {
+    return this.sendEmail(
+      manager.email,
+      `Rappel : demande de congé en attente depuis ${joursAttente} jour(s)`,
+      'leave-pending-reminder',
+      {
+        destinataire_prenom: manager.prenom || 'Manager',
+        demandeur_nom: `${conge.utilisateur?.prenom || ''} ${conge.utilisateur?.nom || ''}`.trim(),
+        type_conge: conge.conge_type?.libelle || 'Congé',
+        date_debut: conge.date_debut,
+        date_fin: conge.date_fin,
+        jours_calcules: conge.jours_calcules || '?',
+        jours_attente: joursAttente,
+        date_soumission: new Date(conge.created_at).toLocaleDateString('fr-FR'),
+        action_url: `${getFrontendUrl()}/conges`,
+      }
+    );
+  }
+
+  // ---------------------------
+  // Réactivation compte utilisateur
+  // ---------------------------
+  async sendAccountReactivated(utilisateur) {
+    return this.sendEmail(
+      utilisateur.email,
+      'Votre compte a été réactivé',
+      'account-reactivated',
+      {
+        destinataire_prenom: utilisateur.prenom || 'Utilisateur',
+        login_url: `${getFrontendUrl()}/login`,
+      }
+    );
+  }
+
+  // ---------------------------
+  // Suspension entreprise
+  // ---------------------------
+  async sendEnterpriseSuspended(admin, entreprise) {
+    return this.sendEmail(
+      admin.email,
+      `Compte entreprise suspendu : ${entreprise.nom}`,
+      'enterprise-suspended',
+      {
+        destinataire_prenom: admin.prenom || 'Administrateur',
+        entreprise_nom: entreprise.nom,
+        support_email: process.env.SUPPORT_EMAIL || process.env.EMAIL_FROM || 'support@teamoff.fr',
+      }
+    );
+  }
+
+  // ---------------------------
+  // Relance invitation non acceptée (cron)
+  // ---------------------------
+  async sendInvitationReminder(utilisateur, entreprise, joursSince) {
+    return this.sendEmail(
+      utilisateur.email,
+      `Rappel : votre invitation ${entreprise?.nom || ''} vous attend`,
+      'invitation-reminder',
+      {
+        destinataire_prenom: utilisateur.prenom || 'Utilisateur',
+        entreprise_nom: entreprise?.nom || '',
+        email: utilisateur.email,
+        jours_depuis: joursSince,
+        reset_url: `${getFrontendUrl()}/forgot-password`,
+      }
+    );
+  }
 }
 
 module.exports = new EmailService();

@@ -1,5 +1,6 @@
 const { Conge, CompteurConges, CongeType, Utilisateur, Entreprise, sequelize } = require('../models');
 const notificationService = require('./notificationService');
+const emailService = require('./emailService');
 const { auditConge } = require('./auditHelper');
 const { ensureCounter } = require('./quotasService');
 const LeavePolicyService = require('./leavePolicyService');
@@ -921,6 +922,17 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         compteur.jours_pris = safeNumber(compteur.jours_pris) + safeNumber(joursConge);
         compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
         await compteur.save({ transaction: t });
+
+        // Alerte solde faible (< 3 jours restants)
+        const soldeRestant = safeNumber(compteur.jours_acquis);
+        if (soldeRestant <= 3 && soldeRestant >= 0) {
+          emailService.sendLowBalance(
+            utilisateur,
+            conge.conge_type?.libelle || 'Congé',
+            soldeRestant,
+            dayjs(conge.date_debut).year()
+          ).catch((e) => logger.error('sendLowBalance error', { error: e.message }));
+        }
 
         if (leaveRules.notification_settings.on_validate) {
           await notificationService.sendEmail({

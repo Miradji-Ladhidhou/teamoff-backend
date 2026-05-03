@@ -59,6 +59,11 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       defaultValue: null,
     },
+    last_login: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      defaultValue: null,
+    },
   }, {
     tableName: 'utilisateur',
     timestamps: true,

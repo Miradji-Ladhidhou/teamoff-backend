@@ -3,8 +3,8 @@ const logger = require('../utils/logger');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
-const systemSettingsService = require('./systemSettingsService');
 const emailService = require('./emailService');
+const systemSettingsService = require('./systemSettingsService');
 require('dotenv').config();
 
 const DEFAULT_LEAVE_POLICY = {
@@ -87,8 +87,13 @@ async function loginUtilisateur({ email, password, entreprise_id }) {
       const updates = { failed_login_attempts: newAttempts };
       if (newAttempts >= maxLoginAttempts) {
         updates.locked_until = new Date(Date.now() + 30 * 60 * 1000);
+        await user.update(updates);
+        emailService.sendAccountLocked(user, newAttempts).catch((e) =>
+          logger.error('sendAccountLocked error', { error: e.message })
+        );
+      } else {
+        await user.update(updates);
       }
-      await user.update(updates);
     }
     throw new Error('Identifiants invalides');
   }
@@ -107,7 +112,7 @@ async function loginUtilisateur({ email, password, entreprise_id }) {
   if (user.statut === 'inactif') throw new Error('Votre compte est désactivé. Contactez l\'administrateur.');
 
   // Réinitialiser le compteur après authentification complète
-  await user.update({ failed_login_attempts: 0, locked_until: null });
+  await user.update({ failed_login_attempts: 0, locked_until: null, last_login: new Date() });
 
   const payload = { id: user.id, role: user.role, entreprise_id: user.entreprise_id };
   const token = jwt.sign(payload, process.env.JWT_SECRET, {

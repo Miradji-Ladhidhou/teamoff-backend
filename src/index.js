@@ -14,6 +14,7 @@ const notificationService = require('./services/notificationSocketService');
 const maintenanceMode = require('./middlewares/maintenanceMode');
 const { initBackupCron } = require('./cron/backupCron');
 const { initQuotasCron } = require('./cron/quotasCron');
+const { initEmailCron } = require('./cron/emailCron');
 const cors = require('cors');
 const helmet = require('helmet');
 const sanitizeInput = require('./middlewares/sanitizeInput');
@@ -180,6 +181,7 @@ const startServer = async () => {
     // Cron jobs — isolated so one failure doesn't block startup
     try { await initBackupCron(); } catch (e) { logger.error('initBackupCron failed', { error: e.message }); }
     try { initQuotasCron(); } catch (e) { logger.error('initQuotasCron failed', { error: e.message }); }
+    try { initEmailCron(); } catch (e) { logger.error('initEmailCron failed', { error: e.message }); }
 
     const PORT = process.env.PORT || 5500;
 

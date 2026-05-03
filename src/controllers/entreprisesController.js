@@ -184,6 +184,19 @@ async function patchStatutEntreprise(req, res, next) {
     const oldStatut = entreprise.statut;
     await entreprise.update({ statut }, { userId: req.user.id });
 
+    // Email de suspension aux admins de l'entreprise
+    if (statut === 'suspendue' && oldStatut !== 'suspendue') {
+      const admins = await Utilisateur.findAll({
+        where: { entreprise_id: entreprise.id, role: 'admin_entreprise', statut: 'actif' },
+        attributes: ['email', 'prenom', 'nom'],
+      });
+      for (const admin of admins) {
+        emailService.sendEnterpriseSuspended(admin, entreprise).catch((e) =>
+          logger.error('sendEnterpriseSuspended error', { error: e.message })
+        );
+      }
+    }
+
     // === Audit ===
     await auditEntreprise.updated(entreprise, req.user, req, { oldStatut, newStatut: statut });
 
