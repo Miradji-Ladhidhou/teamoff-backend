@@ -252,6 +252,30 @@ class EmailService {
   // Emails spécifiques TeamOff
   // ---------------------------
 
+  async sendSetPasswordEmail(user, entreprise, inviteToken) {
+    const entrepriseNom = entreprise?.nom || 'Votre entreprise';
+    const setPasswordUrl = `${getFrontendUrl()}/set-password?token=${inviteToken}`;
+
+    return this.sendEmail(
+      user.email,
+      `Invitation à rejoindre ${process.env.EMAIL_NAME || 'TeamOff'}`,
+      'set-password-invitation',
+      {
+        prenom: user.prenom,
+        nom: user.nom,
+        entreprise_nom: entrepriseNom,
+        set_password_url: setPasswordUrl,
+        content: `
+          <p>Bonjour ${user.prenom} ${user.nom},</p>
+          <p>Votre compte ${process.env.EMAIL_NAME || 'TeamOff'} a été créé pour <strong>${entrepriseNom}</strong>.</p>
+          <p>Cliquez sur le bouton ci-dessous pour définir votre mot de passe et activer votre compte :</p>
+          <p><a href="${setPasswordUrl}" style="background:#2563eb;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block;">Définir mon mot de passe</a></p>
+          <p style="color:#6b7280;font-size:14px;">Ce lien est valable 48h. Si vous n'êtes pas à l'origine de cette invitation, ignorez cet email.</p>
+        `,
+      }
+    );
+  }
+
   async sendWelcomeEmail(user, entreprise, temporaryPassword) {
     const entrepriseNom = entreprise?.nom || 'Votre entreprise';
     const loginUrl = `${getFrontendUrl()}/login`;

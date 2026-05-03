@@ -64,10 +64,25 @@ const changePasswordRules = [
     .isLength({ max: MAX_STR }),
 ];
 
+/**
+ * Set password (invitation — token + nouveau mot de passe)
+ */
+const setPasswordRules = [
+  body('token')
+    .isString().notEmpty().withMessage('Token requis'),
+  body('password')
+    .isString().notEmpty().withMessage('Mot de passe requis')
+    .isLength({ max: MAX_STR }),
+  body('confirmPassword')
+    .isString().notEmpty().withMessage('Confirmation requise')
+    .isLength({ max: MAX_STR }),
+];
+
 module.exports = {
   loginRules,
   registerRules,
   forgotPasswordRules,
   resetPasswordRules,
   changePasswordRules,
+  setPasswordRules,
 };

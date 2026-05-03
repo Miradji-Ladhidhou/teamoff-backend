@@ -1,5 +1,6 @@
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const sanitizeHtml = require('sanitize-html');
 const { Op } = require('sequelize');
 const { Utilisateur, Entreprise, sequelize } = require('../models');
@@ -133,9 +134,8 @@ async function createUser(req, res, next) {
       }
     }
 
-    const base = crypto.randomBytes(6).toString('hex');
-    const tempPassword = base.slice(0, 8) + 'A1!';
-    const hash = await bcrypt.hash(tempPassword, 10);
+    // Mdp placeholder — l'utilisateur définira le sien via le lien d'invitation
+    const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
 
     let newUser = null;
 
@@ -148,7 +148,7 @@ async function createUser(req, res, next) {
         service: normalizedService || null,
         entreprise_id,
         date_embauche: normalizedHiringDate || null,
-        password_hash: hash,
+        password_hash: placeholderHash,
         statut: 'en_attente',
       }, { transaction: t });
 
@@ -162,9 +162,15 @@ async function createUser(req, res, next) {
 
     const entreprise = entreprise_id ? (await Entreprise.findByPk(entreprise_id)) : null;
     if (entreprise_id && !entreprise) {
-      logger.warn('Entreprise introuvable pour email de bienvenue', { entreprise_id });
+      logger.warn('Entreprise introuvable pour email invitation', { entreprise_id });
     }
-    await emailService.sendWelcomeEmail(newUser, entreprise, tempPassword);
+
+    const inviteToken = jwt.sign(
+      { id: newUser.id, type: 'set_password' },
+      process.env.JWT_SECRET,
+      { expiresIn: '48h' }
+    );
+    await emailService.sendSetPasswordEmail(newUser, entreprise, inviteToken);
     await auditUser.created(newUser, req.user, req);
 
     res.status(201).json({

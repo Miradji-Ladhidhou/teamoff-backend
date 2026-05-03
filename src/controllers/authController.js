@@ -259,6 +259,28 @@ async function changePassword(req, res, next) {
   }
 }
 
+// ---------------------------
+// Set password (invitation)
+// ---------------------------
+async function setPassword(req, res) {
+  try {
+    const { token, password, confirmPassword } = req.body;
+    const user = await authService.setPassword(token, password, confirmPassword);
+
+    try {
+      await emailService.sendPasswordResetConfirmation(user.email);
+    } catch (mailErr) {
+      logger.error('setPassword: erreur email confirmation', { error: mailErr.message });
+    }
+
+    await auditAuth.passwordResetSuccess(user, req);
+
+    res.json({ message: 'Mot de passe défini avec succès. Vous pouvez vous connecter.' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+}
+
 module.exports = {
   register,
   login,
@@ -266,5 +288,6 @@ module.exports = {
   refresh,
   forgotPassword,
   resetPassword,
-  changePassword
+  changePassword,
+  setPassword,
 };

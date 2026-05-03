@@ -292,6 +292,33 @@ async function changePassword(userId, currentPassword, newPassword) {
   }
 }
 
+// ---------------------------
+// Set password (invitation link — première connexion)
+// ---------------------------
+async function setPassword(token, password, confirmPassword) {
+  if (password !== confirmPassword) throw new Error('Les mots de passe ne correspondent pas');
+
+  let decoded;
+  try {
+    decoded = jwt.verify(token, process.env.JWT_SECRET);
+  } catch {
+    throw new Error('Lien invalide ou expiré');
+  }
+
+  if (decoded.type !== 'set_password') throw new Error('Lien invalide');
+
+  const user = await Utilisateur.findByPk(decoded.id);
+  if (!user) throw new Error('Utilisateur introuvable');
+
+  await validatePasswordPolicy(password);
+
+  user.password_hash = await bcrypt.hash(password, 10);
+  user.statut = 'actif';
+  await user.save();
+
+  return user;
+}
+
 function generateAccessToken(user, expiresInMinutes = 60) {
   return jwt.sign(
     { id: user.id, role: user.role, entreprise_id: user.entreprise_id },
@@ -307,6 +334,7 @@ module.exports = {
   forgotPassword,
   resetPassword,
   changePassword,
+  setPassword,
   validatePasswordPolicy,
   generateAccessToken,
   hashRefreshToken,
