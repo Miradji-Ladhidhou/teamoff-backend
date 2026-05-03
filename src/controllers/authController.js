@@ -2,7 +2,6 @@ const authService = require('../services/authService');
 const { Utilisateur, Entreprise } = require('../models');
 const { auditAuth, auditUser } = require('../services/auditHelper');
 const emailService = require('../services/emailService');
-const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const logger = require('../utils/logger');
 
@@ -226,22 +225,7 @@ async function changePassword(req, res, next) {
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ message: 'Utilisateur non authentifié' });
 
-    if (!currentPassword || typeof currentPassword !== 'string' || !currentPassword.trim()) {
-      return res.status(400).json({ message: 'Mot de passe actuel requis' });
-    }
-
-    if (!newPassword || typeof newPassword !== 'string' || !newPassword.trim()) {
-      return res.status(400).json({ message: 'Nouveau mot de passe requis' });
-    }
-
-    const user = await Utilisateur.findByPk(userId);
-    if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
-
-    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password_hash);
-    if (!isCurrentPasswordValid) return res.status(400).json({ message: 'Mot de passe actuel incorrect' });
-
-    user.password_hash = await bcrypt.hash(newPassword, 10);
-    await user.save();
+    const user = await authService.changePassword(userId, currentPassword, newPassword);
 
     try {
       await emailService.sendPasswordResetConfirmation(user.email);
@@ -249,12 +233,13 @@ async function changePassword(req, res, next) {
       logger.error('Erreur envoi email confirmation changement password:', mailErr.message);
     }
 
-    // === Audit succès changement mot de passe ===
     await auditAuth.passwordChanged(user, req);
 
     return res.status(200).json({ message: 'Mot de passe changé avec succès' });
-
   } catch (err) {
+    if (err.message.includes('incorrect') || err.message.includes('requis') || err.message.includes('caractère')) {
+      return res.status(400).json({ message: err.message });
+    }
     return next(err);
   }
 }

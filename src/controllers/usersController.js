@@ -11,7 +11,7 @@ const { validatePasswordPolicy } = require('../services/authService');
 const quotasService = require('../services/quotasService');
 
 // Champs jamais exposés dans les réponses API
-const EXCLUDED_FIELDS = { exclude: ['password_hash', 'refresh_token_hash'] };
+const EXCLUDED_FIELDS = { exclude: ['password_hash', 'refresh_token_hash', 'invite_token_hash'] };
 
 // Sanitize HTML (nom/prenom)
 function sanitize(value) {
@@ -184,7 +184,7 @@ async function createUser(req, res, next) {
       entreprise_id: newUser.entreprise_id,
       date_embauche: newUser.date_embauche,
       statut: newUser.statut,
-      message: 'Utilisateur créé et email envoyé avec mot de passe temporaire',
+      message: 'Utilisateur créé — invitation envoyée par email',
     });
   } catch (err) {
     logger.error('Erreur création utilisateur', { error: err.message });
