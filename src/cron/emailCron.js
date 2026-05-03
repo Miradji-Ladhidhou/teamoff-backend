@@ -150,26 +150,79 @@ async function runMonthlyReports() {
 // Relance invitations non acceptées (jamais connecté depuis > 3 jours)
 // ---------------------------------------------------------------------------
 async function runInvitationReminders() {
-  const threshold = dayjs().subtract(3, 'day').toDate();
+  // J+1 window: created between 20h and 28h ago
+  const j1Start = dayjs().subtract(28, 'hour').toDate();
+  const j1End = dayjs().subtract(20, 'hour').toDate();
 
-  const utilisateurs = await Utilisateur.findAll({
-    where: {
-      statut: 'actif',
-      last_login: null,
-      created_at: { [Op.lte]: threshold },
-    },
-    attributes: ['id', 'email', 'prenom', 'nom', 'entreprise_id', 'created_at'],
-  });
+  // J+3 and beyond
+  const threshold3 = dayjs().subtract(3, 'day').toDate();
 
-  for (const utilisateur of utilisateurs) {
+  const [utilisateursJ1, utilisateursJ3] = await Promise.all([
+    Utilisateur.findAll({
+      where: {
+        statut: 'en_attente',
+        last_login: null,
+        invite_token_hash: { [Op.ne]: null },
+        created_at: { [Op.between]: [j1Start, j1End] },
+      },
+      attributes: ['id', 'email', 'prenom', 'nom', 'entreprise_id', 'created_at'],
+    }),
+    Utilisateur.findAll({
+      where: {
+        statut: 'en_attente',
+        last_login: null,
+        invite_token_hash: { [Op.ne]: null },
+        created_at: { [Op.lte]: threshold3 },
+      },
+      attributes: ['id', 'email', 'prenom', 'nom', 'entreprise_id', 'created_at'],
+    }),
+  ]);
+
+  for (const utilisateur of [...utilisateursJ1, ...utilisateursJ3]) {
     const entreprise = await Entreprise.findByPk(utilisateur.entreprise_id, { attributes: ['id', 'nom'] });
     const joursSince = dayjs().diff(dayjs(utilisateur.created_at), 'day');
-
     try {
       await emailService.sendInvitationReminder(utilisateur, entreprise, joursSince);
       logger.info(`[email-cron] Relance invitation → ${utilisateur.email} (J+${joursSince})`);
     } catch (e) {
       logger.error('[email-cron] sendInvitationReminder error', { error: e.message, userId: utilisateur.id });
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Résumé hebdomadaire managers
+// ---------------------------------------------------------------------------
+async function runWeeklyManagerSummary() {
+  const startOfWeek = dayjs().startOf('week').add(1, 'day').toDate(); // lundi
+  const endOfWeek = dayjs().startOf('week').add(7, 'day').toDate();   // dimanche
+
+  const managers = await Utilisateur.findAll({
+    where: { role: 'manager', statut: 'actif' },
+    attributes: ['id', 'email', 'prenom', 'nom', 'entreprise_id', 'service'],
+  });
+
+  for (const manager of managers) {
+    try {
+      const conges = await Conge.findAll({
+        where: {
+          entreprise_id: manager.entreprise_id,
+          statut: 'valide_final',
+          date_debut: { [Op.between]: [startOfWeek, endOfWeek] },
+          ...(manager.service ? {} : {}),
+        },
+        include: [
+          { model: Utilisateur, as: 'utilisateur', attributes: ['prenom', 'nom', 'service'] },
+          { model: CongeType, as: 'conge_type', attributes: ['libelle'] },
+        ],
+      });
+
+      if (conges.length === 0) continue;
+
+      await emailService.sendWeeklyManagerSummary(manager, conges, startOfWeek, endOfWeek);
+      logger.info(`[email-cron] Résumé hebdo → ${manager.email} (${conges.length} congés)`);
+    } catch (e) {
+      logger.error('[email-cron] sendWeeklyManagerSummary error', { error: e.message, managerId: manager.id });
     }
   }
 }
@@ -202,6 +255,12 @@ function initEmailCron() {
     catch (e) { logger.error('[email-cron] runInvitationReminders failed', { error: e.message }); }
   });
 
+  // Résumé hebdomadaire managers — chaque lundi à 07:00
+  cron.schedule('0 7 * * 1', async () => {
+    try { await runWeeklyManagerSummary(); }
+    catch (e) { logger.error('[email-cron] runWeeklyManagerSummary failed', { error: e.message }); }
+  });
+
   logger.info('[email-cron] Planification emails automatiques activée');
 }
 
@@ -211,4 +270,5 @@ module.exports = {
   runPendingLeaveReminders,
   runMonthlyReports,
   runInvitationReminders,
+  runWeeklyManagerSummary,
 };

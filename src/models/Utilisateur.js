@@ -59,6 +59,16 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       defaultValue: null,
     },
+    invite_token_hash: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+      defaultValue: null,
+    },
+    delegue_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      defaultValue: null,
+    },
     last_login: {
       type: DataTypes.DATE,
       allowNull: true,

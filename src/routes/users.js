@@ -67,4 +67,18 @@ router.delete(
   usersController.deleteUser
 );
 
+router.post(
+  '/:id/resend-invitation',
+  authorizeRole(['super_admin', 'admin_entreprise']),
+  validateUUIDParam('id'),
+  usersController.resendInvitation
+);
+
+router.put(
+  '/:id/delegate',
+  authorizeRole(['super_admin', 'admin_entreprise']),
+  validateUUIDParam('id'),
+  usersController.setDelegate
+);
+
 module.exports = router;

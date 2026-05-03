@@ -171,6 +171,8 @@ async function createUser(req, res, next) {
       { expiresIn: '48h' }
     );
     await emailService.sendSetPasswordEmail(newUser, entreprise, inviteToken);
+    const inviteHash = crypto.createHash('sha256').update(inviteToken).digest('hex');
+    await newUser.update({ invite_token_hash: inviteHash });
     await auditUser.created(newUser, req.user, req);
 
     res.status(201).json({
@@ -449,6 +451,66 @@ async function updateOwnProfile(req, res, next) {
   }
 }
 
+async function resendInvitation(req, res, next) {
+  try {
+    const utilisateur = await Utilisateur.findByPk(req.params.id);
+    if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
+
+    if (req.user.role === 'admin_entreprise' && utilisateur.entreprise_id !== req.user.entreprise_id) {
+      return res.status(403).json({ message: 'Accès interdit' });
+    }
+
+    if (utilisateur.statut !== 'en_attente') {
+      return res.status(400).json({ message: 'Ce compte est déjà activé' });
+    }
+
+    const inviteToken = jwt.sign(
+      { id: utilisateur.id, type: 'set_password' },
+      process.env.JWT_SECRET,
+      { expiresIn: '48h' }
+    );
+    const inviteHash = crypto.createHash('sha256').update(inviteToken).digest('hex');
+    await utilisateur.update({ invite_token_hash: inviteHash });
+
+    const entreprise = await Entreprise.findByPk(utilisateur.entreprise_id, { attributes: ['id', 'nom'] });
+    await emailService.sendSetPasswordEmail(utilisateur, entreprise, inviteToken);
+
+    res.json({ message: 'Invitation renvoyée avec succès' });
+  } catch (err) {
+    logger.error('Erreur resendInvitation', { error: err.message });
+    next(err);
+  }
+}
+
+async function setDelegate(req, res, next) {
+  try {
+    const utilisateur = await Utilisateur.findByPk(req.params.id);
+    if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
+
+    if (req.user.role === 'admin_entreprise' && utilisateur.entreprise_id !== req.user.entreprise_id) {
+      return res.status(403).json({ message: 'Accès interdit' });
+    }
+
+    const { delegue_id } = req.body;
+
+    if (delegue_id) {
+      const delegue = await Utilisateur.findByPk(delegue_id);
+      if (!delegue || delegue.entreprise_id !== utilisateur.entreprise_id) {
+        return res.status(400).json({ message: 'Délégué introuvable ou hors entreprise' });
+      }
+      if (delegue_id === utilisateur.id) {
+        return res.status(400).json({ message: 'Un utilisateur ne peut pas se déléguer à lui-même' });
+      }
+    }
+
+    await utilisateur.update({ delegue_id: delegue_id || null });
+    res.json({ message: 'Délégation mise à jour', delegue_id: utilisateur.delegue_id });
+  } catch (err) {
+    logger.error('Erreur setDelegate', { error: err.message });
+    next(err);
+  }
+}
+
 module.exports = {
   createUser,
   getAllUsers,
@@ -457,4 +519,6 @@ module.exports = {
   deleteUser,
   changeUserRole,
   updateOwnProfile,
+  resendInvitation,
+  setDelegate,
 };

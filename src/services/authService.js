@@ -310,11 +310,21 @@ async function setPassword(token, password, confirmPassword) {
   const user = await Utilisateur.findByPk(decoded.id);
   if (!user) throw new Error('Utilisateur introuvable');
 
+  if (!user.invite_token_hash) throw new Error('Lien déjà utilisé');
+  const { createHash } = require('crypto');
+  const receivedHash = createHash('sha256').update(token).digest('hex');
+  if (user.invite_token_hash !== receivedHash) throw new Error('Lien invalide');
+
   await validatePasswordPolicy(password);
 
   user.password_hash = await bcrypt.hash(password, 10);
   user.statut = 'actif';
   await user.save();
+  await user.update({ invite_token_hash: null });
+
+  emailService.sendWelcomeAfterActivation(user).catch((e) =>
+    logger.error('sendWelcomeAfterActivation error', { error: e.message })
+  );
 
   return user;
 }

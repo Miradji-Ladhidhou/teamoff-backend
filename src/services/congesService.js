@@ -803,7 +803,22 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
     const utilisateur = await Utilisateur.findByPk(conge.utilisateur_id, { transaction: t });
     const leaveRules = getEffectiveLeaveRules(baseLeaveRules, utilisateur?.service || null);
 
-    if (reqUser.role === 'manager') {
+    // Résoudre le rôle effectif pour les délégués
+    let effectiveRole = reqUser.role;
+    if (!['manager', 'admin_entreprise', 'super_admin'].includes(effectiveRole)) {
+      const delegatingUser = await Utilisateur.findOne({
+        where: {
+          entreprise_id: conge.entreprise_id,
+          delegue_id: reqUser.id,
+          role: { [Op.in]: ['manager', 'admin_entreprise'] },
+          statut: 'actif',
+        },
+        transaction: t,
+      });
+      if (delegatingUser) effectiveRole = delegatingUser.role;
+    }
+
+    if (effectiveRole === 'manager') {
       if (leaveRules.approval_workflow === 'auto') {
         throw new Error('Workflow auto: aucune validation manuelle nécessaire');
       }
@@ -959,7 +974,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
 
       // Audit
       await auditConge.approved(conge, reqUser, req);
-    } else if (reqUser.role === 'admin_entreprise' || reqUser.role === 'super_admin') {
+    } else if (effectiveRole === 'admin_entreprise' || effectiveRole === 'super_admin') {
       if (leaveRules.approval_workflow === 'auto') {
         throw new Error('Workflow auto: aucune validation manuelle nécessaire');
       }

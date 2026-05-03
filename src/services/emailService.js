@@ -623,6 +623,52 @@ class EmailService {
       }
     );
   }
+
+  async sendWelcomeAfterActivation(user) {
+    const dashboardUrl = `${getFrontendUrl()}/dashboard`;
+    return this.sendEmail(
+      user.email,
+      `Bienvenue sur ${process.env.EMAIL_NAME || 'TeamOff'} !`,
+      'welcome-activated',
+      {
+        prenom: user.prenom,
+        nom: user.nom,
+        dashboard_url: dashboardUrl,
+        content: `
+          <p>Bonjour ${user.prenom} ${user.nom},</p>
+          <p>Votre compte est maintenant actif ! Vous pouvez vous connecter et commencer à utiliser ${process.env.EMAIL_NAME || 'TeamOff'}.</p>
+          <p><a href="${dashboardUrl}">Accéder à mon espace</a></p>
+        `,
+      }
+    );
+  }
+
+  async sendWeeklyManagerSummary(manager, conges, startOfWeek, endOfWeek) {
+    const dayjs = require('dayjs');
+    const rows = conges.map((c) => {
+      const name = `${c.utilisateur?.prenom || ''} ${c.utilisateur?.nom || ''}`.trim();
+      const service = c.utilisateur?.service || '-';
+      const type = c.conge_type?.libelle || 'Congé';
+      return `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${name}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${service}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${type}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${c.date_debut}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${c.date_fin}</td></tr>`;
+    }).join('');
+
+    const periode = `${dayjs(startOfWeek).format('DD/MM')} – ${dayjs(endOfWeek).format('DD/MM/YYYY')}`;
+
+    return this.sendEmail(
+      manager.email,
+      `Résumé de la semaine — ${conges.length} congé(s) à venir`,
+      'weekly-manager-summary',
+      {
+        prenom: manager.prenom,
+        nom: manager.nom,
+        periode,
+        total: String(conges.length),
+        table_rows: rows,
+        dashboard_url: `${getFrontendUrl()}/conges`,
+        content: `<p>Bonjour ${manager.prenom},</p><p>${conges.length} congé(s) validé(s) pour la semaine ${periode}.</p>`,
+      }
+    );
+  }
 }
 
 module.exports = new EmailService();

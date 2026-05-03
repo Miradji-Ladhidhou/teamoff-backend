@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="UTF-8"/><title>Bienvenue — {{app_name}}</title></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
+  <tr><td align="center">
+    <table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
+      <tr><td style="background:#16a34a;padding:32px 40px;text-align:center;">
+        <h1 style="margin:0;color:#fff;font-size:24px;">{{app_name}}</h1>
+        <p style="margin:8px 0 0;color:#bbf7d0;font-size:14px;">Compte activé avec succès !</p>
+      </td></tr>
+      <tr><td style="padding:40px;">
+        <h2 style="color:#1e3a5f;margin:0 0 16px;">Bienvenue {{prenom}} !</h2>
+        <p style="color:#374151;line-height:1.6;">Votre compte est maintenant actif. Vous pouvez accéder à votre espace et gérer vos congés.</p>
+        <table cellpadding="0" cellspacing="0" style="margin:32px 0;">
+          <tr><td style="background:#2563eb;border-radius:6px;">
+            <a href="{{dashboard_url}}" style="display:inline-block;padding:14px 28px;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">Accéder à mon espace</a>
+          </td></tr>
+        </table>
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:32px 0;"/>
+        <p style="color:#9ca3af;font-size:12px;text-align:center;">© {{year}} {{signature}}</p>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>
