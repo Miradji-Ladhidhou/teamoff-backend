@@ -1,4 +1,6 @@
 require('dotenv').config();
+// Node.js 18+ préfère IPv6 par défaut — force IPv4 pour les envs sans IPv6 (ex: Render Free)
+require('dns').setDefaultResultOrder('ipv4first');
 const express = require('express');
 const logger = require('./utils/logger');
 const compression = require('compression');
