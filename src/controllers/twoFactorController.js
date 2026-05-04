@@ -1,7 +1,9 @@
 const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 const bcrypt = require('bcrypt');
-const { Utilisateur } = require('../models');
+const jwt = require('jsonwebtoken');
+const { Utilisateur, Entreprise } = require('../models');
+const authService = require('../services/authService');
 const logger = require('../utils/logger');
 
 async function setup2FA(req, res) {
@@ -78,7 +80,6 @@ async function verify2FA(req, res) {
     const { pending_token, code } = req.body;
     if (!pending_token || !code) return res.status(400).json({ message: 'Token et code requis' });
 
-    const jwt = require('jsonwebtoken');
     let decoded;
     try {
       decoded = jwt.verify(pending_token, process.env.JWT_SECRET);
@@ -101,10 +102,6 @@ async function verify2FA(req, res) {
     });
 
     if (!valid) return res.status(400).json({ message: 'Code invalide' });
-
-    const authService = require('../services/authService');
-    const { Entreprise } = require('../models');
-    const { sessionTimeout } = { sessionTimeout: 60 };
 
     const accessToken = authService.generateAccessToken(user);
     const refreshToken = jwt.sign(

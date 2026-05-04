@@ -19,7 +19,12 @@ const sseConnectionCount = new Map();
  * This route is intentionally placed BEFORE router.use(authJwt) to bypass header-only auth.
  */
 router.get('/stream', async (req, res) => {
-  const token = req.query.token;
+  // Accept token from query param (native EventSource) or Authorization header (fetchEventSource)
+  let token = req.query.token;
+  if (!token) {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) token = authHeader.slice(7);
+  }
   if (!token) return res.status(401).end();
 
   let tokenExpiry = 0;

@@ -74,7 +74,8 @@ async function createEntreprise(req, res, next) {
     });
 
     if (creator?.email) {
-      await emailService.sendEntrepriseCreatedEmail(creator, entreprise);
+      emailService.sendEntrepriseCreatedEmail(creator, entreprise)
+        .catch(err => logger.error('Erreur envoi email création entreprise', { error: err.message }));
     }
 
     res.status(201).json(entreprise);

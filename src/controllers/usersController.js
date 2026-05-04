@@ -100,7 +100,8 @@ async function updateOwnPasswordIfRequested(utilisateur, { currentPassword, newP
   utilisateur.password_hash = await bcrypt.hash(newPassword, 10);
 
   const notificationEmail = email && email !== utilisateur.email ? email : utilisateur.email;
-  await emailService.sendPasswordResetConfirmation(notificationEmail);
+  emailService.sendPasswordResetConfirmation(notificationEmail)
+    .catch(err => logger.error('Erreur envoi email confirmation mot de passe', { error: err.message }));
 }
 
 // ---------------------------------------------------------------------------
@@ -170,10 +171,12 @@ async function createUser(req, res, next) {
       process.env.JWT_SECRET,
       { expiresIn: '48h' }
     );
-    await emailService.sendSetPasswordEmail(newUser, entreprise, inviteToken);
     const inviteHash = crypto.createHash('sha256').update(inviteToken).digest('hex');
     await newUser.update({ invite_token_hash: inviteHash });
     await auditUser.created(newUser, req.user, req);
+    // Fire-and-forget — do not block the response on SMTP latency
+    emailService.sendSetPasswordEmail(newUser, entreprise, inviteToken)
+      .catch(err => logger.error('Erreur envoi email invitation', { error: err.message, user_id: newUser.id }));
 
     res.status(201).json({
       id: newUser.id,
@@ -317,11 +320,8 @@ async function updateUser(req, res, next) {
     if (password) {
       await validatePasswordPolicy(password);
       utilisateur.password_hash = await bcrypt.hash(password, 10);
-      try {
-        await emailService.sendPasswordResetConfirmation(email || utilisateur.email);
-      } catch (emailErr) {
-        logger.error('Erreur envoi email confirmation mot de passe', { error: emailErr.message });
-      }
+      emailService.sendPasswordResetConfirmation(email || utilisateur.email)
+        .catch(emailErr => logger.error('Erreur envoi email confirmation mot de passe', { error: emailErr.message }));
     }
 
     // Email de réactivation si le compte passe de inactif/en_attente → actif
@@ -473,7 +473,8 @@ async function resendInvitation(req, res, next) {
     await utilisateur.update({ invite_token_hash: inviteHash });
 
     const entreprise = await Entreprise.findByPk(utilisateur.entreprise_id, { attributes: ['id', 'nom'] });
-    await emailService.sendSetPasswordEmail(utilisateur, entreprise, inviteToken);
+    emailService.sendSetPasswordEmail(utilisateur, entreprise, inviteToken)
+      .catch(err => logger.error('Erreur envoi email resend', { error: err.message, user_id: utilisateur.id }));
 
     res.json({ message: 'Invitation renvoyée avec succès' });
   } catch (err) {

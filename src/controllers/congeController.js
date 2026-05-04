@@ -27,7 +27,10 @@ async function create(req, res, next) {
 }
 
 async function list(req, res, next) {
-  try { res.json(await congeService.getConges(req.user)); }
+  try {
+    const { items, total } = await congeService.getConges(req.user, req.query);
+    res.json({ items, total });
+  }
   catch(err) { next(err); }
 }
 

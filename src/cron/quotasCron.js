@@ -48,8 +48,8 @@ function initQuotasCron() {
     }
   });
 
-  // Chaque 1er du mois à 00:00
-  cron.schedule('0 0 1 * *', async () => {
+  // Chaque 1er du mois à 00:05 (décalé pour éviter le chevauchement avec runAnnualInit le 1er janvier)
+  cron.schedule('5 0 1 * *', async () => {
     try {
       await runMonthlyAccrual();
     } catch (error) {

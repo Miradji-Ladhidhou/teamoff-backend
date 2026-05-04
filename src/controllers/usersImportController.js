@@ -100,12 +100,9 @@ async function importUsersCSV(req, res, next) {
         });
       });
 
-      try {
-        const entreprise = await Entreprise.findByPk(row.entreprise_id);
-        await emailService.sendWelcomeEmail(newUser, entreprise, tempPassword);
-      } catch (emailErr) {
-        logger.error('Erreur envoi email bienvenue import CSV', { email: newUser.email, error: emailErr.message });
-      }
+      const entreprise = await Entreprise.findByPk(row.entreprise_id);
+      emailService.sendWelcomeEmail(newUser, entreprise, tempPassword)
+        .catch(emailErr => logger.error('Erreur envoi email bienvenue import CSV', { email: newUser.email, error: emailErr.message }));
 
       created.push({ id: newUser.id, email: newUser.email, nom: newUser.nom, prenom: newUser.prenom });
     }

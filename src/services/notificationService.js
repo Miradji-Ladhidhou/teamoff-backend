@@ -163,7 +163,8 @@ async function creerNotification({
   utilisateur_id,
   type,
   message,
-  url = null
+  url = null,
+  transaction = null
 }) {
   const notif = await Notification.create({
     entreprise_id,
@@ -171,7 +172,7 @@ async function creerNotification({
     type,
     message,
     url
-  });
+  }, transaction ? { transaction } : {});
 
   sseManager.sendToUser(utilisateur_id, 'notification', {
     id: notif.id,

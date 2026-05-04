@@ -711,7 +711,8 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
         utilisateur_id: manager.id,
         type: 'conge_demande',
         message: `Nouvelle demande de congé de ${utilisateurNomComplet} (${date_debut} - ${date_fin})`,
-        url: `/conges/${conge.id}`
+        url: `/conges/${conge.id}`,
+        transaction: t
       });
     }
 
@@ -738,7 +739,8 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
         utilisateur_id: admin.id,
         type: 'conge_demande',
         message: `Nouvelle demande de congé de ${utilisateurNomComplet} (${date_debut} - ${date_fin})`,
-        url: `/conges/${conge.id}`
+        url: `/conges/${conge.id}`,
+        transaction: t
       });
     }
 
@@ -764,7 +766,8 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
         utilisateur_id: utilisateur.id,
         type: 'conge_cree',
         message: `Votre congé du ${date_debut} au ${date_fin} ${approvalWorkflow === 'auto' ? 'a été validé automatiquement' : 'est en attente de validation'}`,
-        url: `/conges/${conge.id}`
+        url: `/conges/${conge.id}`,
+        transaction: t
       });
     }
 
@@ -774,7 +777,8 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
         utilisateur_id: reqUser.id,
         type: 'conge_conflit_warning',
         message: overlapWarningPayload.message,
-        url: `/conges/${conge.id}`
+        url: `/conges/${conge.id}`,
+        transaction: t
       });
     }
 
@@ -917,7 +921,8 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
           message: hasOverlapAtValidation
             ? `ALERTE chevauchement: congé de ${utilisateur.nom} validé par manager (${conge.date_debut} - ${conge.date_fin})`
             : `Congé de ${utilisateur.nom} validé par manager (${conge.date_debut} - ${conge.date_fin})`,
-          url: `/conges/${conge.id}`
+          url: `/conges/${conge.id}`,
+          transaction: t
         });
       }
 
@@ -967,7 +972,8 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
             utilisateur_id: utilisateur.id,
             type: 'conge_valide_final',
             message: `Votre congé du ${conge.date_debut} au ${conge.date_fin} a été approuvé`,
-            url: `/conges/${conge.id}`
+            url: `/conges/${conge.id}`,
+            transaction: t
           });
         }
       }
@@ -1031,7 +1037,8 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
           utilisateur_id: utilisateur.id,
           type: 'conge_valide_final',
           message: `Votre congé du ${conge.date_debut} au ${conge.date_fin} a été approuvé`,
-          url: `/conges/${conge.id}`
+          url: `/conges/${conge.id}`,
+          transaction: t
         });
       }
 
@@ -1117,7 +1124,8 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
         utilisateur_id: utilisateur.id,
         type: 'conge_refuse',
         message: `Votre congé du ${conge.date_debut} au ${conge.date_fin} a été refusé`,
-        url: `/conges/${conge.id}`
+        url: `/conges/${conge.id}`,
+        transaction: t
       });
     }
 
@@ -1131,7 +1139,7 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
 // ----------------------------
 // Liste et détails
 // ----------------------------
-async function getConges(user) {
+async function getConges(user, query = {}) {
   const where = {};
   if (user.role === 'employe') {
     where.utilisateur_id = user.id;
@@ -1139,8 +1147,19 @@ async function getConges(user) {
     where.entreprise_id = user.entreprise_id;
   }
 
-  const conges = await Conge.findAll({
+  // Filtres optionnels
+  if (query.statut) where.statut = query.statut;
+  if (query.conge_type_id) where.conge_type_id = query.conge_type_id;
+  if (query.utilisateur_id && user.role !== 'employe') where.utilisateur_id = query.utilisateur_id;
+
+  const page  = Math.max(parseInt(query.page,  10) || 1, 1);
+  const limit = Math.min(Math.max(parseInt(query.limit, 10) || 200, 1), 500);
+  const offset = (page - 1) * limit;
+
+  const { count: total, rows: congesRows } = await Conge.findAndCountAll({
     where,
+    limit,
+    offset,
     include: [
       {
         model: Utilisateur,
@@ -1161,10 +1180,11 @@ async function getConges(user) {
     order: [['created_at', 'DESC']]
   });
 
-  if (conges.length === 0) {
-    return [];
+  if (congesRows.length === 0) {
+    return { items: [], total };
   }
 
+  const conges = congesRows;
   const entrepriseIds = [...new Set(conges.map((c) => c.entreprise_id).filter(Boolean))];
   const joursFeriesByEntreprise = new Map();
   const blockedDaysByEntreprise = new Map();
@@ -1219,7 +1239,7 @@ async function getConges(user) {
     soldeByKey.set(key, Number.isFinite(solde) ? solde : null);
   });
 
-  return conges.map((conge) => {
+  const items = conges.map((conge) => {
     const plainConge = conge.toJSON();
     const annee = dayjs(conge.date_debut).year();
     const compteurKey = `${conge.utilisateur_id}::${conge.conge_type_id}::${annee}`;
@@ -1245,6 +1265,7 @@ async function getConges(user) {
       date_demande: plainConge.created_at || plainConge.createdAt || null
     };
   });
+  return { items, total };
 }
 
 async function getCongeById(id, user) {
@@ -1617,7 +1638,8 @@ async function updateConge(id, data, user) {
         utilisateur_id: employe.id,
         type: 'conge_modifie_admin',
         message: `Votre congé du ${previousDateDebut} au ${previousDateFin} a été modifié par ${adminNom} (nouvelle période : ${nextDateDebut} au ${nextDateFin})`,
-        url: `/conges/${conge.id}`
+        url: `/conges/${conge.id}`,
+        transaction: t
       });
     }
 
@@ -1723,7 +1745,8 @@ async function deleteConge(id, user, options = {}) {
         utilisateur_id: employe.id,
         type: 'conge_annule_admin',
         message: `Votre congé du ${conge.date_debut} au ${conge.date_fin} a été annulé par ${adminNom}. Motif: ${cancellationComment}`,
-        url: `/conges/${conge.id}`
+        url: `/conges/${conge.id}`,
+        transaction: t
       });
     }
 
