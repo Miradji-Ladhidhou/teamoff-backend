@@ -2,6 +2,7 @@ const { Notification, Utilisateur } = require('../models');
 const logger = require('../utils/logger');
 const sseManager = require('./sseManager');
 const nodemailer = require('nodemailer');
+const dns = require('dns').promises;
 const fs = require('fs').promises;
 const systemSettingsService = require('./systemSettingsService');
 const path = require('path');
@@ -11,29 +12,42 @@ const APP_FROM = process.env.EMAIL_FROM || process.env.MAIL_USER;
 const APP_FRONTEND_URL = process.env.FRONTEND_URL?.split(',')[0].trim() || 'http://localhost:3001';
 const DEFAULT_SIGNATURE = process.env.EMAIL_SIGNATURE || `L'equipe ${APP_NAME}`;
 
+async function resolveIPv4(hostname) {
+  try {
+    const addresses = await dns.resolve4(hostname);
+    return addresses[0] || hostname;
+  } catch {
+    return hostname;
+  }
+}
+
 /**
  * Crée un transporter SMTP dynamique depuis la config DB (avec fallback env vars).
- * Appelé à chaque envoi pour refléter les changements de config admin.
+ * Résout le hostname en IPv4 explicitement pour éviter ENETUNREACH sur Render Free.
  */
 async function createTransporter() {
   try {
     const settings = await systemSettingsService.getSettings();
+    const hostname = settings.smtpHost || process.env.MAIL_HOST;
+    const host = await resolveIPv4(hostname);
     return nodemailer.createTransport({
-      host: settings.smtpHost || process.env.MAIL_HOST,
+      host,
       port: Number(settings.smtpPort || process.env.MAIL_PORT || 587),
       secure: process.env.MAIL_SECURE === 'true',
-      family: 4, // force IPv4 — Render Free bloque IPv6 sortant
+      tls: { servername: hostname },
       auth: {
         user: settings.smtpUser || process.env.MAIL_USER,
         pass: settings.smtpPassword || process.env.MAIL_PASS,
       },
     });
   } catch {
+    const hostname = process.env.MAIL_HOST;
+    const host = await resolveIPv4(hostname);
     return nodemailer.createTransport({
-      host: process.env.MAIL_HOST,
+      host,
       port: Number(process.env.MAIL_PORT || 587),
       secure: process.env.MAIL_SECURE === 'true',
-      family: 4,
+      tls: { servername: hostname },
       auth: {
         user: process.env.MAIL_USER,
         pass: process.env.MAIL_PASS,

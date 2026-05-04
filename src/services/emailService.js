@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const dns = require('dns').promises;
 const fs = require('fs').promises;
 const path = require('path');
 const { Utilisateur, Entreprise } = require('../models');
@@ -29,12 +30,19 @@ class EmailService {
     };
   }
 
-  createTransporter(smtpConfig) {
+  async createTransporter(smtpConfig) {
+    const hostname = smtpConfig.host;
+    let host = hostname;
+    try {
+      const addresses = await dns.resolve4(hostname);
+      if (addresses.length) host = addresses[0];
+    } catch { /* garde le hostname si resolve échoue */ }
+
     return nodemailer.createTransport({
-      host: smtpConfig.host,
+      host,
       port: Number(smtpConfig.port),
       secure: Boolean(smtpConfig.secure),
-      family: 4, // force IPv4 — Render Free bloque IPv6 sortant
+      tls: { servername: hostname },
       auth: {
         user: smtpConfig.user,
         pass: smtpConfig.pass,
@@ -100,7 +108,7 @@ class EmailService {
         return { success: true, test: true };
       }
 
-      const transporter = this.createTransporter(smtpConfig);
+      const transporter = await this.createTransporter(smtpConfig);
       const info = await transporter.sendMail(mailOptions);
       emailLog(`Email envoye a ${to}: ${info.messageId}`);
       return { success: true, messageId: info.messageId };
