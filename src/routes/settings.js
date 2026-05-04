@@ -383,6 +383,33 @@ router.post('/actions/restart', async (req, res) => {
   });
 });
 
+router.post('/actions/test-smtp', async (req, res, next) => {
+  try {
+    const nodemailer = require('nodemailer');
+    const smtpConfig = await emailService.getSmtpConfig();
+
+    if (!smtpConfig.host || !smtpConfig.user || !smtpConfig.pass) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Configuration SMTP incomplète (host/user/pass manquants)',
+        config: { host: smtpConfig.host, port: smtpConfig.port, user: smtpConfig.user, hasPass: Boolean(smtpConfig.pass) },
+      });
+    }
+
+    const transporter = nodemailer.createTransport({
+      host: smtpConfig.host,
+      port: Number(smtpConfig.port),
+      secure: Boolean(smtpConfig.secure),
+      auth: { user: smtpConfig.user, pass: smtpConfig.pass },
+    });
+
+    await transporter.verify();
+    res.json({ ok: true, message: 'Connexion SMTP établie avec succès', config: { host: smtpConfig.host, port: smtpConfig.port, user: smtpConfig.user } });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error.message, code: error.code });
+  }
+});
+
 router.post('/actions/test-email', async (req, res, next) => {
   try {
     const { to } = req.body || {};

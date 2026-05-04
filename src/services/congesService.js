@@ -10,6 +10,7 @@ const { Op } = require('sequelize');
 const dayjs = require('dayjs');
 const isSameOrBefore = require('dayjs/plugin/isSameOrBefore');
 const { validateUUID, validateDateRange, validateDemiJournee } = require('../utils/validation');
+const logger = require('../utils/logger');
 
 dayjs.extend(isSameOrBefore);
 
@@ -18,6 +19,12 @@ const FRONTEND_URL = process.env.FRONTEND_URL || '';
 function buildCongeUrl(congeId) {
   const path = `/conges/${congeId}`;
   return FRONTEND_URL ? `${FRONTEND_URL}${path}` : path;
+}
+
+function fireEmail(params) {
+  notificationService.sendEmail(params).catch(err =>
+    logger.error('Erreur email conge', { error: err.message })
+  );
 }
 
 function safeNumber(value) {
@@ -689,7 +696,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     const utilisateurNomComplet = `${utilisateur.prenom || ''} ${utilisateur.nom || ''}`.trim() || utilisateur.nom;
 
     if (shouldNotifyOnCreate && manager) {
-      await notificationService.sendEmail({
+      fireEmail({
         to: manager.email,
         subject: `Nouvelle demande de conge - ${utilisateurNomComplet}`,
         templateName: 'leave-new-request-manager',
@@ -717,7 +724,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     }
 
     if (shouldNotifyOnCreate && admin) {
-      await notificationService.sendEmail({
+      fireEmail({
         to: admin.email,
         subject: `Nouvelle demande de conge - ${utilisateurNomComplet}`,
         templateName: 'leave-new-request-manager',
@@ -746,7 +753,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
 
     // Notification à l'employé : congé créé
     if (shouldNotifyOnCreate) {
-      await notificationService.sendEmail({
+      fireEmail({
         to: utilisateur.email,
         subject: 'Confirmation de creation de votre demande de conge',
         templateName: 'leave-created-employee',
@@ -895,7 +902,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise' }
       });
       if (admin) {
-        await notificationService.sendEmail({
+        fireEmail({
           to: admin.email,
           subject: hasOverlapAtValidation
             ? 'ALERTE chevauchement - validation finale requise'
@@ -955,7 +962,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         }
 
         if (leaveRules.notification_settings.on_validate) {
-          await notificationService.sendEmail({
+          fireEmail({
             to: utilisateur.email,
             subject: 'Votre demande de conge est approuvee',
             templateName: 'leave-approved-employee',
@@ -1020,7 +1027,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
 
       // Notification à l'employé
       if (leaveRules.notification_settings.on_validate) {
-        await notificationService.sendEmail({
+        fireEmail({
           to: utilisateur.email,
           subject: 'Votre demande de conge est approuvee',
           templateName: 'leave-approved-employee',
@@ -1107,7 +1114,7 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
 
     // Notification à l'employé
     if (leaveRules.notification_settings.on_reject) {
-      await notificationService.sendEmail({
+      fireEmail({
         to: utilisateur.email,
         subject: 'Votre demande de conge a ete refusee',
         templateName: 'leave-rejected-employee',
@@ -1599,7 +1606,7 @@ async function updateConge(id, data, user) {
       const recipients = [manager, admin].filter((recipient) => recipient?.email);
 
       for (const recipient of recipients) {
-        await notificationService.sendEmail({
+        fireEmail({
           to: recipient.email,
           subject: `Demande de conge modifiee - ${demandeurNom}`,
           templateName: 'leave-updated-before-approval',
@@ -1620,7 +1627,7 @@ async function updateConge(id, data, user) {
     if (isFinalValidated && (user?.role === 'admin_entreprise' || user?.role === 'super_admin')) {
       const adminNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Administrateur';
       if (employe.email) {
-        await notificationService.sendEmail({
+        fireEmail({
           to: employe.email,
           subject: 'Mise a jour de votre conge valide',
           templateName: 'leave-updated-employee',
@@ -1726,7 +1733,7 @@ async function deleteConge(id, user, options = {}) {
     if ((isManagerValidated || isFinalValidated) && isAdminLevel) {
       const adminNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Administrateur';
       if (employe.email) {
-        await notificationService.sendEmail({
+        fireEmail({
           to: employe.email,
           subject: 'Annulation de votre conge valide',
           templateName: 'leave-cancelled-employee',

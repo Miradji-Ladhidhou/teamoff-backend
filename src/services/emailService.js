@@ -34,6 +34,7 @@ class EmailService {
       host: smtpConfig.host,
       port: Number(smtpConfig.port),
       secure: Boolean(smtpConfig.secure),
+      family: 4, // force IPv4 — Render Free bloque IPv6 sortant
       auth: {
         user: smtpConfig.user,
         pass: smtpConfig.pass,

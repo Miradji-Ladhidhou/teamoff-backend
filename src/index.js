@@ -106,9 +106,11 @@ app.use(metricsMiddleware);
 
 app.use(generalLimiter);
 
-// 30s timeout sur toutes les requêtes non-SSE
+// Timeout adaptatif : 60s pour les routes admin/settings (cold start Render), 30s sinon
 app.use((req, res, next) => {
   if (req.path.includes('/stream')) return next();
+  const isAdminRoute = req.path.startsWith('/api/settings') || req.path.startsWith('/api/superadmin');
+  const timeoutMs = isAdminRoute ? 60_000 : 30_000;
   const ac = new AbortController();
   req.signal = ac.signal;
   const timer = setTimeout(() => {
@@ -118,7 +120,7 @@ app.use((req, res, next) => {
       res.setHeader('Retry-After', '30');
       res.status(503).json({ message: 'Délai de traitement dépassé' });
     }
-  }, 30_000);
+  }, timeoutMs);
   res.on('finish', () => clearTimeout(timer));
   res.on('close', () => clearTimeout(timer));
   next();

@@ -22,6 +22,7 @@ async function createTransporter() {
       host: settings.smtpHost || process.env.MAIL_HOST,
       port: Number(settings.smtpPort || process.env.MAIL_PORT || 587),
       secure: process.env.MAIL_SECURE === 'true',
+      family: 4, // force IPv4 — Render Free bloque IPv6 sortant
       auth: {
         user: settings.smtpUser || process.env.MAIL_USER,
         pass: settings.smtpPassword || process.env.MAIL_PASS,
@@ -32,6 +33,7 @@ async function createTransporter() {
       host: process.env.MAIL_HOST,
       port: Number(process.env.MAIL_PORT || 587),
       secure: process.env.MAIL_SECURE === 'true',
+      family: 4,
       auth: {
         user: process.env.MAIL_USER,
         pass: process.env.MAIL_PASS,
