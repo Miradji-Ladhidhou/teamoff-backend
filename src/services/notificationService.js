@@ -161,25 +161,38 @@ async function sendEmail({ to, subject, html, templateName, data }) {
 
   const text = htmlToText(professionalHtml);
 
-  // Gmail OAuth2 — priorité 1
+  // Gmail API HTTP (googleapis) — priorité 1, HTTPS port 443, jamais bloqué
   if (process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN) {
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        type: 'OAuth2',
-        user: process.env.MAIL_USER,
-        clientId: process.env.GMAIL_CLIENT_ID,
-        clientSecret: process.env.GMAIL_CLIENT_SECRET,
-        refreshToken: process.env.GMAIL_REFRESH_TOKEN,
-      },
-    });
-    return transporter.sendMail({
-      from: `"${APP_NAME}" <${APP_FROM}>`,
-      to,
-      subject: normalizedSubject,
-      html: professionalHtml,
+    const { google } = require('googleapis');
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GMAIL_CLIENT_ID,
+      process.env.GMAIL_CLIENT_SECRET
+    );
+    oauth2Client.setCredentials({ refresh_token: process.env.GMAIL_REFRESH_TOKEN });
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    const boundary = `boundary_${Date.now()}`;
+    const rawParts = [
+      `From: "${APP_NAME}" <${APP_FROM}>`,
+      `To: ${Array.isArray(to) ? to.join(', ') : to}`,
+      `Subject: =?UTF-8?B?${Buffer.from(normalizedSubject).toString('base64')}?=`,
+      'MIME-Version: 1.0',
+      `Content-Type: multipart/alternative; boundary="${boundary}"`,
+      '',
+      `--${boundary}`,
+      'Content-Type: text/plain; charset=UTF-8',
+      '',
       text,
-    });
+      '',
+      `--${boundary}`,
+      'Content-Type: text/html; charset=UTF-8',
+      '',
+      professionalHtml,
+      '',
+      `--${boundary}--`,
+    ];
+    const raw = Buffer.from(rawParts.join('\r\n')).toString('base64url');
+    return gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
   }
 
   // Resend — priorité 2
