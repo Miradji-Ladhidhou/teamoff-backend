@@ -161,12 +161,33 @@ async function sendEmail({ to, subject, html, templateName, data }) {
 
   const text = htmlToText(professionalHtml);
 
+  // Gmail OAuth2 — priorité 1
+  if (process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN) {
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        type: 'OAuth2',
+        user: process.env.MAIL_USER,
+        clientId: process.env.GMAIL_CLIENT_ID,
+        clientSecret: process.env.GMAIL_CLIENT_SECRET,
+        refreshToken: process.env.GMAIL_REFRESH_TOKEN,
+      },
+    });
+    return transporter.sendMail({
+      from: `"${APP_NAME}" <${APP_FROM}>`,
+      to,
+      subject: normalizedSubject,
+      html: professionalHtml,
+      text,
+    });
+  }
+
+  // Resend — priorité 2
   if (process.env.RESEND_API_KEY) {
     const { Resend } = require('resend');
     const resend = new Resend(process.env.RESEND_API_KEY);
-    const fromAddr = APP_FROM || process.env.MAIL_USER;
     const { data: sent, error } = await resend.emails.send({
-      from: `${APP_NAME} <${fromAddr}>`,
+      from: `${APP_NAME} <${APP_FROM}>`,
       to: Array.isArray(to) ? to : [to],
       subject: normalizedSubject,
       html: professionalHtml,

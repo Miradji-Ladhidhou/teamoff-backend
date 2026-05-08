@@ -93,12 +93,36 @@ class EmailService {
 
       const html = await this.buildHtml(templateName, data);
       const fromName = process.env.EMAIL_NAME || 'TeamOff';
+      const fromAddr = process.env.EMAIL_FROM || process.env.MAIL_USER;
 
-      // Resend (HTTP API) — utilisé quand SMTP est bloqué (ex: Render Free)
+      // Gmail OAuth2 (HTTPS) — priorité 1, fonctionne sur Render Free
+      if (process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN) {
+        const transporter = nodemailer.createTransport({
+          service: 'gmail',
+          auth: {
+            type: 'OAuth2',
+            user: process.env.MAIL_USER,
+            clientId: process.env.GMAIL_CLIENT_ID,
+            clientSecret: process.env.GMAIL_CLIENT_SECRET,
+            refreshToken: process.env.GMAIL_REFRESH_TOKEN,
+          },
+        });
+        const info = await transporter.sendMail({
+          from: `"${fromName}" <${fromAddr}>`,
+          to,
+          subject,
+          html,
+          text: this.htmlToText(html),
+          ...(attachments.length > 0 && { attachments }),
+        });
+        emailLog(`Email OAuth2 envoyé à ${to}: ${info.messageId}`);
+        return { success: true, messageId: info.messageId };
+      }
+
+      // Resend (HTTP API) — priorité 2
       if (process.env.RESEND_API_KEY) {
         const { Resend } = require('resend');
         const resend = new Resend(process.env.RESEND_API_KEY);
-        const fromAddr = process.env.EMAIL_FROM || process.env.MAIL_USER;
         const { data: sent, error } = await resend.emails.send({
           from: `${fromName} <${fromAddr}>`,
           to: Array.isArray(to) ? to : [to],
@@ -106,10 +130,7 @@ class EmailService {
           html,
           text: this.htmlToText(html),
           ...(attachments.length > 0 && {
-            attachments: attachments.map(a => ({
-              filename: a.filename,
-              content: a.content,
-            })),
+            attachments: attachments.map(a => ({ filename: a.filename, content: a.content })),
           }),
         });
         if (error) throw new Error(error.message || JSON.stringify(error));
@@ -117,10 +138,10 @@ class EmailService {
         return { success: true, messageId: sent?.id };
       }
 
-      // Fallback SMTP (dev local)
+      // SMTP — priorité 3 (dev local)
       const smtpConfig = await this.getSmtpConfig();
       if (!smtpConfig.host || !smtpConfig.user || !smtpConfig.pass) {
-        throw new Error('Configuration SMTP incomplete (host/user/pass requis).');
+        throw new Error('Configuration email manquante (GMAIL_CLIENT_ID, RESEND_API_KEY ou SMTP requis).');
       }
 
       const mailOptions = {
