@@ -328,7 +328,7 @@ async function setPassword(token, password, confirmPassword) {
   await validatePasswordPolicy(password);
 
   user.password_hash = await bcrypt.hash(password, 10);
-  user.statut = 'actif';
+  if (user.statut !== 'inactif') user.statut = 'actif';
   await user.save();
   await user.update({ invite_token_hash: null });
 

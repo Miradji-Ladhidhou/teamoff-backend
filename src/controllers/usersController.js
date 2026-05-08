@@ -108,7 +108,7 @@ async function updateOwnPasswordIfRequested(utilisateur, { currentPassword, newP
 // Création utilisateur
 // ---------------------------------------------------------------------------
 async function createUser(req, res, next) {
-  let { nom, prenom, email, role, entreprise_id, service, date_embauche } = req.body;
+  let { nom, prenom, email, role, entreprise_id, service, date_embauche, statut: requestedStatut } = req.body;
   if (typeof nom === 'string') nom = sanitize(nom);
   if (typeof prenom === 'string') prenom = sanitize(prenom);
   const user = req.user;
@@ -150,7 +150,7 @@ async function createUser(req, res, next) {
         entreprise_id,
         date_embauche: normalizedHiringDate || null,
         password_hash: placeholderHash,
-        statut: 'en_attente',
+        statut: requestedStatut === 'inactif' ? 'inactif' : 'en_attente',
       }, { transaction: t });
 
       await quotasService.initializeUserCounters({
