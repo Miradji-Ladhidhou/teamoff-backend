@@ -143,7 +143,7 @@ function wrapProfessionalEmail({ subject, html }) {
 }
 
 /**
- * Envoi d'email
+ * Envoi d'email — Resend (HTTPS) si RESEND_API_KEY défini, sinon SMTP
  */
 async function sendEmail({ to, subject, html, templateName, data }) {
   if (!to) {
@@ -160,6 +160,21 @@ async function sendEmail({ to, subject, html, templateName, data }) {
   }
 
   const text = htmlToText(professionalHtml);
+
+  if (process.env.RESEND_API_KEY) {
+    const { Resend } = require('resend');
+    const resend = new Resend(process.env.RESEND_API_KEY);
+    const fromAddr = APP_FROM || process.env.MAIL_USER;
+    const { data: sent, error } = await resend.emails.send({
+      from: `${APP_NAME} <${fromAddr}>`,
+      to: Array.isArray(to) ? to : [to],
+      subject: normalizedSubject,
+      html: professionalHtml,
+      text,
+    });
+    if (error) throw new Error(error.message || JSON.stringify(error));
+    return { id: sent?.id };
+  }
 
   const transporter = await createTransporter();
   return transporter.sendMail({

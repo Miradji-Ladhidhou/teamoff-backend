@@ -66,36 +66,65 @@ class EmailService {
     }
   }
 
+  async buildHtml(templateName, data) {
+    let html;
+    try {
+      const templatePath = path.join(__dirname, '../templates/emails', `${templateName}.html`);
+      html = await fs.readFile(templatePath, 'utf8');
+    } catch {
+      if (!data.content) {
+        data.content = this.buildFallbackContent(templateName, '', data);
+      }
+      html = await this.getDefaultTemplate();
+    }
+    return this.replaceTemplateVariables(html, data);
+  }
+
   // Méthode générique d'envoi d'email
   // attachments: tableau nodemailer [{ filename, content (Buffer), contentType }]
   async sendEmail(to, subject, templateName, data = {}, attachments = []) {
     try {
-      const smtpConfig = await this.getSmtpConfig();
+      if (!data.signature) data.signature = 'TeamOff SaaS';
 
+      if (process.env.MAIL_SIMULATE === 'true') {
+        emailLog('Email simule:', { to, subject, data });
+        return { success: true, test: true };
+      }
+
+      const html = await this.buildHtml(templateName, data);
+      const fromName = process.env.EMAIL_NAME || 'TeamOff';
+
+      // Resend (HTTP API) — utilisé quand SMTP est bloqué (ex: Render Free)
+      if (process.env.RESEND_API_KEY) {
+        const { Resend } = require('resend');
+        const resend = new Resend(process.env.RESEND_API_KEY);
+        const fromAddr = process.env.EMAIL_FROM || process.env.MAIL_USER;
+        const { data: sent, error } = await resend.emails.send({
+          from: `${fromName} <${fromAddr}>`,
+          to: Array.isArray(to) ? to : [to],
+          subject,
+          html,
+          text: this.htmlToText(html),
+          ...(attachments.length > 0 && {
+            attachments: attachments.map(a => ({
+              filename: a.filename,
+              content: a.content,
+            })),
+          }),
+        });
+        if (error) throw new Error(error.message || JSON.stringify(error));
+        emailLog(`Email Resend envoyé à ${to}: ${sent?.id}`);
+        return { success: true, messageId: sent?.id };
+      }
+
+      // Fallback SMTP (dev local)
+      const smtpConfig = await this.getSmtpConfig();
       if (!smtpConfig.host || !smtpConfig.user || !smtpConfig.pass) {
         throw new Error('Configuration SMTP incomplete (host/user/pass requis).');
       }
 
-      // Ajout/forçage de la signature TeamOff SaaS si absente
-      if (!data.signature) {
-        data.signature = 'TeamOff SaaS';
-      }
-
-      let html;
-      try {
-        const templatePath = path.join(__dirname, '../templates/emails', `${templateName}.html`);
-        html = await fs.readFile(templatePath, 'utf8');
-      } catch {
-        if (!data.content) {
-          data.content = this.buildFallbackContent(templateName, subject, data);
-        }
-        html = await this.getDefaultTemplate();
-      }
-
-      html = this.replaceTemplateVariables(html, data);
-
       const mailOptions = {
-        from: `"${process.env.EMAIL_NAME}" <${smtpConfig.from || smtpConfig.user}>`,
+        from: `"${fromName}" <${smtpConfig.from || smtpConfig.user}>`,
         to,
         subject,
         html,
@@ -103,14 +132,9 @@ class EmailService {
         ...(attachments.length > 0 && { attachments }),
       };
 
-      if (process.env.MAIL_SIMULATE === 'true') {
-        emailLog('Email simule:', { to, subject, data });
-        return { success: true, test: true };
-      }
-
       const transporter = await this.createTransporter(smtpConfig);
       const info = await transporter.sendMail(mailOptions);
-      emailLog(`Email envoye a ${to}: ${info.messageId}`);
+      emailLog(`Email SMTP envoyé à ${to}: ${info.messageId}`);
       return { success: true, messageId: info.messageId };
     } catch (error) {
       logger.error('email_send_error', { error: error.message });
