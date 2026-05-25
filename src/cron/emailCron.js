@@ -49,7 +49,7 @@ async function runPendingLeaveReminders() {
 
   const conges = await Conge.findAll({
     where: {
-      statut: 'en_attente',
+      statut: 'en_attente_manager',
       created_at: { [Op.lte]: threshold },
     },
     include: [
