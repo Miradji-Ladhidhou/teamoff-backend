@@ -105,26 +105,62 @@ class EmailService {
         oauth2Client.setCredentials({ refresh_token: process.env.GMAIL_REFRESH_TOKEN });
         const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
-        const boundary = `boundary_${Date.now()}`;
+        const hasAttachments = attachments && attachments.length > 0;
+        const outerBoundary = `outer_${Date.now()}`;
+        const innerBoundary = `inner_${Date.now()}`;
+
         const rawParts = [
           `From: "${fromName}" <${fromAddr}>`,
           `To: ${Array.isArray(to) ? to.join(', ') : to}`,
           `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
           'MIME-Version: 1.0',
-          `Content-Type: multipart/alternative; boundary="${boundary}"`,
+          hasAttachments
+            ? `Content-Type: multipart/mixed; boundary="${outerBoundary}"`
+            : `Content-Type: multipart/alternative; boundary="${innerBoundary}"`,
           '',
-          `--${boundary}`,
+        ];
+
+        if (hasAttachments) {
+          // Wrapper multipart/mixed contenant la partie alternative + les pièces jointes
+          rawParts.push(
+            `--${outerBoundary}`,
+            `Content-Type: multipart/alternative; boundary="${innerBoundary}"`,
+            '',
+          );
+        }
+
+        rawParts.push(
+          `--${innerBoundary}`,
           'Content-Type: text/plain; charset=UTF-8',
           '',
           this.htmlToText(html),
           '',
-          `--${boundary}`,
+          `--${innerBoundary}`,
           'Content-Type: text/html; charset=UTF-8',
           '',
           html,
           '',
-          `--${boundary}--`,
-        ];
+          `--${innerBoundary}--`,
+        );
+
+        if (hasAttachments) {
+          for (const att of attachments) {
+            const b64 = Buffer.isBuffer(att.content)
+              ? att.content.toString('base64')
+              : Buffer.from(att.content).toString('base64');
+            rawParts.push(
+              '',
+              `--${outerBoundary}`,
+              `Content-Type: ${att.contentType || 'application/octet-stream'}; name="${att.filename}"`,
+              'Content-Transfer-Encoding: base64',
+              `Content-Disposition: attachment; filename="${att.filename}"`,
+              '',
+              b64,
+            );
+          }
+          rawParts.push(`--${outerBoundary}--`);
+        }
+
         const raw = Buffer.from(rawParts.join('\r\n')).toString('base64url');
         const sent = await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
         emailLog(`Email Gmail API envoyé à ${to}: ${sent.data.id}`);
