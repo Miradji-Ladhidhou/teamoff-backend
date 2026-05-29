@@ -98,6 +98,8 @@ class EmailService {
       // Gmail API HTTP (googleapis) — priorité 1, HTTPS port 443, jamais bloqué
       if (process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN) {
         const { google } = require('googleapis');
+        const MailComposer = require('nodemailer/lib/mail-composer');
+
         const oauth2Client = new google.auth.OAuth2(
           process.env.GMAIL_CLIENT_ID,
           process.env.GMAIL_CLIENT_SECRET
@@ -105,63 +107,30 @@ class EmailService {
         oauth2Client.setCredentials({ refresh_token: process.env.GMAIL_REFRESH_TOKEN });
         const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
-        const hasAttachments = attachments && attachments.length > 0;
-        const outerBoundary = `outer_${Date.now()}`;
-        const innerBoundary = `inner_${Date.now()}`;
-
-        const rawParts = [
-          `From: "${fromName}" <${fromAddr}>`,
-          `To: ${Array.isArray(to) ? to.join(', ') : to}`,
-          `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
-          'MIME-Version: 1.0',
-          hasAttachments
-            ? `Content-Type: multipart/mixed; boundary="${outerBoundary}"`
-            : `Content-Type: multipart/alternative; boundary="${innerBoundary}"`,
-          '',
-        ];
-
-        if (hasAttachments) {
-          // Wrapper multipart/mixed contenant la partie alternative + les pièces jointes
-          rawParts.push(
-            `--${outerBoundary}`,
-            `Content-Type: multipart/alternative; boundary="${innerBoundary}"`,
-            '',
-          );
-        }
-
-        rawParts.push(
-          `--${innerBoundary}`,
-          'Content-Type: text/plain; charset=UTF-8',
-          '',
-          this.htmlToText(html),
-          '',
-          `--${innerBoundary}`,
-          'Content-Type: text/html; charset=UTF-8',
-          '',
+        // Utilise nodemailer/MailComposer pour construire le MIME (gère les PJ correctement)
+        const mailOptions = {
+          from: `"${fromName}" <${fromAddr}>`,
+          to: Array.isArray(to) ? to.join(', ') : to,
+          subject,
           html,
-          '',
-          `--${innerBoundary}--`,
-        );
-
-        if (hasAttachments) {
-          for (const att of attachments) {
-            const b64 = Buffer.isBuffer(att.content)
-              ? att.content.toString('base64')
-              : Buffer.from(att.content).toString('base64');
-            rawParts.push(
-              '',
-              `--${outerBoundary}`,
-              `Content-Type: ${att.contentType || 'application/octet-stream'}; name="${att.filename}"`,
-              'Content-Transfer-Encoding: base64',
-              `Content-Disposition: attachment; filename="${att.filename}"`,
-              '',
-              b64,
-            );
-          }
-          rawParts.push(`--${outerBoundary}--`);
+          text: this.htmlToText(html),
+        };
+        if (attachments && attachments.length > 0) {
+          mailOptions.attachments = attachments.map((a) => ({
+            filename: a.filename,
+            content: a.content,
+            contentType: a.contentType || 'application/octet-stream',
+          }));
         }
 
-        const raw = Buffer.from(rawParts.join('\r\n')).toString('base64url');
+        const rawBuffer = await new Promise((resolve, reject) => {
+          new MailComposer(mailOptions).compile().build((err, msg) => {
+            if (err) reject(err);
+            else resolve(msg);
+          });
+        });
+
+        const raw = rawBuffer.toString('base64url');
         const sent = await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
         emailLog(`Email Gmail API envoyé à ${to}: ${sent.data.id}`);
         return { success: true, messageId: sent.data.id };
