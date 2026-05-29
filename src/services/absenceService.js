@@ -36,7 +36,8 @@ async function notifyAbsenceCreated(absence, entreprise_id, justificatifFile) {
         employe.email,
         'Nouvelle absence enregistrée',
         'absence-notification',
-        { ...base, content: `<p>Bonjour ${employe.prenom},<br>Votre absence (${absence.type_absence}) du ${absence.date_debut} au ${absence.date_fin} a bien été enregistrée.<br>Commentaire : ${absence.commentaire}</p>` }
+        { ...base, content: `<p>Bonjour ${employe.prenom},<br>Votre absence (${absence.type_absence}) du ${absence.date_debut} au ${absence.date_fin} a bien été enregistrée.<br>Commentaire : ${absence.commentaire}${justificatifFile ? '<br><em>Justificatif en pièce jointe.</em>' : ''}</p>` },
+        attachments
       ));
     }
 
