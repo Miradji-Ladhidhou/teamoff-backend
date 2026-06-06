@@ -10,7 +10,7 @@ const superOnly = authorizeRole(['super_admin']);
 // -----------------------------
 // PREVIEW
 // -----------------------------
-router.get('/preview', adminOrSuper, ExportController.previewExport);
+router.get('/preview', managerOrAbove, ExportController.previewExport);
 
 // -----------------------------
 // CONGES
