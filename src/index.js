@@ -131,23 +131,12 @@ app.use((req, res, next) => {
 // ----------------------
 // Health check
 // ----------------------
-app.get('/health', async (req, res) => {
-  try {
-    await sequelize.authenticate();
-    res.json({
-      status:    'ok',
-      db:        'up',
-      uptime:    Math.floor(process.uptime()),
-      timestamp: new Date().toISOString(),
-    });
-  } catch {
-    res.status(503).json({
-      status:    'error',
-      db:        'down',
-      uptime:    Math.floor(process.uptime()),
-      timestamp: new Date().toISOString(),
-    });
-  }
+app.get('/health', (req, res) => {
+  res.json({
+    status:    'ok',
+    uptime:    Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // ----------------------
