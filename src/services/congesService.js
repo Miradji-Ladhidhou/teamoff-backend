@@ -1441,6 +1441,10 @@ async function updateConge(id, data, user, req = null) {
       if (field in data) {
         if (field === 'commentaire_employe' && typeof data[field] === 'string') {
           updates[field] = sanitizeHtml(data[field], { allowedTags: [], allowedAttributes: {} });
+        } else if (field === 'debut_demi_journee') {
+          updates[field] = data[field] || 'matin';
+        } else if (field === 'fin_demi_journee') {
+          updates[field] = data[field] || 'apres_midi';
         } else {
           updates[field] = data[field];
         }
