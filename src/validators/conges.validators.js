@@ -55,10 +55,10 @@ const updateCongeRules = [
   optionalDateField('date_debut'),
   optionalDateField('date_fin'),
   body('debut_demi_journee')
-    .optional()
+    .optional({ nullable: true })
     .isIn(DEMI_JOURNEE),
   body('fin_demi_journee')
-    .optional()
+    .optional({ nullable: true })
     .isIn(DEMI_JOURNEE),
   body('commentaire_employe')
     .optional({ nullable: true })
