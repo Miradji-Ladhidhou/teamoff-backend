@@ -989,19 +989,19 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
       await auditConge.approved(conge, reqUser, req);
     } else if (effectiveRole === 'admin_entreprise' || effectiveRole === 'super_admin') {
       if (leaveRules.approval_workflow === 'auto') {
-        throw new Error('Workflow auto: aucune validation manuelle nécessaire');
+        const err = new Error('Workflow auto: aucune validation manuelle nécessaire'); err.statusCode = 400; throw err;
       }
 
       if (['manager', 'manager_only'].includes(leaveRules.approval_workflow)) {
-        throw new Error('Workflow manager: validation finale par manager uniquement');
+        const err = new Error('Workflow manager: validation finale par manager uniquement'); err.statusCode = 400; throw err;
       }
 
       if (leaveRules.approval_workflow === 'manager_admin' && conge.statut !== 'valide_manager') {
-        throw new Error('Workflow manager_admin: validation manager requise avant validation admin');
+        const err = new Error('Le manager doit valider ce congé avant que vous puissiez le valider'); err.statusCode = 400; throw err;
       }
 
       if (!['en_attente_manager', 'valide_manager'].includes(conge.statut)) {
-        throw new Error('Impossible de valider ce congé à ce stade');
+        const err = new Error('Impossible de valider ce congé à ce stade'); err.statusCode = 400; throw err;
       }
 
       conge.statut = 'valide_final';
@@ -1067,7 +1067,7 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
     const conge = await Conge.findByPk(congeId, {
       include: [{ model: CongeType, as: 'conge_type' }],
       transaction: t,
-      lock: t.LOCK.UPDATE
+      lock: { level: t.LOCK.UPDATE, of: Conge }
     });
     if (!conge) throw new Error('Congé introuvable');
     const joursConge = await resolveCongeDays(conge);
