@@ -59,8 +59,8 @@ class LeavePolicyService {
 
     const policy = await this.getOrCreateDefaultPolicy(entrepriseId);
 
-    // Les super admins ne sont jamais bloqués
-    if (initiatorRole === 'super_admin') {
+    // Admins et super admins ne sont jamais bloqués par la politique
+    if (initiatorRole === 'super_admin' || initiatorRole === 'admin_entreprise') {
       return { allowed: true };
     }
 
@@ -133,8 +133,8 @@ class LeavePolicyService {
 
     const policy = await this.getOrCreateDefaultPolicy(entrepriseId);
 
-    // Les super admins ne sont jamais bloqués
-    if (initiatorRole === 'super_admin') {
+    // Admins et super admins ne sont jamais bloqués par la politique
+    if (initiatorRole === 'super_admin' || initiatorRole === 'admin_entreprise') {
       return { allowed: true };
     }
 
