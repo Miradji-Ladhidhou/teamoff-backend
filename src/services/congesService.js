@@ -1158,6 +1158,12 @@ async function getConges(user, query = {}) {
   if (query.statut) where.statut = query.statut;
   if (query.conge_type_id) where.conge_type_id = query.conge_type_id;
   if (query.utilisateur_id && user.role !== 'employe') where.utilisateur_id = query.utilisateur_id;
+  if (query.annee) {
+    const yr = parseInt(query.annee, 10);
+    if (Number.isFinite(yr)) {
+      where.date_debut = { [Op.gte]: `${yr}-01-01`, [Op.lte]: `${yr}-12-31` };
+    }
+  }
 
   const page  = Math.max(parseInt(query.page,  10) || 1, 1);
   const limit = Math.min(Math.max(parseInt(query.limit, 10) || 200, 1), 500);
