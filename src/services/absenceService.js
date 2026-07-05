@@ -102,8 +102,15 @@ async function listAbsences({ role, id: userId, entreprise_id }, query) {
   }
 
   if (type_absence) where.type_absence = type_absence;
-  if (date_debut) where.date_debut = { [Op.gte]: date_debut };
-  if (date_fin) where.date_fin = { ...(where.date_fin || {}), [Op.lte]: date_fin };
+
+  // Overlap : retourner toute absence qui chevauche la période demandée
+  if (date_debut && date_fin) {
+    where.date_debut = { [Op.lte]: date_fin };
+    where.date_fin   = { [Op.gte]: date_debut };
+  } else {
+    if (date_debut) where.date_debut = { [Op.gte]: date_debut };
+    if (date_fin)   where.date_fin   = { [Op.lte]: date_fin };
+  }
 
   return Absence.findAll({
     where,
