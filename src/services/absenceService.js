@@ -76,10 +76,6 @@ async function createAbsence({ utilisateur_id, entreprise_id, type_absence, date
   if (new Date(date_fin) < new Date(date_debut)) {
     throw Object.assign(new Error('La date de fin doit être postérieure ou égale à la date de début'), { status: 400 });
   }
-  if (type_absence === 'maladie' && !justificatifFile) {
-    throw Object.assign(new Error('Un justificatif est obligatoire pour un arrêt maladie'), { status: 400 });
-  }
-
   // On note en BDD qu'un justificatif a été transmis par email, sans stocker le fichier
   const justificatif = justificatifFile ? 'piece_jointe_email' : null;
 
