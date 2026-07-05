@@ -43,6 +43,11 @@ function errorHandler(err, req, res, next) {
     return res.status(500).json({ message: 'Erreur base de données' });
   }
 
+  // Erreurs applicatives sans statusCode explicite (throw new Error('message métier'))
+  if (err.name === 'Error' && err.message) {
+    return res.status(400).json({ message: err.message });
+  }
+
   res.status(500).json({ message: 'Erreur serveur' });
 }
 
