@@ -1453,8 +1453,8 @@ async function updateConge(id, data, user, req = null) {
 
     const nextDateDebut = updates.date_debut ?? conge.date_debut;
     const nextDateFin = updates.date_fin ?? conge.date_fin;
-    const nextDebutDemiJournee = updates.debut_demi_journee ?? conge.debut_demi_journee;
-    const nextFinDemiJournee = updates.fin_demi_journee ?? conge.fin_demi_journee;
+    let nextDebutDemiJournee = updates.debut_demi_journee ?? conge.debut_demi_journee;
+    let nextFinDemiJournee = updates.fin_demi_journee ?? conge.fin_demi_journee;
     const nextCongeTypeId = updates.conge_type_id ?? conge.conge_type_id;
 
     if (!validateUUID(nextCongeTypeId)) {
@@ -1527,8 +1527,13 @@ async function updateConge(id, data, user, req = null) {
     });
     if (!nextCongeType) throw new Error('Type de congé introuvable');
 
-    if (!nextCongeType.demi_journee_autorisee && (nextDebutDemiJournee === 'apres_midi' || nextFinDemiJournee === 'matin')) {
-      throw Object.assign(new Error('Les demi-journées ne sont pas autorisées pour ce type de congé'), { status: 422 });
+    if (!nextCongeType.demi_journee_autorisee) {
+      // Type doesn't allow half-days: silently normalize stale values to full-day defaults
+      // (the type may have been reconfigured after the leave was originally created)
+      updates.debut_demi_journee = 'matin';
+      updates.fin_demi_journee = 'apres_midi';
+      nextDebutDemiJournee = 'matin';
+      nextFinDemiJournee = 'apres_midi';
     }
 
     const sameCounter = conge.conge_type_id === nextCongeTypeId && oldYear === nextYear;
