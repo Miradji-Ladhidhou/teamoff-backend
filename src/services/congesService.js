@@ -490,11 +490,11 @@ async function getValidationOverlapStatus(congeId, reqUser) {
 // ----------------------------
 // Calcul des jours ouvrés
 // ----------------------------
-async function calcJoursConges(entrepriseId, dateDebut, dateFin, debut_demi, fin_demi) {
+async function calcJoursConges(entrepriseId, dateDebut, dateFin, debut_demi, fin_demi, transaction = null) {
   let total = 0;
   let current = dayjs(dateDebut);
   const end = dayjs(dateFin);
-  const leaveRules = await getEntrepriseLeaveRules(entrepriseId);
+  const leaveRules = await getEntrepriseLeaveRules(entrepriseId, transaction);
   const blockedDays = leaveRules.blocked_days || {};
 
   // Récupérer les jours fériés de l'entreprise
@@ -522,8 +522,9 @@ async function calcJoursConges(entrepriseId, dateDebut, dateFin, debut_demi, fin
 // Créer un congé
 // ----------------------------
 async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin, debut_demi_journee, fin_demi_journee, commentaire_employe, reqUser, req }) {
-    const sanitizeHtml = require('sanitize-html');
-  return sequelize.transaction(async (t) => {
+  const sanitizeHtml = require('sanitize-html');
+  const emailQueue = [];
+  const congeResult = await sequelize.transaction(async (t) => {
     const utilisateurId = utilisateur_id || reqUser?.id;
     const debutDemiJournee = debut_demi_journee || 'matin';
     const finDemiJournee = fin_demi_journee || 'apres_midi';
@@ -572,6 +573,23 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       : 0;
     if (daysUntilStart < minNoticeDays) {
       throw new Error(`Délai minimum non respecté: ${minNoticeDays} jour(s) minimum`);
+    }
+
+    // Verrouiller le compteur en premier pour sérialiser les requêtes concurrentes du même utilisateur
+    // et garantir que computeOverlapContext voit les congés déjà validés par d'autres transactions
+    let compteur = await CompteurConges.findOne({
+      where: { utilisateur_id: utilisateurId, conge_type_id, annee: dayjs(date_debut).year() },
+      transaction: t,
+      lock: t.LOCK.UPDATE
+    });
+    if (!compteur) {
+      compteur = await ensureCounter({
+        entrepriseId: utilisateur.entreprise_id,
+        utilisateurId,
+        congeTypeId: conge_type_id,
+        annee: dayjs(date_debut).year(),
+        transaction: t,
+      });
     }
 
     // Vérification chevauchement / capacité simultanée selon politique
@@ -632,28 +650,12 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       throw new Error(overlapMessage || 'Limite d\'employés en congé simultanément atteinte');
     }
 
-    const jours = await calcJoursConges(utilisateur.entreprise_id, date_debut, date_fin, debutDemiJournee, finDemiJournee);
+    const jours = await calcJoursConges(utilisateur.entreprise_id, date_debut, date_fin, debutDemiJournee, finDemiJournee, t);
     if (!Number.isFinite(jours)) throw new Error('Nombre de jours de congé invalide');
     if (jours <= 0) throw new Error('La période sélectionnée ne contient aucun jour ouvrable. Tous les jours sont bloqués, fériés ou exclus par la politique de l\'entreprise.');
 
     if (jours > leaveRules.max_consecutive_days) {
       throw new Error(`Durée maximale dépassée: ${leaveRules.max_consecutive_days} jour(s) consécutif(s) max`);
-    }
-
-    // Compteur
-    let compteur = await CompteurConges.findOne({
-      where: { utilisateur_id: utilisateurId, conge_type_id, annee: dayjs(date_debut).year() },
-      transaction: t,
-      lock: t.LOCK.UPDATE
-    });
-    if (!compteur) {
-      compteur = await ensureCounter({
-        entrepriseId: utilisateur.entreprise_id,
-        utilisateurId,
-        congeTypeId: conge_type_id,
-        annee: dayjs(date_debut).year(),
-        transaction: t,
-      });
     }
 
     if (jours > (safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves))) {
@@ -683,9 +685,9 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       jours_calcules: jours
     }, { transaction: t });
 
-    // Notification au manager et admin entreprise
-    const manager = await Utilisateur.findOne({
-      where: { entreprise_id: utilisateur.entreprise_id, role: 'manager' }
+    // Notification à tous les managers et à l'admin entreprise
+    const managers = await Utilisateur.findAll({
+      where: { entreprise_id: utilisateur.entreprise_id, role: 'manager', statut: 'actif' }
     });
     const admin = await Utilisateur.findOne({
       where: { entreprise_id: utilisateur.entreprise_id, role: 'admin_entreprise' }
@@ -695,36 +697,38 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
 
     const utilisateurNomComplet = `${utilisateur.prenom || ''} ${utilisateur.nom || ''}`.trim() || utilisateur.nom;
 
-    if (shouldNotifyOnCreate && manager) {
-      fireEmail({
-        to: manager.email,
-        subject: `Nouvelle demande de conge - ${utilisateurNomComplet}`,
-        templateName: 'leave-new-request-manager',
-        data: {
-          destinataire_prenom: manager.prenom || 'Manager',
-          demandeur_nom: utilisateurNomComplet,
-          date_debut,
-          date_fin,
-          type_conge: congeType.libelle || 'Type non renseigne',
-          commentaire_employe: commentaire_employe || 'Aucun',
-          overlap_warning_html: overlapWarningPayload
-            ? `<div style="margin-top:12px;padding:12px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;color:#92400e;"><strong>Alerte chevauchement :</strong><br/>${overlapWarningPayload.message}</div>`
-            : '',
-          action_url: buildCongeUrl(conge.id),
-        }
-      });
-      await notificationService.creerNotification({
-        entreprise_id: utilisateur.entreprise_id,
-        utilisateur_id: manager.id,
-        type: 'conge_demande',
-        message: `Nouvelle demande de congé de ${utilisateurNomComplet} (${date_debut} - ${date_fin})`,
-        url: `/conges/${conge.id}`,
-        transaction: t
-      });
+    if (shouldNotifyOnCreate && managers.length > 0) {
+      for (const manager of managers) {
+        emailQueue.push({
+          to: manager.email,
+          subject: `Nouvelle demande de conge - ${utilisateurNomComplet}`,
+          templateName: 'leave-new-request-manager',
+          data: {
+            destinataire_prenom: manager.prenom || 'Manager',
+            demandeur_nom: utilisateurNomComplet,
+            date_debut,
+            date_fin,
+            type_conge: congeType.libelle || 'Type non renseigne',
+            commentaire_employe: safeCommentaire || 'Aucun',
+            overlap_warning_html: overlapWarningPayload
+              ? `<div style="margin-top:12px;padding:12px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;color:#92400e;"><strong>Alerte chevauchement :</strong><br/>${overlapWarningPayload.message}</div>`
+              : '',
+            action_url: buildCongeUrl(conge.id),
+          }
+        });
+        await notificationService.creerNotification({
+          entreprise_id: utilisateur.entreprise_id,
+          utilisateur_id: manager.id,
+          type: 'conge_demande',
+          message: `Nouvelle demande de congé de ${utilisateurNomComplet} (${date_debut} - ${date_fin})`,
+          url: `/conges/${conge.id}`,
+          transaction: t
+        });
+      }
     }
 
     if (shouldNotifyOnCreate && admin) {
-      fireEmail({
+      emailQueue.push({
         to: admin.email,
         subject: `Nouvelle demande de conge - ${utilisateurNomComplet}`,
         templateName: 'leave-new-request-manager',
@@ -734,7 +738,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
           date_debut,
           date_fin,
           type_conge: congeType.libelle || 'Type non renseigne',
-          commentaire_employe: commentaire_employe || 'Aucun',
+          commentaire_employe: safeCommentaire || 'Aucun',
           overlap_warning_html: overlapWarningPayload
             ? `<div style="margin-top:12px;padding:12px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;color:#92400e;"><strong>Alerte chevauchement :</strong><br/>${overlapWarningPayload.message}</div>`
             : '',
@@ -753,7 +757,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
 
     // Notification à l'employé : congé créé
     if (shouldNotifyOnCreate) {
-      fireEmail({
+      emailQueue.push({
         to: utilisateur.email,
         subject: 'Confirmation de creation de votre demande de conge',
         templateName: 'leave-created-employee',
@@ -799,15 +803,19 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
 
     return congeResponse;
   });
+  emailQueue.forEach(payload => fireEmail(payload));
+  return congeResult;
 }
 
 // ----------------------------
 // Valider un congé
 // ----------------------------
 async function validerConge(congeId, reqUser, commentaire = null, req = null) {
-  return sequelize.transaction(async (t) => {
+  const emailQueue = [];
+  const conge = await sequelize.transaction(async (t) => {
     const conge = await Conge.findByPk(congeId, { transaction: t, lock: t.LOCK.UPDATE });
     if (!conge) throw new Error('Congé introuvable');
+    if (reqUser.entreprise_id !== conge.entreprise_id) throw new Error('Accès interdit');
     const joursConge = await resolveCongeDays(conge);
     const baseLeaveRules = await getEntrepriseLeaveRules(conge.entreprise_id, t);
 
@@ -902,7 +910,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise' }
       });
       if (admin) {
-        fireEmail({
+        emailQueue.push({
           to: admin.email,
           subject: hasOverlapAtValidation
             ? 'ALERTE chevauchement - validation finale requise'
@@ -962,7 +970,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         }
 
         if (leaveRules.notification_settings.on_validate) {
-          fireEmail({
+          emailQueue.push({
             to: utilisateur.email,
             subject: 'Votre demande de conge est approuvee',
             templateName: 'leave-approved-employee',
@@ -1027,7 +1035,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
 
       // Notification à l'employé
       if (leaveRules.notification_settings.on_validate) {
-        fireEmail({
+        emailQueue.push({
           to: utilisateur.email,
           subject: 'Votre demande de conge est approuvee',
           templateName: 'leave-approved-employee',
@@ -1057,19 +1065,23 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
 
     return conge;
   });
+  emailQueue.forEach(payload => fireEmail(payload));
+  return conge;
 }
 
 // ----------------------------
 // Refuser un congé
 // ----------------------------
 async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
-  return sequelize.transaction(async (t) => {
+  const emailQueue = [];
+  const conge = await sequelize.transaction(async (t) => {
     const conge = await Conge.findByPk(congeId, {
       include: [{ model: CongeType, as: 'conge_type' }],
       transaction: t,
       lock: { level: t.LOCK.UPDATE, of: Conge }
     });
     if (!conge) throw new Error('Congé introuvable');
+    if (reqUser.entreprise_id !== conge.entreprise_id) throw new Error('Accès interdit');
     const joursConge = await resolveCongeDays(conge);
     const baseLeaveRules = await getEntrepriseLeaveRules(conge.entreprise_id, t);
 
@@ -1103,18 +1115,13 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
     });
 
     if (compteur) {
-      if (ancienStatut === 'valide_final') {
-        compteur.jours_acquis = safeNumber(compteur.jours_acquis) + safeNumber(joursConge);
-        compteur.jours_pris = Math.max(0, safeNumber(compteur.jours_pris) - safeNumber(joursConge));
-      } else {
-        compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
-      }
+      compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
       await compteur.save({ transaction: t });
     }
 
     // Notification à l'employé
     if (leaveRules.notification_settings.on_reject) {
-      fireEmail({
+      emailQueue.push({
         to: utilisateur.email,
         subject: 'Votre demande de conge a ete refusee',
         templateName: 'leave-rejected-employee',
@@ -1141,6 +1148,8 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
 
     return conge;
   });
+  emailQueue.forEach(payload => fireEmail(payload));
+  return conge;
 }
 
 // ----------------------------
@@ -1161,7 +1170,8 @@ async function getConges(user, query = {}) {
   if (query.annee) {
     const yr = parseInt(query.annee, 10);
     if (Number.isFinite(yr)) {
-      where.date_debut = { [Op.gte]: `${yr}-01-01`, [Op.lte]: `${yr}-12-31` };
+      where.date_debut = { [Op.lte]: `${yr}-12-31` };
+      where.date_fin   = { [Op.gte]: `${yr}-01-01` };
     }
   }
 
@@ -1361,7 +1371,7 @@ async function getCongeById(id, user) {
 // ----------------------------
 // Modifier et supprimer
 // ----------------------------
-async function updateConge(id, data, user) {
+async function updateConge(id, data, user, req = null) {
   const sanitizeHtml = require('sanitize-html');
   return sequelize.transaction(async (t) => {
     const conge = await Conge.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
@@ -1482,7 +1492,8 @@ async function updateConge(id, data, user) {
       nextDateDebut,
       nextDateFin,
       nextDebutDemiJournee,
-      nextFinDemiJournee
+      nextFinDemiJournee,
+      t
     );
 
     if (!Number.isFinite(newDays) || newDays <= 0) {
@@ -1570,18 +1581,16 @@ async function updateConge(id, data, user) {
       }
     } else {
       if (sameCounter) {
-        // Pour un congé déjà validé, l'admin entreprise peut appliquer un delta signé.
-        // Le solde peut donc évoluer à la hausse ou à la baisse selon la modification.
-        oldCounter.jours_acquis =
-          safeNumber(oldCounter.jours_acquis) + safeNumber(oldDays) - safeNumber(newDays);
-        oldCounter.jours_pris =
-          safeNumber(oldCounter.jours_pris) - safeNumber(oldDays) + safeNumber(newDays);
+        oldCounter.jours_acquis = Math.max(0,
+          safeNumber(oldCounter.jours_acquis) + safeNumber(oldDays) - safeNumber(newDays));
+        oldCounter.jours_pris = Math.max(0,
+          safeNumber(oldCounter.jours_pris) - safeNumber(oldDays) + safeNumber(newDays));
         await oldCounter.save({ transaction: t });
       } else {
         oldCounter.jours_acquis = safeNumber(oldCounter.jours_acquis) + safeNumber(oldDays);
         oldCounter.jours_pris = Math.max(0, safeNumber(oldCounter.jours_pris) - safeNumber(oldDays));
 
-        nextCounter.jours_acquis = safeNumber(nextCounter.jours_acquis) - safeNumber(newDays);
+        nextCounter.jours_acquis = Math.max(0, safeNumber(nextCounter.jours_acquis) - safeNumber(newDays));
         nextCounter.jours_pris = safeNumber(nextCounter.jours_pris) + safeNumber(newDays);
 
         await oldCounter.save({ transaction: t });
@@ -1595,8 +1604,8 @@ async function updateConge(id, data, user) {
     }, { transaction: t });
 
     if (isPending && user?.role === 'employe' && user?.id === conge.utilisateur_id) {
-      const manager = await Utilisateur.findOne({
-        where: { entreprise_id: conge.entreprise_id, role: 'manager' },
+      const managers = await Utilisateur.findAll({
+        where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
         transaction: t,
       });
       const admin = await Utilisateur.findOne({
@@ -1609,7 +1618,7 @@ async function updateConge(id, data, user) {
       const nextPeriod = `${nextDateDebut} au ${nextDateFin}`;
       const nextCommentaireEmploye = (updates.commentaire_employe ?? conge.commentaire_employe ?? '').toString().trim();
 
-      const recipients = [manager, admin].filter((recipient) => recipient?.email);
+      const recipients = [...managers, admin].filter((recipient) => recipient?.email);
 
       for (const recipient of recipients) {
         fireEmail({
