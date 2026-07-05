@@ -80,4 +80,12 @@ async function reject(req, res, next) {
   catch(err) { next(err); }
 }
 
-module.exports = { checkOverlap, checkValidationOverlap, create, list, get, update, remove, validate, reject };
+async function calculateDays(req, res, next) {
+  try {
+    const result = await congeService.calculateDaysPreview(req.body, req.user);
+    res.json(result);
+  }
+  catch(err) { next(err); }
+}
+
+module.exports = { checkOverlap, checkValidationOverlap, create, list, get, update, remove, validate, reject, calculateDays };

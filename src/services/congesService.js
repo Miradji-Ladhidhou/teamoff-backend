@@ -1776,6 +1776,32 @@ async function deleteConge(id, user, options = {}) {
   });
 }
 
+async function calculateDaysPreview({ date_debut, date_fin, debut_demi_journee, fin_demi_journee }, reqUser) {
+  if (!validateDateRange(date_debut, date_fin)) throw new Error('Dates invalides ou date_fin < date_debut');
+
+  const entrepriseId = reqUser.entreprise_id;
+  const jours = await calcJoursConges(
+    entrepriseId,
+    date_debut,
+    date_fin,
+    debut_demi_journee || 'matin',
+    fin_demi_journee || 'apres_midi'
+  );
+
+  const leaveRules = await getEntrepriseLeaveRules(entrepriseId);
+  const blockedDays = leaveRules.blocked_days || {};
+
+  return {
+    jours,
+    politique: {
+      exclude_weekends: blockedDays.exclude_weekends !== false,
+      exclude_holidays: blockedDays.exclude_holidays !== false,
+      count_saturday: blockedDays.count_saturday === true,
+      count_sunday: blockedDays.count_sunday === true,
+    },
+  };
+}
+
 module.exports = {
   checkOverlapConge,
   getValidationOverlapStatus,
@@ -1786,5 +1812,6 @@ module.exports = {
   deleteConge,
   validerConge,
   rejeterConge,
-  calcJoursConges
+  calcJoursConges,
+  calculateDaysPreview
 };

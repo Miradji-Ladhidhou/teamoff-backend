@@ -10,6 +10,7 @@ const validate = require('../middlewares/validate');
 const { createCongeRules, updateCongeRules, checkOverlapRules } = require('../validators/conges.validators');
 
 router.post('/check-overlap', authorizeRole(['employe','manager']), advancedRateLimiter('conges'), validate(checkOverlapRules), congeController.checkOverlap);
+router.post('/calculate-days', authorizeRole(['employe','manager','admin_entreprise','super_admin']), advancedRateLimiter('conges'), congeController.calculateDays);
 router.get('/:id/validation-overlap', authorizeRole(['manager','admin_entreprise','super_admin']), validateUUIDParam('id'), congeController.checkValidationOverlap);
 router.post('/demande', authorizeRole(['employe','manager']), advancedRateLimiter('conges'), checkUsageLimit('create_conge'), validate(createCongeRules), congeController.create);
 router.get('/', authorizeRole(['employe','manager','admin_entreprise','super_admin']), congeController.list);
