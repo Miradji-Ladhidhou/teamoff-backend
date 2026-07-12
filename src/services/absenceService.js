@@ -3,7 +3,7 @@ const emailService = require('./emailService');
 const logger = require('../utils/logger');
 const { Op } = require('sequelize');
 
-async function notifyAbsenceCreated(absence, entreprise_id, justificatifFile) {
+async function notifyAbsenceCreated(absence, entreprise_id) {
   try {
     const [employe, managers, admin] = await Promise.all([
       Utilisateur.findByPk(absence.utilisateur_id),
@@ -22,13 +22,6 @@ async function notifyAbsenceCreated(absence, entreprise_id, justificatifFile) {
       entreprise_id,
     };
 
-    // Pièce jointe construite une seule fois, réutilisée pour tous les destinataires
-    const attachments = justificatifFile ? [{
-      filename: justificatifFile.originalname,
-      content: justificatifFile.buffer,
-      contentType: justificatifFile.mimetype,
-    }] : [];
-
     const recipients = [];
 
     if (employe?.email) {
@@ -36,8 +29,7 @@ async function notifyAbsenceCreated(absence, entreprise_id, justificatifFile) {
         employe.email,
         'Nouvelle absence enregistrée',
         'absence-notification',
-        { ...base, content: `<p>Bonjour ${employe.prenom},<br>Votre absence (${absence.type_absence}) du ${absence.date_debut} au ${absence.date_fin} a bien été enregistrée.<br>Commentaire : ${absence.commentaire}${justificatifFile ? '<br><em>Justificatif en pièce jointe.</em>' : ''}</p>` },
-        attachments
+        { ...base, content: `<p>Bonjour ${employe.prenom},<br>Votre absence (${absence.type_absence}) du ${absence.date_debut} au ${absence.date_fin} a bien été enregistrée.<br>Commentaire : ${absence.commentaire}</p>` }
       ));
     }
 
@@ -46,8 +38,7 @@ async function notifyAbsenceCreated(absence, entreprise_id, justificatifFile) {
         admin.email,
         'Nouvelle absence déclarée',
         'absence-notification',
-        { ...base, content: `<p>Nouvelle absence déclarée par ${employe?.prenom} ${employe?.nom} (${employe?.email}) du ${absence.date_debut} au ${absence.date_fin}.<br>Type : ${absence.type_absence}<br>Commentaire : ${absence.commentaire}${justificatifFile ? '<br><em>Justificatif en pièce jointe.</em>' : ''}</p>` },
-        attachments
+        { ...base, content: `<p>Nouvelle absence déclarée par ${employe?.prenom} ${employe?.nom} (${employe?.email}) du ${absence.date_debut} au ${absence.date_fin}.<br>Type : ${absence.type_absence}<br>Commentaire : ${absence.commentaire}</p>` }
       ));
     }
 
@@ -57,8 +48,7 @@ async function notifyAbsenceCreated(absence, entreprise_id, justificatifFile) {
           manager.email,
           'Nouvelle absence dans votre équipe',
           'absence-notification',
-          { ...base, content: `<p>Nouvelle absence déclarée par ${employe?.prenom} ${employe?.nom} (${employe?.email}) du ${absence.date_debut} au ${absence.date_fin}.<br>Type : ${absence.type_absence}<br>Commentaire : ${absence.commentaire}${justificatifFile ? '<br><em>Justificatif en pièce jointe.</em>' : ''}</p>` },
-          attachments
+          { ...base, content: `<p>Nouvelle absence déclarée par ${employe?.prenom} ${employe?.nom} (${employe?.email}) du ${absence.date_debut} au ${absence.date_fin}.<br>Type : ${absence.type_absence}<br>Commentaire : ${absence.commentaire}</p>` }
         ));
       }
     }
@@ -69,20 +59,17 @@ async function notifyAbsenceCreated(absence, entreprise_id, justificatifFile) {
   }
 }
 
-async function createAbsence({ utilisateur_id, entreprise_id, type_absence, date_debut, date_fin, commentaire, justificatifFile }) {
+async function createAbsence({ utilisateur_id, entreprise_id, type_absence, date_debut, date_fin, commentaire }) {
   if (!type_absence || !date_debut || !date_fin || !commentaire?.trim()) {
     throw Object.assign(new Error('Tous les champs obligatoires doivent être remplis, y compris le commentaire.'), { status: 400 });
   }
   if (new Date(date_fin) < new Date(date_debut)) {
     throw Object.assign(new Error('La date de fin doit être postérieure ou égale à la date de début'), { status: 400 });
   }
-  // On note en BDD qu'un justificatif a été transmis par email, sans stocker le fichier
-  const justificatif = justificatifFile ? 'piece_jointe_email' : null;
 
-  const absence = await Absence.create({ utilisateur_id, entreprise_id, type_absence, date_debut, date_fin, justificatif, commentaire });
+  const absence = await Absence.create({ utilisateur_id, entreprise_id, type_absence, date_debut, date_fin, commentaire });
 
-  // Email non bloquant — échec silencieux loggé dans notifyAbsenceCreated
-  notifyAbsenceCreated(absence, entreprise_id, justificatifFile);
+  notifyAbsenceCreated(absence, entreprise_id);
 
   return absence;
 }

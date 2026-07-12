@@ -11,7 +11,6 @@ exports.createAbsence = async (req, res, next) => {
 
     const absence = await absenceService.createAbsence({
       utilisateur_id, entreprise_id, type_absence, date_debut, date_fin, commentaire,
-      justificatifFile: req.file || null,
     });
     res.status(201).json(absence);
   } catch (err) {
@@ -43,7 +42,6 @@ exports.updateAbsence = async (req, res, next) => {
       || (req.user.role === 'employe' && absence.utilisateur_id === req.user.id);
     if (!canEdit) return res.status(403).json({ message: 'Accès interdit' });
 
-    if (req.body.justificatif) absence.justificatif = req.body.justificatif;
     if (req.body.commentaire) absence.commentaire = req.body.commentaire;
     await absence.save();
     res.json(absence);

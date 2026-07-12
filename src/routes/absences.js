@@ -2,7 +2,6 @@
 // Routes Express pour la gestion des absences TeamOff
 const express = require('express');
 const router = express.Router();
-const upload = require('../middlewares/uploadJustificatif');
 const validateUUIDParam = require('../middlewares/validateUUIDParam');
 const absenceController = require('../controllers/absenceController');
 
@@ -22,7 +21,7 @@ function canViewAbsences(req, res, next) {
  * - type_absence, date_debut, date_fin, commentaire (dans body)
  * - justificatif (fichier, champ 'justificatif')
  */
-router.post('/', upload.single('justificatif'), absenceController.createAbsence);
+router.post('/', absenceController.createAbsence);
 
 /**
  * GET /api/absences
