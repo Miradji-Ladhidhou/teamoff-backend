@@ -21,7 +21,6 @@ class LeavePolicyService {
         allow_modify_validated: false,
         allow_cancel_validated: false,
         min_notice_days: 2,
-        max_backdate_days: 0,
         require_manager_approval: true,
         require_admin_approval: false,
       });
@@ -94,19 +93,6 @@ class LeavePolicyService {
         code: 'POLICY_NOTICE_PERIOD_INSUFFICIENT',
         daysRequired: policy.min_notice_days,
         daysAvailable: daysUntilStart,
-      };
-    }
-
-    // Vérifier la modification rétroactive
-    const daysSinceStart = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
-
-    if (daysSinceStart > 0 && daysSinceStart > policy.max_backdate_days) {
-      return {
-        allowed: false,
-        reason: `Modification rétroactive non autorisée. Le congé a déjà commencé il y a ${daysSinceStart} jour(s), maximum autorisé: ${policy.max_backdate_days} jour(s)`,
-        code: 'POLICY_BACKDATE_EXCEEDED',
-        daysSinceStart,
-        maxBackdateDays: policy.max_backdate_days,
       };
     }
 
@@ -197,7 +183,6 @@ class LeavePolicyService {
       'allow_modify_validated',
       'allow_cancel_validated',
       'min_notice_days',
-      'max_backdate_days',
       'require_manager_approval',
       'require_admin_approval',
     ];
@@ -213,10 +198,6 @@ class LeavePolicyService {
     // Validation basique
     if (sanitizedData.min_notice_days !== undefined && sanitizedData.min_notice_days < 0) {
       throw new Error('min_notice_days ne peut pas être négatif');
-    }
-
-    if (sanitizedData.max_backdate_days !== undefined && sanitizedData.max_backdate_days < 0) {
-      throw new Error('max_backdate_days ne peut pas être négatif');
     }
 
     let policy = await LeavePolicy.findOne({

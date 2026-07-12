@@ -63,7 +63,6 @@ router.put(
         allow_modify_validated,
         allow_cancel_validated,
         min_notice_days,
-        max_backdate_days,
         require_manager_approval,
         require_admin_approval,
       } = req.body;
@@ -86,16 +85,6 @@ router.put(
           });
         }
         policyData.min_notice_days = value;
-      }
-
-      if (max_backdate_days !== undefined) {
-        const value = parseInt(max_backdate_days, 10);
-        if (isNaN(value) || value < 0) {
-          return res.status(400).json({
-            error: 'max_backdate_days doit être un nombre >= 0',
-          });
-        }
-        policyData.max_backdate_days = value;
       }
 
       if (require_manager_approval !== undefined) {

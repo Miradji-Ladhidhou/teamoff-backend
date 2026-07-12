@@ -36,12 +36,6 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 2,
     },
 
-    max_backdate_days: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-      defaultValue: 0,
-    },
-
     require_manager_approval: {
       type: DataTypes.BOOLEAN,
       allowNull: false,
