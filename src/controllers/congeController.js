@@ -1,10 +1,23 @@
 const congeService = require('../services/congesService');
 const notificationService = require('../services/notificationSocketService');
 const joursFeriesService = require('../services/joursFeriesService');
+const { getLeaveRules } = require('../services/politiqueConges');
 const { Conge, Utilisateur, CongeType, Entreprise } = require('../models');
 const dayjs = require('dayjs');
 const isSameOrBefore = require('dayjs/plugin/isSameOrBefore');
 dayjs.extend(isSameOrBefore);
+
+const DAY_LABELS = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+
+function findJourFerie(dateStr, joursFeries) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return joursFeries.find(jf => {
+    if (jf.est_travail) return false;
+    const jfDate = new Date(jf.date);
+    if (jf.recurrent) return jfDate.getUTCDate() === d && jfDate.getUTCMonth() === (m - 1);
+    return jfDate.toISOString().slice(0, 10) === dateStr;
+  });
+}
 
 async function checkOverlap(req, res, next) {
   try {
@@ -99,7 +112,7 @@ async function getAttestationData(req, res, next) {
       include: [
         { model: Utilisateur, as: 'utilisateur', attributes: ['id', 'prenom', 'nom', 'email', 'service', 'date_embauche'] },
         { model: CongeType,   as: 'conge_type',  attributes: ['libelle'] },
-        { model: Entreprise,  as: 'entreprise',  attributes: ['nom'] },
+        { model: Entreprise,  as: 'entreprise',  attributes: ['nom', 'politique_conges'] },
       ],
     });
 
@@ -110,19 +123,25 @@ async function getAttestationData(req, res, next) {
       return res.status(403).json({ message: 'Accès interdit' });
 
     const joursFeries = await joursFeriesService.getJoursFeriesEntreprise(conge.entreprise_id);
+    const leaveRules = getLeaveRules(conge.entreprise);
+    const { count_saturday, count_sunday } = leaveRules.blocked_days || {};
 
     const start = dayjs(conge.date_debut);
     const end = dayjs(conge.date_fin);
     const jours_calendaires = end.diff(start, 'day') + 1;
-    let jours_weekend = 0;
-    let jours_feries_hors_weekend = 0;
+
+    const detail = [];
     for (let d = start; d.isSameOrBefore(end, 'day'); d = d.add(1, 'day')) {
       const dow = d.day();
       const dateStr = d.format('YYYY-MM-DD');
-      if (dow === 0 || dow === 6) {
-        jours_weekend++;
-      } else if (joursFeriesService.estJourFerie(dateStr, joursFeries)) {
-        jours_feries_hors_weekend++;
+
+      if (dow === 0) {
+        detail.push({ date: dateStr, type: 'weekend', label: 'Dimanche', inclus: count_sunday === true });
+      } else if (dow === 6) {
+        detail.push({ date: dateStr, type: 'weekend', label: 'Samedi', inclus: count_saturday === true });
+      } else {
+        const jf = findJourFerie(dateStr, joursFeries);
+        if (jf) detail.push({ date: dateStr, type: 'ferie', label: jf.libelle, inclus: false });
       }
     }
 
@@ -152,9 +171,8 @@ async function getAttestationData(req, res, next) {
       },
       jours: {
         calendaires: jours_calendaires,
-        weekend: jours_weekend,
-        feries_hors_weekend: jours_feries_hors_weekend,
         ouvres: parseFloat(conge.jours_calcules) || 0,
+        detail,
       },
     });
   }
