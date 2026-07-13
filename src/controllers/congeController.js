@@ -1,5 +1,9 @@
 const congeService = require('../services/congesService');
 const notificationService = require('../services/notificationSocketService');
+const joursFeriesService = require('../services/joursFeriesService');
+const dayjs = require('dayjs');
+const isSameOrBefore = require('dayjs/plugin/isSameOrBefore');
+dayjs.extend(isSameOrBefore);
 
 async function checkOverlap(req, res, next) {
   try {
@@ -88,4 +92,61 @@ async function calculateDays(req, res, next) {
   catch(err) { next(err); }
 }
 
-module.exports = { checkOverlap, checkValidationOverlap, create, list, get, update, remove, validate, reject, calculateDays };
+async function getAttestationData(req, res, next) {
+  try {
+    const conge = await congeService.getCongeById(req.params.id, req.user);
+    if (!conge) return res.status(404).json({ message: 'Congé introuvable' });
+
+    const joursFeries = await joursFeriesService.getJoursFeriesEntreprise(conge.entreprise_id);
+
+    const start = dayjs(conge.date_debut);
+    const end = dayjs(conge.date_fin);
+    const jours_calendaires = end.diff(start, 'day') + 1;
+    let jours_weekend = 0;
+    let jours_feries_hors_weekend = 0;
+    for (let d = start; d.isSameOrBefore(end, 'day'); d = d.add(1, 'day')) {
+      const dow = d.day();
+      const dateStr = d.format('YYYY-MM-DD');
+      if (dow === 0 || dow === 6) {
+        jours_weekend++;
+      } else if (joursFeriesService.estJourFerie(dateStr, joursFeries)) {
+        jours_feries_hors_weekend++;
+      }
+    }
+
+    res.json({
+      reference: `ATT-${dayjs(conge.date_debut).year()}-${String(conge.id).substring(0, 6).toUpperCase()}`,
+      genere_le: dayjs().format('DD/MM/YYYY'),
+      entreprise: {
+        nom: conge.entreprise?.nom || '',
+      },
+      employe: {
+        nom: conge.utilisateur?.nom || '',
+        prenom: conge.utilisateur?.prenom || '',
+        email: conge.utilisateur?.email || '',
+        service: conge.utilisateur?.service || '',
+        date_embauche: conge.utilisateur?.date_embauche || null,
+      },
+      conge: {
+        type: conge.conge_type?.libelle || '',
+        date_debut: conge.date_debut,
+        date_fin: conge.date_fin,
+        debut_demi_journee: conge.debut_demi_journee || null,
+        fin_demi_journee: conge.fin_demi_journee || null,
+        statut: conge.statut,
+        commentaire_employe: conge.commentaire_employe || '',
+        commentaire_manager: conge.commentaire_manager || '',
+        commentaire_admin: conge.commentaire_admin || '',
+      },
+      jours: {
+        calendaires: jours_calendaires,
+        weekend: jours_weekend,
+        feries_hors_weekend: jours_feries_hors_weekend,
+        ouvres: parseFloat(conge.jours_calcules) || 0,
+      },
+    });
+  }
+  catch(err) { next(err); }
+}
+
+module.exports = { checkOverlap, checkValidationOverlap, create, list, get, update, remove, validate, reject, calculateDays, getAttestationData };
