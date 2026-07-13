@@ -1,6 +1,7 @@
 const congeService = require('../services/congesService');
 const notificationService = require('../services/notificationSocketService');
 const joursFeriesService = require('../services/joursFeriesService');
+const { Conge, Utilisateur, CongeType, Entreprise } = require('../models');
 const dayjs = require('dayjs');
 const isSameOrBefore = require('dayjs/plugin/isSameOrBefore');
 dayjs.extend(isSameOrBefore);
@@ -94,8 +95,19 @@ async function calculateDays(req, res, next) {
 
 async function getAttestationData(req, res, next) {
   try {
-    const conge = await congeService.getCongeById(req.params.id, req.user);
+    const conge = await Conge.findByPk(req.params.id, {
+      include: [
+        { model: Utilisateur, as: 'utilisateur', attributes: ['id', 'prenom', 'nom', 'email', 'service', 'date_embauche'] },
+        { model: CongeType,   as: 'conge_type',  attributes: ['libelle'] },
+        { model: Entreprise,  as: 'entreprise',  attributes: ['nom'] },
+      ],
+    });
+
     if (!conge) return res.status(404).json({ message: 'Congé introuvable' });
+
+    const user = req.user;
+    if (user.role !== 'super_admin' && user.entreprise_id !== conge.entreprise_id && user.id !== conge.utilisateur_id)
+      return res.status(403).json({ message: 'Accès interdit' });
 
     const joursFeries = await joursFeriesService.getJoursFeriesEntreprise(conge.entreprise_id);
 
