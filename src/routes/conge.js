@@ -33,7 +33,6 @@ router.get('/:id/history', authorizeRole(['employe','manager','admin_entreprise'
     next(err);
   }
 });
-router.get('/:id/attestation', authorizeRole(['employe','manager','admin_entreprise','super_admin']), validateUUIDParam('id'), congeController.getAttestationData);
 router.post('/:id/validate', authorizeRole(['manager','admin_entreprise','super_admin']), validateUUIDParam('id'), advancedRateLimiter('conges'), congeController.validate);
 router.post('/:id/reject', authorizeRole(['manager','admin_entreprise','super_admin']), validateUUIDParam('id'), advancedRateLimiter('conges'), congeController.reject);
 
