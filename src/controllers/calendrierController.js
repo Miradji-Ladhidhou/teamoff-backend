@@ -39,10 +39,16 @@ async function getCalendrier(req, res, next) {
     }
 
     const canFilterByUser = ['super_admin', 'admin_entreprise', 'manager'].includes(req.user.role);
-    if (req.user.role === 'employe') {
-      where.utilisateur_id = req.user.id;
-    } else if (canFilterByUser && utilisateurId && utilisateurId !== 'all') {
+    if (canFilterByUser && utilisateurId && utilisateurId !== 'all') {
       where.utilisateur_id = utilisateurId;
+    }
+
+    // Employé : ses propres congés (tous statuts) + congés des collègues non refusés
+    if (req.user.role === 'employe') {
+      where[Op.or] = [
+        { utilisateur_id: req.user.id },
+        { statut: { [Op.notIn]: ['refuse_manager', 'refuse_final'] } },
+      ];
     }
 
     // filtre sur le mois si year/month sont fournis
