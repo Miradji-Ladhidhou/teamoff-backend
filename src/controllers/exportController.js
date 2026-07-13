@@ -46,7 +46,7 @@ class ExportController {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
       const type = req.query.type || 'conges';
-      const preview = await ExportService.getPreview(type, entrepriseId, req.query, req.query.limit);
+      const preview = await ExportService.getPreview(type, entrepriseId, req.query, req.query.limit, req.user.role);
       res.json({ type, ...preview });
     } catch (err) { handleExportError(next, err); }
   }
@@ -70,7 +70,7 @@ class ExportController {
         const ent = await Entreprise.findByPk(req.user.entreprise_id);
         entrepriseName = ent?.nom || null;
       }
-      const data = await ExportService.generateCongesPDF(entrepriseId, req.query, entrepriseName);
+      const data = await ExportService.generateCongesPDF(entrepriseId, req.query, entrepriseName, req.user.role);
       sendPDF(res, data, 'conges.pdf');
     } catch (err) { handleExportError(next, err); }
   }
@@ -81,7 +81,7 @@ class ExportController {
   static async exportAbsencesCSV(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
-      const data = await ExportService.generateAbsencesCSV(entrepriseId, req.query);
+      const data = await ExportService.generateAbsencesCSV(entrepriseId, req.query, req.user.role);
       sendCSV(res, data, 'absences.csv');
     } catch (err) { handleExportError(next, err); }
   }
@@ -94,7 +94,7 @@ class ExportController {
         const ent = await Entreprise.findByPk(req.user.entreprise_id);
         entrepriseName = ent?.nom || null;
       }
-      const data = await ExportService.generateAbsencesPDF(entrepriseId, req.query, entrepriseName);
+      const data = await ExportService.generateAbsencesPDF(entrepriseId, req.query, entrepriseName, req.user.role);
       sendPDF(res, data, 'absences.pdf');
     } catch (err) { handleExportError(next, err); }
   }
@@ -105,7 +105,7 @@ class ExportController {
   static async exportArretsMaladieCSV(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
-      const data = await ExportService.generateArretsMaladieCSV(entrepriseId, req.query);
+      const data = await ExportService.generateArretsMaladieCSV(entrepriseId, req.query, req.user.role);
       sendCSV(res, data, 'arrets-maladie.csv');
     } catch (err) { handleExportError(next, err); }
   }
@@ -118,7 +118,7 @@ class ExportController {
         const ent = await Entreprise.findByPk(req.user.entreprise_id);
         entrepriseName = ent?.nom || null;
       }
-      const data = await ExportService.generateArretsMaladiePDF(entrepriseId, req.query, entrepriseName);
+      const data = await ExportService.generateArretsMaladiePDF(entrepriseId, req.query, entrepriseName, req.user.role);
       sendPDF(res, data, 'arrets-maladie.pdf');
     } catch (err) { handleExportError(next, err); }
   }

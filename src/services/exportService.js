@@ -101,7 +101,10 @@ class ExportService {
   // =========================
   // CONGES
   // =========================
-  static async getCongesPreview(entrepriseId, filters = {}, limit = 50) {
+  static async getCongesPreview(entrepriseId, filters = {}, limit = 50, role = null) {
+    const userWhere = {};
+    if (filters.service) userWhere.service = filters.service;
+    if (role === 'manager') userWhere.role = { [Op.notIn]: ['admin_entreprise', 'super_admin'] };
 
     const rowsDB = await Conge.findAll({
       where: {
@@ -113,7 +116,7 @@ class ExportService {
           model: Utilisateur,
           as: 'utilisateur',
           attributes: ['prenom','nom','email','service'],
-          where: filters.service ? { service: filters.service } : undefined
+          where: Object.keys(userWhere).length ? userWhere : undefined
         },
         { model: CongeType, as: 'conge_type', attributes: ['libelle'] }
       ],
@@ -143,13 +146,13 @@ class ExportService {
     };
   }
 
-  static async generateCongesCSV(id, filters) {
-    const preview = await this.getCongesPreview(id, filters, 1000);
+  static async generateCongesCSV(id, filters, role = null) {
+    const preview = await this.getCongesPreview(id, filters, 1000, role);
     return new Parser({ fields: preview.columns }).parse(preview.rows);
   }
 
-  static async generateCongesPDF(id, filters, entreprise = null) {
-    const preview = await this.getCongesPreview(id, filters, 1000);
+  static async generateCongesPDF(id, filters, entreprise = null, role = null) {
+    const preview = await this.getCongesPreview(id, filters, 1000, role);
     // Définir les colonnes avec largeur et label pro
     const columns = [
       { key: 'employe', label: 'Employé', width: 120 },
@@ -174,7 +177,10 @@ class ExportService {
   // =========================
   // ABSENCES
   // =========================
-  static async getAbsencesPreview(entrepriseId, filters = {}, limit = 50) {
+  static async getAbsencesPreview(entrepriseId, filters = {}, limit = 50, role = null) {
+    const userWhere = {};
+    if (filters.service) userWhere.service = filters.service;
+    if (role === 'manager') userWhere.role = { [Op.notIn]: ['admin_entreprise', 'super_admin'] };
 
     const rowsDB = await Absence.findAll({
       where: {
@@ -187,7 +193,7 @@ class ExportService {
           model: Utilisateur,
           as: 'utilisateur',
           attributes: ['prenom','nom','email','service'],
-          where: filters.service ? { service: filters.service } : undefined
+          where: Object.keys(userWhere).length ? userWhere : undefined
         }
       ],
       order: this.buildOrder(filters.sortBy, filters.sortOrder),
@@ -215,13 +221,13 @@ class ExportService {
     };
   }
 
-  static async generateAbsencesCSV(id, filters) {
-    const preview = await this.getAbsencesPreview(id, filters, 1000);
+  static async generateAbsencesCSV(id, filters, role = null) {
+    const preview = await this.getAbsencesPreview(id, filters, 1000, role);
     return new Parser({ fields: preview.columns }).parse(preview.rows);
   }
 
-  static async generateAbsencesPDF(id, filters, entreprise = null) {
-    const preview = await this.getAbsencesPreview(id, filters, 1000);
+  static async generateAbsencesPDF(id, filters, entreprise = null, role = null) {
+    const preview = await this.getAbsencesPreview(id, filters, 1000, role);
     const columns = [
       { key: 'employe', label: 'Employé', width: 120 },
       { key: 'email', label: 'Email', width: 140 },
@@ -244,7 +250,10 @@ class ExportService {
   // =========================
   // ARRETS MALADIE
   // =========================
-  static async getArretsMaladiePreview(entrepriseId, filters = {}, limit = 50) {
+  static async getArretsMaladiePreview(entrepriseId, filters = {}, limit = 50, role = null) {
+    const userWhere = role === 'manager'
+      ? { role: { [Op.notIn]: ['admin_entreprise', 'super_admin'] } }
+      : undefined;
 
     const rowsDB = await Absence.findAll({
       where: {
@@ -252,7 +261,7 @@ class ExportService {
         type_absence: 'maladie',
         ...this.buildFilters(filters)
       },
-      include: [{ model: Utilisateur, as: 'utilisateur', attributes: ['prenom','nom','email'] }],
+      include: [{ model: Utilisateur, as: 'utilisateur', attributes: ['prenom','nom','email'], where: userWhere }],
       order: this.buildOrder(filters.sortBy, filters.sortOrder),
       limit
     });
@@ -272,13 +281,13 @@ class ExportService {
     };
   }
 
-  static async generateArretsMaladieCSV(id, filters) {
-    const preview = await this.getArretsMaladiePreview(id, filters, 1000);
+  static async generateArretsMaladieCSV(id, filters, role = null) {
+    const preview = await this.getArretsMaladiePreview(id, filters, 1000, role);
     return new Parser({ fields: preview.columns }).parse(preview.rows);
   }
 
-  static async generateArretsMaladiePDF(id, filters, entreprise = null) {
-    const preview = await this.getArretsMaladiePreview(id, filters, 1000);
+  static async generateArretsMaladiePDF(id, filters, entreprise = null, role = null) {
+    const preview = await this.getArretsMaladiePreview(id, filters, 1000, role);
     const columns = [
       { key: 'employe', label: 'Employé', width: 120 },
       { key: 'email', label: 'Email', width: 140 },
@@ -382,16 +391,16 @@ static async getUsagePreview(entrepriseId, filters = {}, limit = 50) {
   // =========================
 // PREVIEW GLOBAL (CORRIGÉ)
 // =========================
-static async getPreview(type, entrepriseId, filters, limit) {
+static async getPreview(type, entrepriseId, filters, limit, role = null) {
   switch (type) {
     case 'conges':
-      return this.getCongesPreview(entrepriseId, filters, limit);
+      return this.getCongesPreview(entrepriseId, filters, limit, role);
 
     case 'absences':
-      return this.getAbsencesPreview(entrepriseId, filters, limit);
+      return this.getAbsencesPreview(entrepriseId, filters, limit, role);
 
     case 'arrets_maladie':
-      return this.getArretsMaladiePreview(entrepriseId, filters, limit);
+      return this.getArretsMaladiePreview(entrepriseId, filters, limit, role);
 
     case 'audit':
       return this.getAuditPreview(entrepriseId, filters, limit);
