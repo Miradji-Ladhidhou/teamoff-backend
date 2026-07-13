@@ -78,9 +78,7 @@ async function listAbsences({ role, id: userId, entreprise_id }, query) {
   const { type_absence, utilisateur_id, date_debut, date_fin } = query;
   const where = { entreprise_id };
 
-  if (role === 'employe') {
-    where.utilisateur_id = userId;
-  } else if (utilisateur_id) {
+  if (utilisateur_id) {
     where.utilisateur_id = utilisateur_id;
   }
 
