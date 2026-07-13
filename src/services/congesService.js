@@ -1754,6 +1754,43 @@ async function deleteConge(id, user, options = {}) {
     }
     await compteur.save({ transaction: t });
 
+    if (isPending && !isAdminLevel) {
+      const employe_nom = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || 'Un employé';
+      const managers = await Utilisateur.findAll({
+        where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
+        attributes: ['id', 'prenom', 'nom', 'email'],
+      });
+      const admin = await Utilisateur.findOne({
+        where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise', statut: 'actif' },
+        attributes: ['id', 'prenom', 'nom', 'email'],
+      });
+      const recipients = [...managers, ...(admin ? [admin] : [])];
+      for (const recipient of recipients) {
+        if (recipient.email) {
+          fireEmail({
+            to: recipient.email,
+            subject: `Annulation de demande de congé - ${employe_nom}`,
+            templateName: 'leave-cancelled-by-employee',
+            data: {
+              destinataire_prenom: recipient.prenom || 'Responsable',
+              demandeur_nom: employe_nom,
+              date_debut: conge.date_debut,
+              date_fin: conge.date_fin,
+              action_url: buildCongeUrl(conge.id),
+            }
+          });
+        }
+        await notificationService.creerNotification({
+          entreprise_id: conge.entreprise_id,
+          utilisateur_id: recipient.id,
+          type: 'conge_annule_employe',
+          message: `${employe_nom} a annulé sa demande de congé du ${conge.date_debut} au ${conge.date_fin}`,
+          url: `/conges`,
+          transaction: t,
+        });
+      }
+    }
+
     if ((isManagerValidated || isFinalValidated) && isAdminLevel) {
       const adminNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Administrateur';
       if (employe.email) {

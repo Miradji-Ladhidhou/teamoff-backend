@@ -265,6 +265,13 @@ class EmailService {
         <p><strong>Commentaire :</strong> ${data.commentaire || data.raison || 'Non renseignée'}</p>
         <p><a href="${data.dashboard_url || '#'}">Voir mon espace</a></p>
       `,
+      'leave-cancelled-by-employee': `
+        <p>Bonjour ${data.destinataire_prenom || ''},</p>
+        <p><strong>${data.demandeur_nom || 'Un employé'}</strong> a annulé sa demande de congé.</p>
+        <p><strong>Période :</strong> du ${data.date_debut || '?'} au ${data.date_fin || '?'}</p>
+        <p>Aucune action de votre part n'est requise. La demande a été supprimée.</p>
+        <p><a href="${data.action_url || '#'}">Voir les congés</a></p>
+      `,
       'monthly-report': `
         <p>Bonjour,</p>
         <p>Voici votre rapport mensuel pour ${data.entreprise_nom || 'votre entreprise'}.</p>
