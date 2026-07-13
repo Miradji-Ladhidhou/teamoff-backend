@@ -33,10 +33,10 @@ const createCongeRules = [
   dateField('date_debut'),
   dateField('date_fin'),
   body('debut_demi_journee')
-    .optional()
+    .optional({ nullable: true })
     .isIn(DEMI_JOURNEE).withMessage('debut_demi_journee invalide'),
   body('fin_demi_journee')
-    .optional()
+    .optional({ nullable: true })
     .isIn(DEMI_JOURNEE).withMessage('fin_demi_journee invalide'),
   body('commentaire_employe')
     .optional({ nullable: true })
