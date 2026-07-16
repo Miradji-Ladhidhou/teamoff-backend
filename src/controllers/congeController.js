@@ -2,6 +2,7 @@ const congeService = require('../services/congesService');
 const notificationService = require('../services/notificationSocketService');
 const joursFeriesService = require('../services/joursFeriesService');
 const { getLeaveRules } = require('../services/politiqueConges');
+const emailService = require('../services/emailService');
 const { Conge, Utilisateur, CongeType, Entreprise } = require('../models');
 const dayjs = require('dayjs');
 const isSameOrBefore = require('dayjs/plugin/isSameOrBefore');
@@ -179,4 +180,99 @@ async function getAttestationData(req, res, next) {
   catch(err) { next(err); }
 }
 
-module.exports = { checkOverlap, checkValidationOverlap, create, list, get, update, remove, validate, reject, calculateDays, getAttestationData };
+const STATUT_LABELS_EMAIL = {
+  valide_final: 'Validé',
+  valide_manager: 'Validé (manager)',
+  en_attente_manager: 'En attente',
+  refuse_manager: 'Refusé (manager)',
+  refuse_final: 'Refusé',
+};
+
+async function sendAttestationEmail(req, res, next) {
+  try {
+    const conge = await Conge.findByPk(req.params.id, {
+      include: [
+        { model: Utilisateur, as: 'utilisateur', attributes: ['id', 'prenom', 'nom', 'email', 'service', 'date_embauche'] },
+        { model: CongeType,   as: 'conge_type',  attributes: ['libelle'] },
+        { model: Entreprise,  as: 'entreprise',  attributes: ['nom', 'politique_conges'] },
+      ],
+    });
+
+    if (!conge) return res.status(404).json({ message: 'Congé introuvable' });
+
+    const user = req.user;
+    if (user.role !== 'super_admin' && user.entreprise_id !== conge.entreprise_id && user.id !== conge.utilisateur_id)
+      return res.status(403).json({ message: 'Accès interdit' });
+
+    const recipientEmail = conge.utilisateur?.email;
+    if (!recipientEmail) return res.status(400).json({ message: 'Adresse email de l\'employé introuvable' });
+
+    const fmtDate = (d) => {
+      if (!d) return '—';
+      const [y, m, day] = String(d).split('T')[0].split('-');
+      return `${day}/${m}/${y}`;
+    };
+
+    const fmtEmbauche = (d) => {
+      if (!d) return null;
+      const dt = new Date(String(d).split('T')[0] + 'T00:00:00');
+      if (isNaN(dt)) return null;
+      return dt.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+    };
+
+    const reference = `ATT-${dayjs(conge.date_debut).year()}-${String(conge.id).substring(0, 6).toUpperCase()}`;
+    const genere_le = dayjs().format('DD/MM/YYYY');
+    const employe = conge.utilisateur;
+    const embaucheLabel = fmtEmbauche(employe?.date_embauche);
+
+    const commentairesSection = (() => {
+      const parts = [];
+      if (conge.commentaire_employe) parts.push(`<div style="margin-bottom:8px;"><span style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#6b7280;">Employé</span><br/><span style="font-size:12px;color:#1f2937;">« ${conge.commentaire_employe} »</span></div>`);
+      if (conge.commentaire_manager) parts.push(`<div style="margin-bottom:8px;"><span style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#6b7280;">Manager</span><br/><span style="font-size:12px;color:#1f2937;">« ${conge.commentaire_manager} »</span></div>`);
+      if (conge.commentaire_admin)   parts.push(`<div style="margin-bottom:8px;"><span style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#6b7280;">Administration</span><br/><span style="font-size:12px;color:#1f2937;">« ${conge.commentaire_admin} »</span></div>`);
+      if (parts.length === 0) return '';
+      return `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin-bottom:16px;"><div style="font-size:9px;font-weight:700;color:#1e3a5f;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0;">Commentaires</div>${parts.join('')}</div>`;
+    })();
+
+    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3001').split(',')[0].trim();
+
+    const employe_context = [
+      employe?.service ? `, employé(e) au sein du service <strong style="color:#1e3a5f;">${employe.service}</strong>` : '',
+      embaucheLabel ? `, en poste depuis le <strong style="color:#1e3a5f;">${embaucheLabel}</strong>` : '',
+    ].join('');
+
+    const templateData = {
+      entreprise_nom: conge.entreprise?.nom || '',
+      reference,
+      genere_le,
+      employe_prenom: employe?.prenom || '',
+      employe_nom: employe?.nom || '',
+      employe_email: employe?.email || '',
+      employe_service: employe?.service || '',
+      employe_service_ou_tiret: employe?.service || '—',
+      employe_embauche: embaucheLabel || '',
+      employe_embauche_ou_tiret: embaucheLabel || '—',
+      employe_context,
+      conge_type: conge.conge_type?.libelle || '',
+      date_debut: fmtDate(conge.date_debut),
+      date_fin: fmtDate(conge.date_fin),
+      jours_ouvres: parseFloat(conge.jours_calcules) || 0,
+      statut_label: STATUT_LABELS_EMAIL[conge.statut] || conge.statut,
+      commentaires_section: commentairesSection,
+      action_url: `${frontendUrl}/conges/${conge.id}`,
+      year: dayjs().year(),
+    };
+
+    await emailService.sendEmail(
+      recipientEmail,
+      `Attestation de congé – ${reference}`,
+      'attestation',
+      templateData
+    );
+
+    res.json({ message: 'Attestation envoyée par email avec succès', email: recipientEmail });
+  }
+  catch(err) { next(err); }
+}
+
+module.exports = { checkOverlap, checkValidationOverlap, create, list, get, update, remove, validate, reject, calculateDays, getAttestationData, sendAttestationEmail };

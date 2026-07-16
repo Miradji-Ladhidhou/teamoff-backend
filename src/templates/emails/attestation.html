@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Attestation de congé</title></head>
+  <body style="margin:0;padding:0;background:#f0f4f8;font-family:Arial,sans-serif;color:#1f2937;">
+    <table width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;"><tr><td align="center">
+      <table width="640" cellspacing="0" cellpadding="0" style="max-width:640px;width:100%;background:#fff;border:1px solid #dce3ec;border-radius:14px;overflow:hidden;">
+
+        <!-- En-tête bleue -->
+        <tr><td style="background:#1e3a5f;padding:22px 28px;">
+          <table width="100%" cellspacing="0" cellpadding="0"><tr>
+            <td style="color:#fff;">
+              <div style="font-size:18px;font-weight:700;font-family:Georgia,serif;">{{entreprise_nom}}</div>
+              <div style="font-size:11px;color:rgba(255,255,255,0.55);margin-top:3px;">Document officiel — Usage interne</div>
+            </td>
+            <td align="right" style="color:rgba(255,255,255,0.55);">
+              <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;">Référence</div>
+              <div style="font-size:11px;color:rgba(255,255,255,0.9);font-family:'Courier New',monospace;margin-top:2px;">{{reference}}</div>
+              <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;margin-top:6px;">Émis le</div>
+              <div style="font-size:11px;color:rgba(255,255,255,0.9);font-family:'Courier New',monospace;margin-top:2px;">{{genere_le}}</div>
+            </td>
+          </tr></table>
+        </td></tr>
+
+        <!-- Bande bleue gradient -->
+        <tr><td style="height:4px;background:linear-gradient(90deg,#2563eb 0%,#4f9cf9 60%,#93c5fd 100%);"></td></tr>
+
+        <!-- Titre -->
+        <tr><td style="padding:14px 28px 12px;border-bottom:1px solid #e5e9ef;">
+          <div style="font-size:15px;font-weight:700;color:#1e3a5f;letter-spacing:2px;text-transform:uppercase;font-family:Georgia,serif;">Attestation de congé</div>
+          <div style="font-size:11px;color:#6b7f96;margin-top:3px;">Délivrée par {{entreprise_nom}} · Généré automatiquement via TeamOff</div>
+        </td></tr>
+
+        <!-- Corps -->
+        <tr><td style="padding:20px 28px;">
+
+          <!-- Paragraphe officiel -->
+          <p style="font-size:13px;line-height:1.7;color:#2d3748;margin:0 0 12px 0;text-align:justify;">
+            La société <strong style="color:#1e3a5f;">{{entreprise_nom}}</strong> atteste par le présent document
+            que <strong style="color:#1e3a5f;">{{employe_prenom}} {{employe_nom}}</strong>{{employe_context}},
+            a bénéficié d'un congé de type <strong style="color:#1e3a5f;">« {{conge_type}} »</strong> du
+            <strong style="color:#1e3a5f;">{{date_debut}}</strong> au <strong style="color:#1e3a5f;">{{date_fin}}</strong>,
+            pour une durée de <strong style="color:#1e3a5f;">{{jours_ouvres}} jour(s) ouvré(s)</strong>,
+            conformément à la politique de congés de l'entreprise.
+          </p>
+          <p style="font-size:11px;color:#6b7280;margin:0 0 20px 0;font-style:italic;">
+            Ce document est établi à la demande de l'intéressé(e) pour servir et valoir ce que de droit.
+          </p>
+
+          <!-- Tableau salarié / congé -->
+          <table width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:16px;">
+            <tr valign="top">
+              <td width="49%" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;">
+                <div style="font-size:9px;font-weight:700;color:#1e3a5f;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0;">Salarié</div>
+                <table width="100%" cellspacing="0" cellpadding="3">
+                  <tr><td style="font-size:10px;color:#6b7280;width:70px;">Nom</td><td style="font-size:11px;font-weight:600;color:#1f2937;">{{employe_prenom}} {{employe_nom}}</td></tr>
+                  <tr><td style="font-size:10px;color:#6b7280;">Email</td><td style="font-size:10px;color:#1f2937;">{{employe_email}}</td></tr>
+                  <tr><td style="font-size:10px;color:#6b7280;">Service</td><td style="font-size:11px;color:#1f2937;">{{employe_service_ou_tiret}}</td></tr>
+                  <tr><td style="font-size:10px;color:#6b7280;">Embauche</td><td style="font-size:11px;color:#1f2937;">{{employe_embauche_ou_tiret}}</td></tr>
+                </table>
+              </td>
+              <td width="2%"></td>
+              <td width="49%" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;">
+                <div style="font-size:9px;font-weight:700;color:#1e3a5f;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0;">Congé</div>
+                <table width="100%" cellspacing="0" cellpadding="3">
+                  <tr><td style="font-size:10px;color:#6b7280;width:70px;">Type</td><td style="font-size:11px;font-weight:600;color:#1f2937;">{{conge_type}}</td></tr>
+                  <tr><td style="font-size:10px;color:#6b7280;">Période</td><td style="font-size:10px;color:#1f2937;">{{date_debut}} → {{date_fin}}</td></tr>
+                  <tr><td style="font-size:10px;color:#6b7280;">Jours ouvrés</td><td style="font-size:11px;color:#1f2937;">{{jours_ouvres}} jour(s)</td></tr>
+                  <tr><td style="font-size:10px;color:#6b7280;">Statut</td><td style="font-size:11px;font-weight:700;color:#15803d;">{{statut_label}}</td></tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+
+          <!-- Commentaires (injecté dynamiquement si présents) -->
+          {{commentaires_section}}
+
+          <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0 16px;" />
+          <p style="font-size:11px;color:#6b7280;font-style:italic;margin:0 0 16px 0;">
+            Ce document est généré automatiquement et constitue une attestation officielle de congé. Il ne requiert pas de signature manuscrite pour être valide.
+          </p>
+
+          <!-- Bouton CTA -->
+          <p style="margin:0;"><a href="{{action_url}}" style="display:inline-block;background:#1e3a5f;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;">Consulter le détail du congé</a></p>
+
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="padding:12px 28px;background:#f8fafc;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:11px;">
+          © {{year}} {{entreprise_nom}} · Attestation de congé · {{reference}}
+        </td></tr>
+
+      </table>
+    </td></tr></table>
+  </body>
+</html>
