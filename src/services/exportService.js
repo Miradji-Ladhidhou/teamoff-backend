@@ -10,18 +10,19 @@ class ExportService {
       attributes: ['id', 'nom', 'statut'],
       order: [['nom', 'ASC']],
     })).map((e) => ({ id: e.id, nom: e.nom, statut: e.statut }));
-    if (rows.length === 0) return this.buildCsvHeader(null, 'Entreprises') + 'Aucune donnée';
-    return this.buildCsvHeader(null, 'Entreprises') + new Parser({ fields: ['id', 'nom', 'statut'] }).parse(rows);
+    if (rows.length === 0) return this.buildCsvHeader(null, 'Entreprises', 3) + '"Aucune donnée"';
+    return this.buildCsvHeader(null, 'Entreprises', 3) + new Parser({ fields: ['id', 'nom', 'statut'] }).parse(rows);
   }
 
     static async generateUtilisateursCSV(id, filters) {
       const preview = await this.getUtilisateursPreview(id, filters, 1000);
-      if (!preview.rows.length) return this.buildCsvHeader(filters, 'Utilisateurs') + 'Aucune donnée';
-      return this.buildCsvHeader(filters, 'Utilisateurs') + new Parser({ fields: preview.columns }).parse(preview.rows);
+      const numCols = preview.columns.length || 4;
+      if (!preview.rows.length) return this.buildCsvHeader(filters, 'Utilisateurs', numCols) + '"Aucune donnée"';
+      return this.buildCsvHeader(filters, 'Utilisateurs', numCols) + new Parser({ fields: preview.columns }).parse(preview.rows);
     }
   static async generateStatistiquesCSV(id, filters) {
     const preview = await this.getUsagePreview(id, filters, 1000);
-    return this.buildCsvHeader(filters, 'Statistiques') + new Parser({ fields: preview.columns }).parse(preview.rows);
+    return this.buildCsvHeader(filters, 'Statistiques', 2) + new Parser({ fields: preview.columns }).parse(preview.rows);
   }
 
   // =========================
@@ -69,18 +70,21 @@ class ExportService {
     return new Date(date).toLocaleDateString('fr-FR');
   }
 
-  static buildCsvHeader(filters, exportName) {
+  static buildCsvHeader(filters, exportName, numCols = 1) {
+    // Lignes CSV propres : 1ère colonne = contenu, reste = cellules vides
+    const pad = numCols > 1 ? ','.repeat(numCols - 1) : '';
+    const now = this.formatDate(new Date());
     const lines = [
-      `# Export TeamOff — ${exportName}`,
-      `# Généré le : ${this.formatDate(new Date())}`,
+      `"Export TeamOff - ${exportName}"${pad}`,
+      `"Généré le : ${now}"${pad}`,
     ];
     if (filters && (filters.dateDebut || filters.dateFin)) {
-      const debut = filters.dateDebut ? this.formatDate(filters.dateDebut) : '—';
-      const fin   = filters.dateFin   ? this.formatDate(filters.dateFin)   : '—';
-      lines.push(`# Période : du ${debut} au ${fin}`);
+      const debut = filters.dateDebut ? this.formatDate(filters.dateDebut) : '-';
+      const fin   = filters.dateFin   ? this.formatDate(filters.dateFin)   : '-';
+      lines.push(`"Période : du ${debut} au ${fin}"${pad}`);
     }
-    lines.push('');
-    return lines.join('\n');
+    lines.push(pad); // ligne vide séparatrice
+    return lines.join('\n') + '\n';
   }
 
   // =========================
@@ -163,8 +167,9 @@ class ExportService {
 
   static async generateCongesCSV(id, filters, role = null) {
     const preview = await this.getCongesPreview(id, filters, 1000, role);
-    if (!preview.rows.length) return this.buildCsvHeader(filters, 'Congés') + 'Aucune donnée';
-    return this.buildCsvHeader(filters, 'Congés') + new Parser({ fields: preview.columns }).parse(preview.rows);
+    const numCols = preview.columns.length || 7;
+    if (!preview.rows.length) return this.buildCsvHeader(filters, 'Congés', numCols) + '"Aucune donnée"';
+    return this.buildCsvHeader(filters, 'Congés', numCols) + new Parser({ fields: preview.columns }).parse(preview.rows);
   }
 
   static async generateCongesPDF(id, filters, entreprise = null, role = null) {
@@ -239,8 +244,9 @@ class ExportService {
 
   static async generateAbsencesCSV(id, filters, role = null) {
     const preview = await this.getAbsencesPreview(id, filters, 1000, role);
-    if (!preview.rows.length) return this.buildCsvHeader(filters, 'Absences') + 'Aucune donnée';
-    return this.buildCsvHeader(filters, 'Absences') + new Parser({ fields: preview.columns }).parse(preview.rows);
+    const numCols = preview.columns.length || 6;
+    if (!preview.rows.length) return this.buildCsvHeader(filters, 'Absences', numCols) + '"Aucune donnée"';
+    return this.buildCsvHeader(filters, 'Absences', numCols) + new Parser({ fields: preview.columns }).parse(preview.rows);
   }
 
   static async generateAbsencesPDF(id, filters, entreprise = null, role = null) {
@@ -300,8 +306,9 @@ class ExportService {
 
   static async generateArretsMaladieCSV(id, filters, role = null) {
     const preview = await this.getArretsMaladiePreview(id, filters, 1000, role);
-    if (!preview.rows.length) return this.buildCsvHeader(filters, 'Arrêts maladie') + 'Aucune donnée';
-    return this.buildCsvHeader(filters, 'Arrêts maladie') + new Parser({ fields: preview.columns }).parse(preview.rows);
+    const numCols = preview.columns.length || 4;
+    if (!preview.rows.length) return this.buildCsvHeader(filters, 'Arrêts maladie', numCols) + '"Aucune donnée"';
+    return this.buildCsvHeader(filters, 'Arrêts maladie', numCols) + new Parser({ fields: preview.columns }).parse(preview.rows);
   }
 
   static async generateArretsMaladiePDF(id, filters, entreprise = null, role = null) {
@@ -349,8 +356,9 @@ class ExportService {
 
   static async generateAuditLogsCSV(id, filters) {
     const preview = await this.getAuditPreview(id, filters, 1000);
-    if (!preview.rows.length) return this.buildCsvHeader(filters, 'Journal d\'audit') + 'Aucune donnée';
-    return this.buildCsvHeader(filters, 'Journal d\'audit') + new Parser({ fields: preview.columns }).parse(preview.rows);
+    const numCols = preview.columns.length || 4;
+    if (!preview.rows.length) return this.buildCsvHeader(filters, "Journal d'audit", numCols) + '"Aucune donnée"';
+    return this.buildCsvHeader(filters, "Journal d'audit", numCols) + new Parser({ fields: preview.columns }).parse(preview.rows);
   }
 
   // =========================
