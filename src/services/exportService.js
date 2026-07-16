@@ -366,22 +366,35 @@ static async getUtilisateursPreview(entrepriseId, filters = {}, limit = 50) {
 }
 
 static async getUsagePreview(entrepriseId, filters = {}, limit = 50) {
+  const dateFilter = {};
+  if (filters.dateDebut || filters.dateFin) {
+    dateFilter.date_debut = {};
+    if (filters.dateDebut) dateFilter.date_debut[Op.gte] = filters.dateDebut;
+    if (filters.dateFin)   dateFilter.date_debut[Op.lte] = filters.dateFin;
+  }
 
+  const totalUsers          = await Utilisateur.count({ where: { entreprise_id: entrepriseId } });
+  const totalConges         = await Conge.count({ where: { entreprise_id: entrepriseId, ...dateFilter } });
+  const totalAbsences       = await Absence.count({ where: { entreprise_id: entrepriseId, type_absence: { [Op.ne]: 'maladie' }, ...dateFilter } });
+  const totalArretsMaladie  = await Absence.count({ where: { entreprise_id: entrepriseId, type_absence: 'maladie', ...dateFilter } });
 
-  const totalUsers = await Utilisateur.count({ where: { entreprise_id: entrepriseId } });
-  const totalConges = await Conge.count({ where: { entreprise_id: entrepriseId } });
-  const totalAbsences = await Absence.count({ where: { entreprise_id: entrepriseId, type_absence: { [Op.ne]: 'maladie' } } });
-  const totalArretsMaladie = await Absence.count({ where: { entreprise_id: entrepriseId, type_absence: 'maladie' } });
+  const rows = [];
 
-  const rows = [
-    { metric: 'Utilisateurs', value: totalUsers },
-    { metric: 'Congés', value: totalConges },
-    { metric: 'Absences', value: totalAbsences },
-    { metric: 'Arrêts maladie', value: totalArretsMaladie }
-  ];
+  if (filters.dateDebut || filters.dateFin) {
+    const debut = filters.dateDebut ? this.formatDate(filters.dateDebut) : '—';
+    const fin   = filters.dateFin   ? this.formatDate(filters.dateFin)   : '—';
+    rows.push({ Indicateur: 'Période', Valeur: `du ${debut} au ${fin}` });
+  }
+
+  rows.push(
+    { Indicateur: 'Utilisateurs', Valeur: totalUsers },
+    { Indicateur: 'Congés',       Valeur: totalConges },
+    { Indicateur: 'Absences',     Valeur: totalAbsences },
+    { Indicateur: 'Arrêts maladie', Valeur: totalArretsMaladie }
+  );
 
   return {
-    columns: ['metric', 'value'],
+    columns: ['Indicateur', 'Valeur'],
     rows,
     count: rows.length,
     limitedTo: rows.length
