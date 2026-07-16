@@ -225,6 +225,58 @@ async function sendAttestationEmail(req, res, next) {
     const employe = conge.utilisateur;
     const embaucheLabel = fmtEmbauche(employe?.date_embauche);
 
+    // Calcul du décompte des jours (même logique que getAttestationData)
+    const joursFeries = await joursFeriesService.getJoursFeriesEntreprise(conge.entreprise_id);
+    const leaveRules = getLeaveRules(conge.entreprise);
+    const { count_saturday, count_sunday } = leaveRules.blocked_days || {};
+    const start = dayjs(conge.date_debut);
+    const end = dayjs(conge.date_fin);
+    const jours_calendaires = end.diff(start, 'day') + 1;
+    const jours_ouvres = parseFloat(conge.jours_calcules) || 0;
+    const detail = [];
+    for (let d = start; d.isSameOrBefore(end, 'day'); d = d.add(1, 'day')) {
+      const dow = d.day();
+      const dateStr = d.format('YYYY-MM-DD');
+      if (dow === 0) {
+        detail.push({ date: dateStr, type: 'weekend', label: 'Dimanche', inclus: count_sunday === true });
+      } else if (dow === 6) {
+        detail.push({ date: dateStr, type: 'weekend', label: 'Samedi', inclus: count_saturday === true });
+      } else {
+        const jf = findJourFerie(dateStr, joursFeries);
+        if (jf) detail.push({ date: dateStr, type: 'ferie', label: jf.libelle, inclus: false });
+      }
+    }
+
+    const decompteSection = (() => {
+      const rows = [];
+      rows.push(`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:11px;"><span style="color:#374151;">Jours calendaires</span><span style="font-weight:600;color:#1f2937;">${jours_calendaires} j</span></div>`);
+
+      const weekends = detail.filter(d => d.type === 'weekend');
+      if (weekends.length > 0) {
+        rows.push(`<div style="font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-top:8px;margin-bottom:4px;">Week-ends</div>`);
+        weekends.forEach(d => {
+          const badge = d.inclus
+            ? `<span style="font-size:9px;background:#dcfce7;color:#15803d;padding:1px 6px;border-radius:4px;">inclus</span>`
+            : `<span style="font-size:9px;background:#fee2e2;color:#b91c1c;padding:1px 6px;border-radius:4px;">exclu</span>`;
+          rows.push(`<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;font-size:10px;color:#4b5563;"><span>${d.label} ${fmtDate(d.date)}</span>${badge}</div>`);
+        });
+      }
+
+      const feries = detail.filter(d => d.type === 'ferie');
+      rows.push(`<div style="font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-top:8px;margin-bottom:4px;">Jours fériés</div>`);
+      if (feries.length === 0) {
+        rows.push(`<div style="font-size:10px;color:#9ca3af;font-style:italic;">Aucun jour férié sur la période</div>`);
+      } else {
+        feries.forEach(d => {
+          rows.push(`<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;font-size:10px;color:#4b5563;"><span>${d.label} — ${fmtDate(d.date)}</span><span style="font-size:9px;background:#fee2e2;color:#b91c1c;padding:1px 6px;border-radius:4px;">exclu</span></div>`);
+        });
+      }
+
+      rows.push(`<div style="border-top:1px solid #e5e7eb;margin-top:8px;padding-top:6px;display:flex;justify-content:space-between;font-size:12px;font-weight:700;"><span style="color:#1e3a5f;">= Jours de congé accordés</span><span style="color:#1e3a5f;">${jours_ouvres} j</span></div>`);
+
+      return `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin-bottom:16px;"><div style="font-size:9px;font-weight:700;color:#1e3a5f;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0;">Décompte des jours · du ${fmtDate(conge.date_debut)} au ${fmtDate(conge.date_fin)}</div>${rows.join('')}</div>`;
+    })();
+
     const commentairesSection = (() => {
       const parts = [];
       if (conge.commentaire_employe) parts.push(`<div style="margin-bottom:8px;"><span style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#6b7280;">Employé</span><br/><span style="font-size:12px;color:#1f2937;">« ${conge.commentaire_employe} »</span></div>`);
@@ -256,8 +308,9 @@ async function sendAttestationEmail(req, res, next) {
       conge_type: conge.conge_type?.libelle || '',
       date_debut: fmtDate(conge.date_debut),
       date_fin: fmtDate(conge.date_fin),
-      jours_ouvres: parseFloat(conge.jours_calcules) || 0,
+      jours_ouvres,
       statut_label: STATUT_LABELS_EMAIL[conge.statut] || conge.statut,
+      decompte_section: decompteSection,
       commentaires_section: commentairesSection,
       action_url: `${frontendUrl}/conges/${conge.id}`,
       year: dayjs().year(),
