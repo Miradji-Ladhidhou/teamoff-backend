@@ -18,7 +18,8 @@ function handleExportError(next, err) {
 function sendCSV(res, data, filename) {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.send(data);
+  // Préfixe BOM UTF-8 (0xEF 0xBB 0xBF) : Excel/Windows détecte l'encodage correctement
+  res.send(Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(data, 'utf8')]));
 }
 
 function sendPDF(res, data, filename) {
