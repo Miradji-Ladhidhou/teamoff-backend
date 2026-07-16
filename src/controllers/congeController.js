@@ -247,72 +247,85 @@ async function sendAttestationEmail(req, res, next) {
       }
     }
 
-    const decompteSection = (() => {
+    // period label (avec demi-journée si applicable)
+    const DEMI_LABELS_EMAIL = { matin: 'matin', apres_midi: 'après-midi' };
+    const periodStart = conge.debut_demi_journee
+      ? `${fmtDate(conge.date_debut)} (${DEMI_LABELS_EMAIL[conge.debut_demi_journee] || conge.debut_demi_journee})`
+      : fmtDate(conge.date_debut);
+    const periodEnd = conge.fin_demi_journee
+      ? `${fmtDate(conge.date_fin)} (${DEMI_LABELS_EMAIL[conge.fin_demi_journee] || conge.fin_demi_journee})`
+      : fmtDate(conge.date_fin);
+    const period_label = `${periodStart} → ${periodEnd}`;
+
+    // Décompte des jours (table-based, inline styles)
+    const decompteRows = (() => {
       const rows = [];
-      rows.push(`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:11px;"><span style="color:#374151;">Jours calendaires</span><span style="font-weight:600;color:#1f2937;">${jours_calendaires} j</span></div>`);
+      rows.push(`<table width="100%" cellspacing="0" cellpadding="0"><tr><td style="font-size:12px;color:#4a6080;font-family:Arial,sans-serif;padding:3px 0;border-bottom:1px solid rgba(37,99,235,0.1);">Jours calendaires</td><td align="right" style="font-size:12px;font-weight:700;color:#1e3a5f;font-family:Arial,sans-serif;padding:3px 0;border-bottom:1px solid rgba(37,99,235,0.1);white-space:nowrap;">${jours_calendaires} j</td></tr>`);
 
       const weekends = detail.filter(d => d.type === 'weekend');
       if (weekends.length > 0) {
-        rows.push(`<div style="font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-top:8px;margin-bottom:4px;">Week-ends</div>`);
+        rows.push(`<tr><td colspan="2" style="padding-top:4px;padding-bottom:2px;font-size:10px;font-weight:700;color:#4a6080;text-transform:uppercase;letter-spacing:0.8px;font-family:Arial,sans-serif;">Week-ends</td></tr>`);
         weekends.forEach(d => {
           const badge = d.inclus
-            ? `<span style="font-size:9px;background:#dcfce7;color:#15803d;padding:1px 6px;border-radius:4px;">inclus</span>`
-            : `<span style="font-size:9px;background:#fee2e2;color:#b91c1c;padding:1px 6px;border-radius:4px;">exclu</span>`;
-          rows.push(`<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;font-size:10px;color:#4b5563;"><span>${d.label} ${fmtDate(d.date)}</span>${badge}</div>`);
+            ? `<span style="font-size:10px;font-weight:700;padding:1px 5px;border-radius:10px;background:#dcfce7;color:#15803d;">inclus</span>`
+            : `<span style="font-size:10px;font-weight:700;padding:1px 5px;border-radius:10px;background:#fee2e2;color:#b91c1c;">exclu</span>`;
+          rows.push(`<tr><td style="padding:1px 0 1px 6px;font-size:10px;color:#4a6080;font-family:Arial,sans-serif;">${d.label} ${fmtDate(d.date)}</td><td align="right" style="padding:1px 0;">${badge}</td></tr>`);
         });
       }
 
       const feries = detail.filter(d => d.type === 'ferie');
-      rows.push(`<div style="font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-top:8px;margin-bottom:4px;">Jours fériés</div>`);
+      rows.push(`<tr><td colspan="2" style="padding-top:4px;padding-bottom:2px;font-size:10px;font-weight:700;color:#4a6080;text-transform:uppercase;letter-spacing:0.8px;font-family:Arial,sans-serif;">Jours fériés</td></tr>`);
       if (feries.length === 0) {
-        rows.push(`<div style="font-size:10px;color:#9ca3af;font-style:italic;">Aucun jour férié sur la période</div>`);
+        rows.push(`<tr><td colspan="2" style="padding:1px 0 1px 6px;font-size:10px;color:#94a3b8;font-family:Arial,sans-serif;font-style:italic;">Aucun jour férié sur la période</td></tr>`);
       } else {
         feries.forEach(d => {
-          rows.push(`<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;font-size:10px;color:#4b5563;"><span>${d.label} — ${fmtDate(d.date)}</span><span style="font-size:9px;background:#fee2e2;color:#b91c1c;padding:1px 6px;border-radius:4px;">exclu</span></div>`);
+          rows.push(`<tr><td style="padding:1px 0 1px 6px;font-size:10px;color:#4a6080;font-family:Arial,sans-serif;">${d.label} — ${fmtDate(d.date)}</td><td align="right" style="padding:1px 0;"><span style="font-size:10px;font-weight:700;padding:1px 5px;border-radius:10px;background:#fee2e2;color:#b91c1c;">exclu</span></td></tr>`);
         });
       }
 
-      rows.push(`<div style="border-top:1px solid #e5e7eb;margin-top:8px;padding-top:6px;display:flex;justify-content:space-between;font-size:12px;font-weight:700;"><span style="color:#1e3a5f;">= Jours de congé accordés</span><span style="color:#1e3a5f;">${jours_ouvres} j</span></div>`);
-
-      return `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin-bottom:16px;"><div style="font-size:9px;font-weight:700;color:#1e3a5f;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0;">Décompte des jours · du ${fmtDate(conge.date_debut)} au ${fmtDate(conge.date_fin)}</div>${rows.join('')}</div>`;
+      rows.push(`<tr><td colspan="2" style="padding-top:4px;border-top:2px solid #2563eb;"></td></tr>`);
+      rows.push(`<tr><td style="font-size:12px;font-weight:700;color:#1e3a5f;font-family:Arial,sans-serif;padding:3px 0;">= Jours de congé accordés</td><td align="right" style="font-size:14px;font-weight:700;color:#2563eb;font-family:Arial,sans-serif;padding:3px 0;white-space:nowrap;">${jours_ouvres} j</td></tr>`);
+      rows.push(`</table>`);
+      return rows.join('');
     })();
 
-    const commentairesSection = (() => {
+    // Commentaires (table-based, inline styles)
+    const commentsRows = (() => {
       const parts = [];
-      if (conge.commentaire_employe) parts.push(`<div style="margin-bottom:8px;"><span style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#6b7280;">Employé</span><br/><span style="font-size:12px;color:#1f2937;">« ${conge.commentaire_employe} »</span></div>`);
-      if (conge.commentaire_manager) parts.push(`<div style="margin-bottom:8px;"><span style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#6b7280;">Manager</span><br/><span style="font-size:12px;color:#1f2937;">« ${conge.commentaire_manager} »</span></div>`);
-      if (conge.commentaire_admin)   parts.push(`<div style="margin-bottom:8px;"><span style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#6b7280;">Administration</span><br/><span style="font-size:12px;color:#1f2937;">« ${conge.commentaire_admin} »</span></div>`);
-      if (parts.length === 0) return '';
-      return `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin-bottom:16px;"><div style="font-size:9px;font-weight:700;color:#1e3a5f;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0;">Commentaires</div>${parts.join('')}</div>`;
+      if (conge.commentaire_employe) parts.push({ label: 'Employé', text: conge.commentaire_employe });
+      if (conge.commentaire_manager) parts.push({ label: 'Manager', text: conge.commentaire_manager });
+      if (conge.commentaire_admin)   parts.push({ label: 'Administration', text: conge.commentaire_admin });
+      if (parts.length === 0) return `<div style="font-size:12px;color:#a0aec0;font-family:Arial,sans-serif;font-style:italic;">Aucun commentaire.</div>`;
+      return parts.map(c => `<div style="margin-bottom:5px;"><div style="font-size:10px;color:#a16207;font-family:Arial,sans-serif;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:1px;">${c.label}</div><div style="font-size:12px;color:#3b2e00;font-family:Arial,sans-serif;font-style:italic;line-height:1.35;">« ${c.text} »</div></div>`).join('');
     })();
 
-    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3001').split(',')[0].trim();
+    const nom_complet = `${employe?.prenom || ''} ${employe?.nom || ''}`.trim();
 
     const employe_context = [
-      employe?.service ? `, employé(e) au sein du service <strong style="color:#1e3a5f;">${employe.service}</strong>` : '',
-      embaucheLabel ? `, en poste depuis le <strong style="color:#1e3a5f;">${embaucheLabel}</strong>` : '',
+      employe?.service ? `, employé(e) au sein du service <strong style="color:#1e3a5f;font-weight:700;">${employe.service}</strong>` : '',
+      embaucheLabel ? `, en poste depuis le <strong style="color:#1e3a5f;font-weight:700;">${embaucheLabel}</strong>` : '',
     ].join('');
+
+    const statut_color = conge.statut === 'valide_final' ? '#15803d' : '#1a2b40';
 
     const templateData = {
       entreprise_nom: conge.entreprise?.nom || '',
       reference,
       genere_le,
-      employe_prenom: employe?.prenom || '',
-      employe_nom: employe?.nom || '',
+      nom_complet,
       employe_email: employe?.email || '',
-      employe_service: employe?.service || '',
       employe_service_ou_tiret: employe?.service || '—',
-      employe_embauche: embaucheLabel || '',
       employe_embauche_ou_tiret: embaucheLabel || '—',
       employe_context,
       conge_type: conge.conge_type?.libelle || '',
       date_debut: fmtDate(conge.date_debut),
       date_fin: fmtDate(conge.date_fin),
+      period_label,
       jours_ouvres,
       statut_label: STATUT_LABELS_EMAIL[conge.statut] || conge.statut,
-      decompte_section: decompteSection,
-      commentaires_section: commentairesSection,
-      action_url: `${frontendUrl}/conges/${conge.id}`,
+      statut_color,
+      comments_rows: commentsRows,
+      decompte_rows: decompteRows,
       year: dayjs().year(),
     };
 
