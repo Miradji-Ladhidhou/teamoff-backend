@@ -1440,7 +1440,14 @@ async function updateConge(id, data, user, req = null) {
     for (const field of allowedFields) {
       if (field in data) {
         if (field === 'commentaire_employe' && typeof data[field] === 'string') {
-          updates[field] = sanitizeHtml(data[field], { allowedTags: [], allowedAttributes: {} });
+          const sanitized = sanitizeHtml(data[field], { allowedTags: [], allowedAttributes: {} });
+          if (['admin_entreprise', 'super_admin'].includes(user?.role)) {
+            updates['commentaire_admin'] = sanitized;
+          } else if (user?.role === 'manager') {
+            updates['commentaire_manager'] = sanitized;
+          } else {
+            updates['commentaire_employe'] = sanitized;
+          }
         } else if (field === 'debut_demi_journee') {
           updates[field] = data[field] || 'matin';
         } else if (field === 'fin_demi_journee') {
