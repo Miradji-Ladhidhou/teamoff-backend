@@ -43,11 +43,11 @@ async function getCalendrier(req, res, next) {
       where.utilisateur_id = utilisateurId;
     }
 
-    // Employé : ses propres congés (tous statuts) + congés des collègues non refusés et non réservés
+    // Employé : ses propres congés (tous statuts) + congés des collègues non refusés
     if (req.user.role === 'employe') {
       where[Op.or] = [
         { utilisateur_id: req.user.id },
-        { statut: { [Op.notIn]: ['reserve', 'refuse_manager', 'refuse_final'] } },
+        { statut: { [Op.notIn]: ['refuse_manager', 'refuse_final'] } },
       ];
     }
 
