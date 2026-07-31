@@ -1912,6 +1912,50 @@ async function calculateDaysPreview({ date_debut, date_fin, debut_demi_journee, 
   };
 }
 
+async function activerReservation(congeId, reqUser) {
+  const emailQueue = [];
+  const conge = await sequelize.transaction(async (t) => {
+    const conge = await Conge.findByPk(congeId, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!conge) throw new Error('Congé introuvable');
+    if (conge.statut !== 'reserve') throw new Error('Ce congé n\'est pas une réservation');
+    if (reqUser.entreprise_id !== conge.entreprise_id) throw new Error('Accès interdit');
+
+    conge.statut = 'en_attente_manager';
+    await conge.save({ transaction: t });
+
+    const employe = await Utilisateur.findByPk(conge.utilisateur_id, { transaction: t });
+    const congeType = await CongeType.findByPk(conge.conge_type_id, { transaction: t });
+    const employeNom = `${employe?.prenom || ''} ${employe?.nom || ''}`.trim() || 'L\'employé';
+
+    emailQueue.push({
+      to: employe?.email,
+      subject: 'Votre réservation est maintenant une demande active',
+      templateName: 'leave-reservation-activated',
+      data: {
+        destinataire_prenom: employe?.prenom || 'Employé',
+        type_conge: congeType?.libelle || 'Congé',
+        date_debut: conge.date_debut,
+        date_fin: conge.date_fin,
+        action_url: buildCongeUrl(conge.id),
+      }
+    });
+
+    await notificationService.creerNotification({
+      entreprise_id: conge.entreprise_id,
+      utilisateur_id: conge.utilisateur_id,
+      type: 'conge_demande',
+      message: `Votre réservation de congé (${conge.date_debut} - ${conge.date_fin}) a été activée et est en attente de validation.`,
+      url: `/conges/${conge.id}`,
+      transaction: t,
+    });
+
+    return conge;
+  });
+
+  emailQueue.forEach(payload => fireEmail(payload));
+  return conge;
+}
+
 module.exports = {
   checkOverlapConge,
   getValidationOverlapStatus,
@@ -1922,6 +1966,7 @@ module.exports = {
   deleteConge,
   validerConge,
   rejeterConge,
+  activerReservation,
   calcJoursConges,
   calculateDaysPreview
 };

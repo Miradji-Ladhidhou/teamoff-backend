@@ -341,4 +341,12 @@ async function sendAttestationEmail(req, res, next) {
   catch(err) { next(err); }
 }
 
-module.exports = { checkOverlap, checkValidationOverlap, create, list, get, update, remove, validate, reject, calculateDays, getAttestationData, sendAttestationEmail };
+async function activate(req, res, next) {
+  try {
+    const conge = await congeService.activerReservation(req.params.id, req.user);
+    res.json(conge);
+  }
+  catch(err) { next(err); }
+}
+
+module.exports = { checkOverlap, checkValidationOverlap, create, list, get, update, remove, validate, reject, activate, calculateDays, getAttestationData, sendAttestationEmail };
