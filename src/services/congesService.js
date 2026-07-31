@@ -658,15 +658,29 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       throw new Error(`Durée maximale dépassée: ${leaveRules.max_consecutive_days} jour(s) consécutif(s) max`);
     }
 
-    if (jours > (safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves))) {
+    const soldeDisponible = safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves);
+    const soldeInsuffisant = jours > soldeDisponible;
+
+    // Si solde insuffisant mais congé dans une année future → réservation prévisionnelle
+    const anneeConge = dayjs(date_debut).year();
+    const anneeActuelle = dayjs().year();
+    const isReservation = soldeInsuffisant && anneeConge > anneeActuelle;
+
+    if (soldeInsuffisant && !isReservation) {
       throw new Error('Solde insuffisant');
     }
 
     const approvalWorkflow = leaveRules.approval_workflow;
-    if (approvalWorkflow === 'auto') {
+    let statutConge;
+    if (isReservation) {
+      statutConge = 'reserve';
+      compteur.jours_reserves = safeNumber(compteur.jours_reserves) + safeNumber(jours);
+    } else if (approvalWorkflow === 'auto') {
+      statutConge = 'valide_final';
       compteur.jours_acquis = Math.max(0, safeNumber(compteur.jours_acquis) - safeNumber(jours));
       compteur.jours_pris = safeNumber(compteur.jours_pris) + safeNumber(jours);
     } else {
+      statutConge = 'en_attente_manager';
       compteur.jours_reserves = safeNumber(compteur.jours_reserves) + safeNumber(jours);
     }
     await compteur.save({ transaction: t });
@@ -681,7 +695,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       debut_demi_journee: debutDemiJournee,
       fin_demi_journee: finDemiJournee,
       commentaire_employe: safeCommentaire,
-      statut: approvalWorkflow === 'auto' ? 'valide_final' : 'en_attente_manager',
+      statut: statutConge,
       jours_calcules: jours
     }, { transaction: t });
 
@@ -755,31 +769,73 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       });
     }
 
-    // Notification à l'employé : congé créé
+    // Notification à l'employé : congé créé ou réservé
     if (shouldNotifyOnCreate) {
-      emailQueue.push({
-        to: utilisateur.email,
-        subject: 'Confirmation de creation de votre demande de conge',
-        templateName: 'leave-created-employee',
-        data: {
-          destinataire_prenom: utilisateur.prenom || 'Collaborateur',
-          date_debut,
-          date_fin,
-          statut_label: approvalWorkflow === 'auto' ? 'Validee automatiquement' : 'En attente de validation',
-          overlap_warning_html: overlapWarningPayload
-            ? `<div style="margin-top:12px;padding:12px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;color:#92400e;"><strong>Alerte chevauchement :</strong><br/>${overlapWarningPayload.message}</div>`
-            : '',
-          action_url: buildCongeUrl(conge.id),
+      if (isReservation) {
+        emailQueue.push({
+          to: utilisateur.email,
+          subject: 'Réservation de congé enregistrée',
+          templateName: 'leave-reservation-employee',
+          data: {
+            destinataire_prenom: utilisateur.prenom || 'Collaborateur',
+            date_debut,
+            date_fin,
+            type_conge: congeType.libelle || 'Congé',
+            jours_calcules: jours,
+            action_url: buildCongeUrl(conge.id),
+          }
+        });
+        await notificationService.creerNotification({
+          entreprise_id: utilisateur.entreprise_id,
+          utilisateur_id: utilisateur.id,
+          type: 'conge_cree',
+          message: `Votre réservation de congé du ${date_debut} au ${date_fin} a été enregistrée (solde insuffisant pour l'année en cours).`,
+          url: `/conges/${conge.id}`,
+          transaction: t
+        });
+        // Notifier aussi admins et managers de la réservation
+        const allRecipients = [...managers, ...(admin ? [admin] : [])];
+        for (const recipient of allRecipients) {
+          emailQueue.push({
+            to: recipient.email,
+            subject: `Réservation de congé - ${utilisateurNomComplet}`,
+            templateName: 'leave-reservation-admin',
+            data: {
+              destinataire_prenom: recipient.prenom || 'Responsable',
+              demandeur_nom: utilisateurNomComplet,
+              date_debut,
+              date_fin,
+              type_conge: congeType.libelle || 'Congé',
+              jours_calcules: jours,
+              action_url: buildCongeUrl(conge.id),
+            }
+          });
         }
-      });
-      await notificationService.creerNotification({
-        entreprise_id: utilisateur.entreprise_id,
-        utilisateur_id: utilisateur.id,
-        type: 'conge_cree',
-        message: `Votre congé du ${date_debut} au ${date_fin} ${approvalWorkflow === 'auto' ? 'a été validé automatiquement' : 'est en attente de validation'}`,
-        url: `/conges/${conge.id}`,
-        transaction: t
-      });
+      } else {
+        emailQueue.push({
+          to: utilisateur.email,
+          subject: 'Confirmation de creation de votre demande de conge',
+          templateName: 'leave-created-employee',
+          data: {
+            destinataire_prenom: utilisateur.prenom || 'Collaborateur',
+            date_debut,
+            date_fin,
+            statut_label: approvalWorkflow === 'auto' ? 'Validee automatiquement' : 'En attente de validation',
+            overlap_warning_html: overlapWarningPayload
+              ? `<div style="margin-top:12px;padding:12px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;color:#92400e;"><strong>Alerte chevauchement :</strong><br/>${overlapWarningPayload.message}</div>`
+              : '',
+            action_url: buildCongeUrl(conge.id),
+          }
+        });
+        await notificationService.creerNotification({
+          entreprise_id: utilisateur.entreprise_id,
+          utilisateur_id: utilisateur.id,
+          type: 'conge_cree',
+          message: `Votre congé du ${date_debut} au ${date_fin} ${approvalWorkflow === 'auto' ? 'a été validé automatiquement' : 'est en attente de validation'}`,
+          url: `/conges/${conge.id}`,
+          transaction: t
+        });
+      }
     }
 
     if (overlapWarningPayload) {

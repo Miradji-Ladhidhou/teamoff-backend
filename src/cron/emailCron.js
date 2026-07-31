@@ -228,6 +228,70 @@ async function runWeeklyManagerSummary() {
 }
 
 // ---------------------------------------------------------------------------
+// Rappels réservations de congés (J-30 et J-7 avant le départ)
+// ---------------------------------------------------------------------------
+async function runReservationReminders() {
+  const targets = [
+    { days: 30, label: '30 jours' },
+    { days: 7,  label: '7 jours' },
+  ];
+
+  for (const { days, label } of targets) {
+    const targetDate = dayjs().add(days, 'day').format('YYYY-MM-DD');
+
+    const reservations = await Conge.findAll({
+      where: {
+        statut: 'reserve',
+        date_debut: targetDate,
+      },
+      include: [
+        { model: Utilisateur, as: 'utilisateur', attributes: ['id', 'email', 'prenom', 'nom', 'entreprise_id'] },
+        { model: CongeType, as: 'conge_type', attributes: ['libelle'] },
+      ],
+    });
+
+    for (const conge of reservations) {
+      if (!conge.utilisateur) continue;
+
+      const admins = await Utilisateur.findAll({
+        where: {
+          entreprise_id: conge.utilisateur.entreprise_id,
+          role: { [Op.in]: ['admin_entreprise', 'manager'] },
+          statut: 'actif',
+        },
+        attributes: ['id', 'email', 'prenom', 'nom'],
+      });
+
+      const demandeurNom = `${conge.utilisateur.prenom || ''} ${conge.utilisateur.nom || ''}`.trim();
+      const actionUrl = `${process.env.FRONTEND_URL?.split(',')[0] || ''}/conges/${conge.id}`;
+
+      for (const admin of admins) {
+        try {
+          await emailService.sendEmail(
+            admin.email,
+            `Rappel réservation congé dans ${label} - ${demandeurNom}`,
+            'leave-reservation-reminder',
+            {
+              destinataire_prenom: admin.prenom || 'Responsable',
+              demandeur_nom: demandeurNom,
+              date_debut: conge.date_debut,
+              date_fin: conge.date_fin,
+              type_conge: conge.conge_type?.libelle || 'Congé',
+              jours_calcules: conge.jours_calcules,
+              jours_avant: days,
+              action_url: actionUrl,
+            }
+          );
+          logger.info(`[email-cron] Rappel réservation J-${days} → ${admin.email} (congé ${conge.id})`);
+        } catch (e) {
+          logger.error('[email-cron] sendReservationReminder error', { error: e.message, congeId: conge.id });
+        }
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Initialisation des crons
 // ---------------------------------------------------------------------------
 function initEmailCron() {
@@ -261,6 +325,12 @@ function initEmailCron() {
     catch (e) { logger.error('[email-cron] runWeeklyManagerSummary failed', { error: e.message }); }
   });
 
+  // Rappels réservations (J-30 et J-7) — chaque jour à 08:30
+  cron.schedule('30 8 * * *', async () => {
+    try { await runReservationReminders(); }
+    catch (e) { logger.error('[email-cron] runReservationReminders failed', { error: e.message }); }
+  });
+
   logger.info('[email-cron] Planification emails automatiques activée');
 }
 
@@ -271,4 +341,5 @@ module.exports = {
   runMonthlyReports,
   runInvitationReminders,
   runWeeklyManagerSummary,
+  runReservationReminders,
 };

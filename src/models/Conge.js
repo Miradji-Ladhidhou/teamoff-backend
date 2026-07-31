@@ -25,7 +25,7 @@ module.exports = (sequelize, DataTypes) => {
     },
 
     statut: {
-      type: DataTypes.ENUM('en_attente_manager','valide_manager','refuse_manager','valide_final','refuse_final'),
+      type: DataTypes.ENUM('reserve','en_attente_manager','valide_manager','refuse_manager','valide_final','refuse_final'),
       allowNull: false,
       defaultValue: 'en_attente_manager',
     },
