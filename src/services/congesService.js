@@ -241,7 +241,7 @@ async function getEntrepriseLeaveRules(entrepriseId, transaction = null) {
 async function computeOverlapContext({ entrepriseId, utilisateurId, dateDebut, dateFin, userService = null, transaction = null, excludeCongeId = null }) {
   const where = {
     entreprise_id: entrepriseId,
-    statut: { [Op.in]: ['en_attente_manager', 'valide_manager', 'valide_final'] },
+    statut: { [Op.in]: ['reserve', 'en_attente_manager', 'valide_manager', 'valide_final'] },
     date_debut: { [Op.lte]: dateFin },
     date_fin: { [Op.gte]: dateDebut }
   };
@@ -711,7 +711,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
 
     const utilisateurNomComplet = `${utilisateur.prenom || ''} ${utilisateur.nom || ''}`.trim() || utilisateur.nom;
 
-    if (shouldNotifyOnCreate && managers.length > 0) {
+    if (shouldNotifyOnCreate && !isReservation && managers.length > 0) {
       for (const manager of managers) {
         emailQueue.push({
           to: manager.email,
@@ -741,7 +741,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       }
     }
 
-    if (shouldNotifyOnCreate && admin) {
+    if (shouldNotifyOnCreate && !isReservation && admin) {
       emailQueue.push({
         to: admin.email,
         subject: `Nouvelle demande de conge - ${utilisateurNomComplet}`,
@@ -1764,11 +1764,12 @@ async function deleteConge(id, user, options = {}) {
       throw new Error('Accès interdit: entreprise différente');
     }
 
+    const isReserved = conge.statut === 'reserve';
     const isPending = conge.statut === 'en_attente_manager';
     const isManagerValidated = conge.statut === 'valide_manager';
     const isFinalValidated = conge.statut === 'valide_final';
 
-    if (!isPending && !isManagerValidated && !isFinalValidated) throw new Error('Impossible de supprimer');
+    if (!isReserved && !isPending && !isManagerValidated && !isFinalValidated) throw new Error('Impossible de supprimer');
 
     if (isManagerValidated && !isAdminLevel) {
       throw new Error('Seul un administrateur peut annuler un congé validé par le manager');
@@ -1808,7 +1809,7 @@ async function deleteConge(id, user, options = {}) {
       throw new Error('Compteur introuvable pour annulation: aucune mise à jour de solde appliquée');
     }
 
-    if (isPending || isManagerValidated) {
+    if (isReserved || isPending || isManagerValidated) {
       compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
     } else {
       compteur.jours_acquis = safeNumber(compteur.jours_acquis) + safeNumber(joursConge);
