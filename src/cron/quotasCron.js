@@ -1,7 +1,37 @@
 const cron = require('node-cron');
 const logger = require('../utils/logger');
 const quotasService = require('../services/quotasService');
-const { Entreprise } = require('../models');
+const { tryActivateReservations } = require('../services/congesService');
+const { Entreprise, Conge } = require('../models');
+
+/**
+ * Tente d'activer toutes les réservations 'reserve' pour une entreprise.
+ * Appelée après chaque crédit de compteur (mensuel, annuel).
+ */
+async function tryActivateCompanyReservations(entrepriseId) {
+  const pending = await Conge.findAll({
+    attributes: ['utilisateur_id', 'conge_type_id', 'date_debut'],
+    where: { entreprise_id: entrepriseId, statut: 'reserve' },
+    raw: true,
+  });
+
+  const seen = new Set();
+  for (const row of pending) {
+    const annee = new Date(row.date_debut).getFullYear();
+    const key = `${row.utilisateur_id}::${row.conge_type_id}::${annee}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const result = await tryActivateReservations(row.utilisateur_id, row.conge_type_id, annee);
+    if (result.activated.length > 0) {
+      logger.info(
+        `[quotas-cron] ${result.activated.length} réservation(s) activée(s) pour utilisateur=${row.utilisateur_id} type=${row.conge_type_id} année=${annee}`
+      );
+    }
+    if (result.error) {
+      logger.error(`[quotas-cron] Erreur activation réservations:`, { error: result.error });
+    }
+  }
+}
 
 async function processAllEnterprises(handler) {
   const entreprises = await Entreprise.findAll({
@@ -21,6 +51,7 @@ async function runAnnualInit() {
   await processAllEnterprises(async (entreprise) => {
     await quotasService.initQuotaAnnuel(entreprise.id, year);
     logger.info(`[quotas-cron] Initialisation OK: ${entreprise.nom} (${entreprise.id})`);
+    await tryActivateCompanyReservations(entreprise.id);
   });
 }
 
@@ -35,6 +66,7 @@ async function runMonthlyAccrual() {
     logger.info(
       `[quotas-cron] Crédit OK: ${entreprise.nom} (${entreprise.id}) - appliqués=${result.applied}, ignorés=${result.skipped}, ajouté=${result.total_added}`
     );
+    await tryActivateCompanyReservations(entreprise.id);
   });
 }
 

@@ -108,6 +108,8 @@ function normalizeLeavePolicy(rawPolicy = {}) {
     notification_settings: normalizeNotificationSettings(rawPolicy?.notification_settings),
     report_autorise: rawPolicy?.report_autorise === true,
     report_max_jours: Math.max(0, Number(rawPolicy?.report_max_jours) || 0),
+    // Réservation N+1 sans solde — true par défaut pour ne pas casser les entreprises existantes.
+    autoriser_reservation_sans_solde: rawPolicy?.autoriser_reservation_sans_solde !== false,
   };
 }
 

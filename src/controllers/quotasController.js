@@ -1,5 +1,6 @@
 // controllers/quotasController.js
 const quotasService = require('../services/quotasService');
+const { tryActivateReservations } = require('../services/congesService');
 const logger = require('../utils/logger');
 const UsageService = require('../services/usageService');
 const { Utilisateur } = require('../models');
@@ -112,9 +113,18 @@ async function upsertUserCounter(req, res, next) {
       congeTypeId,
       annee,
       values: req.body,
+      performedBy: req.user,
+      req,
     });
 
-    res.json({ message: 'Compteur mis à jour', item: compteur });
+    const activationResult = await tryActivateReservations(utilisateur_id, congeTypeId, annee);
+
+    res.json({
+      message: 'Compteur mis à jour',
+      item: compteur,
+      reservations_activees: activationResult.activated,
+      reservations_en_attente: activationResult.still_pending,
+    });
   } catch (err) {
     next(err);
   }
@@ -126,6 +136,8 @@ async function removeUserCounter(req, res, next) {
     await quotasService.deleteCounter({
       entrepriseId: req.user.role === 'super_admin' ? null : req.user.entreprise_id,
       counterId: counter_id,
+      performedBy: req.user,
+      req,
     });
 
     res.json({ message: 'Compteur supprimé' });

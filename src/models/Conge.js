@@ -40,6 +40,9 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: null,
     },
 
+    reminder_j30_sent_at: { type: DataTypes.DATE, allowNull: true, defaultValue: null },
+    reminder_j7_sent_at:  { type: DataTypes.DATE, allowNull: true, defaultValue: null },
+
   }, {
     tableName: 'conge',
     timestamps: true,

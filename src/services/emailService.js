@@ -18,6 +18,19 @@ function emailLog(...args) {
   }
 }
 
+// HTML-encode user-controlled strings to prevent injection into email templates.
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Keys whose values are pre-built server-side HTML and must NOT be escaped.
+const SAFE_HTML_KEYS = new Set(['content', 'table_rows', 'comments_rows', 'decompte_rows']);
+
 class EmailService {
   constructor() {
     this.defaultSmtpConfig = {
@@ -183,7 +196,11 @@ class EmailService {
   replaceTemplateVariables(html, data) {
     Object.keys(data).forEach(key => {
       const regex = new RegExp(`{{${key}}}`, 'g');
-      html = html.replace(regex, data[key] || '');
+      // Keys in SAFE_HTML_KEYS or ending with '_html' contain server-built HTML — preserve as-is.
+      // All other values are user-controlled and must be HTML-escaped.
+      const isSafeHtml = SAFE_HTML_KEYS.has(key) || key.endsWith('_html');
+      const value = isSafeHtml ? (data[key] || '') : escapeHtml(data[key] ?? '');
+      html = html.replace(regex, value);
     });
 
     const globals = {
@@ -727,7 +744,8 @@ class EmailService {
       const name = `${c.utilisateur?.prenom || ''} ${c.utilisateur?.nom || ''}`.trim();
       const service = c.utilisateur?.service || '-';
       const type = c.conge_type?.libelle || 'Congé';
-      return `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${name}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${service}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${type}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${c.date_debut}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${c.date_fin}</td></tr>`;
+      const fmtD = (d) => { if (!d) return ''; const p = String(d).split('T')[0].split('-'); return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : d; };
+      return `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${name}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${service}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${type}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${fmtD(c.date_debut)}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${fmtD(c.date_fin)}</td></tr>`;
     }).join('');
 
     const periode = `${dayjs(startOfWeek).format('DD/MM')} – ${dayjs(endOfWeek).format('DD/MM/YYYY')}`;

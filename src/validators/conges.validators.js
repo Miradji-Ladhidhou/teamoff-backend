@@ -82,4 +82,16 @@ const checkOverlapRules = [
   dateField('date_fin'),
 ];
 
-module.exports = { createCongeRules, updateCongeRules, checkOverlapRules };
+/**
+ * Refus d'un congé (POST /conges/:id/reject)
+ * Le motif de refus est obligatoire — l'employé doit comprendre pourquoi.
+ */
+const rejectCongeRules = [
+  body('commentaire')
+    .isString().withMessage('commentaire requis')
+    .trim()
+    .notEmpty().withMessage('Le motif de refus est obligatoire')
+    .isLength({ max: 5000 }).withMessage('commentaire trop long'),
+];
+
+module.exports = { createCongeRules, updateCongeRules, checkOverlapRules, rejectCongeRules };

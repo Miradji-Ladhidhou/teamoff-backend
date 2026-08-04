@@ -28,7 +28,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.UUID,
       allowNull: true,
       references: { model: 'entreprise', key: 'id' },
-      onDelete: 'CASCADE',
+      onDelete: 'SET NULL',
     },
   }, {
     tableName: 'holiday_templates',

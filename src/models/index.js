@@ -32,15 +32,19 @@ const Absence = require('./Absence')(sequelize, DataTypes);
 // ----------------------
 // Entreprise relations
 // ----------------------
-Entreprise.hasMany(Utilisateur, { foreignKey: 'entreprise_id', as: 'utilisateurs' });
-Entreprise.hasMany(Conge, { foreignKey: 'entreprise_id', as: 'conges' });
-Entreprise.hasMany(CongeType, { foreignKey: 'entreprise_id', as: 'conge_types' });
-Entreprise.hasMany(JoursFeries, { foreignKey: 'entreprise_id', as: 'jours_feries' });
-Entreprise.hasMany(AuditLog, { foreignKey: 'entreprise_id', as: 'audit_logs' });
-Entreprise.hasMany(Notification, { foreignKey: 'entreprise_id', as: 'notifications' });
-Entreprise.hasMany(CompteurConges, { foreignKey: 'entreprise_id', as: 'compteurs_conges' });
-Entreprise.hasMany(Absence, { foreignKey: 'entreprise_id', as: 'absences' });
-Entreprise.hasOne(LeavePolicy, { foreignKey: 'entreprise_id', as: 'leave_policy' });
+// onDelete values match DB FK constraints; hooks:true would fire child beforeDestroy/afterDestroy
+// but is intentionally omitted — the DB cascade is the enforcement layer (no child hooks needed).
+Entreprise.hasMany(Utilisateur,    { foreignKey: 'entreprise_id', as: 'utilisateurs',     onDelete: 'CASCADE'   });
+Entreprise.hasMany(Conge,          { foreignKey: 'entreprise_id', as: 'conges',            onDelete: 'CASCADE'   });
+Entreprise.hasMany(CongeType,      { foreignKey: 'entreprise_id', as: 'conge_types',       onDelete: 'CASCADE'   });
+Entreprise.hasMany(JoursFeries,    { foreignKey: 'entreprise_id', as: 'jours_feries',      onDelete: 'CASCADE'   });
+Entreprise.hasMany(AuditLog,       { foreignKey: 'entreprise_id', as: 'audit_logs',        onDelete: 'SET NULL'  });
+Entreprise.hasMany(Notification,   { foreignKey: 'entreprise_id', as: 'notifications',     onDelete: 'CASCADE'   });
+Entreprise.hasMany(CompteurConges, { foreignKey: 'entreprise_id', as: 'compteurs_conges',  onDelete: 'CASCADE'   });
+Entreprise.hasMany(Absence,        { foreignKey: 'entreprise_id', as: 'absences',          onDelete: 'CASCADE'   });
+Entreprise.hasOne(LeavePolicy,     { foreignKey: 'entreprise_id', as: 'leave_policy',      onDelete: 'CASCADE'   });
+// HolidayTemplate: source_entreprise_id → SET NULL (templates survivent à la suppression de l'entreprise source)
+Entreprise.hasMany(HolidayTemplate, { foreignKey: 'source_entreprise_id', as: 'holiday_templates', onDelete: 'SET NULL' });
 
 // ----------------------
 // Utilisateur relations

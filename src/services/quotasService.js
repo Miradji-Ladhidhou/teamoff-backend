@@ -1,6 +1,8 @@
 // services/quotasService.js
-const { CompteurConges, CongeType, Utilisateur, Entreprise, sequelize } = require('../models');
+const { CompteurConges, CongeType, Utilisateur, Entreprise, Conge, sequelize } = require('../models');
+const { Op } = require('sequelize');
 const { getLeaveRules } = require('./politiqueConges');
+const { auditCounter } = require('./auditHelper');
 const logger = require('../utils/logger');
 
 const isQuotasDebug = process.env.QUOTAS_DEBUG === 'true';
@@ -27,6 +29,19 @@ function getMonthKey(annee, mois) {
 function getCurrentMonthKey() {
   const now = new Date();
   return getMonthKey(now.getFullYear(), now.getMonth() + 1);
+}
+
+// Normalise un mois-clé potentiellement stocké sans zero-padding (ex: "2026-9" → "2026-09").
+// Les données antérieures à l'introduction de padStart dans getMonthKey peuvent avoir
+// le format court, qui provoque des faux positifs dans la comparaison lexicographique.
+function normalizeMonthKey(key) {
+  if (!key) return null;
+  const parts = String(key).split('-');
+  if (parts.length !== 2) return key;
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return key;
+  return getMonthKey(year, month);
 }
 
 function normalizeCounterPayload(payload = {}) {
@@ -277,7 +292,9 @@ async function ajouterAcquisitionMensuelle(entrepriseId, annee, mois, options = 
 
         const key = `${utilisateur.id}::${type.id}`;
         let compteur = countersByKey.get(key) || null;
-        const lastCreditMonth = compteur?.dernier_credit_mensuel || null;
+        // normalizeMonthKey : corrige les valeurs stockées sans zero-padding
+        // (ex: "2026-9" → "2026-09") afin que la comparaison lexicographique soit valide.
+        const lastCreditMonth = normalizeMonthKey(compteur?.dernier_credit_mensuel) || null;
 
         const alreadyCredited = lastCreditMonth === targetMonthKey;
         const hasFutureCredit = Boolean(lastCreditMonth) && lastCreditMonth > targetMonthKey;
@@ -413,7 +430,25 @@ async function listCountersForUser(entrepriseId, utilisateurId, annee) {
   }));
 }
 
-async function createOrUpdateCounter({ entrepriseId, utilisateurId, congeTypeId, annee, values }) {
+// Calcule le total des jours réservés par les congés encore en attente
+// pour un utilisateur/type/année donné.
+async function getPendingReservedDays({ utilisateurId, congeTypeId, annee, transaction = null }) {
+  const rows = await Conge.findAll({
+    where: {
+      utilisateur_id: utilisateurId,
+      conge_type_id: congeTypeId,
+      statut: { [Op.in]: ['en_attente_manager', 'valide_manager'] },
+    },
+    attributes: ['jours_calcules', 'date_debut'],
+    transaction,
+  });
+  // Ne compter que les congés dont la date de début est dans l'année concernée
+  return rows
+    .filter(r => new Date(r.date_debut).getFullYear() === Number(annee))
+    .reduce((sum, r) => sum + toNumber(r.jours_calcules, 0), 0);
+}
+
+async function createOrUpdateCounter({ entrepriseId, utilisateurId, congeTypeId, annee, values, performedBy = null, req = null }) {
   return sequelize.transaction(async (t) => {
     const utilisateur = await Utilisateur.findOne({
       where: { id: utilisateurId, entreprise_id: entrepriseId },
@@ -433,13 +468,57 @@ async function createOrUpdateCounter({ entrepriseId, utilisateurId, congeTypeId,
     });
 
     const normalized = normalizeCounterPayload(values);
+
+    // Calculer les jours effectivement réservés par des congés en attente
+    const pendingReserved = await getPendingReservedDays({
+      utilisateurId,
+      congeTypeId,
+      annee,
+      transaction: t,
+    });
+
+    if (pendingReserved > 0) {
+      if (values.jours_reserves === undefined || values.jours_reserves === null) {
+        // jours_reserves absent du payload : préserver la valeur actuelle pour éviter
+        // le zeroing silencieux causé par normalizeCounterPayload defaultant à 0.
+        normalized.jours_reserves = toNumber(compteur.jours_reserves, 0);
+      } else if (normalized.jours_reserves < pendingReserved) {
+        // Valeur explicitement trop basse : bloquer pour éviter la double consommation.
+        const err = new Error(
+          `Impossible de définir jours_reserves à ${normalized.jours_reserves} : ` +
+          `${pendingReserved} jour(s) sont actuellement réservés par des congés en attente. ` +
+          `Valeur minimale autorisée : ${pendingReserved}.`
+        );
+        err.statusCode = 409;
+        throw err;
+      }
+    }
+
+    const before = {
+      jours_acquis:   toNumber(compteur.jours_acquis, 0),
+      jours_pris:     toNumber(compteur.jours_pris, 0),
+      jours_reportes: toNumber(compteur.jours_reportes, 0),
+      jours_reserves: toNumber(compteur.jours_reserves, 0),
+    };
+
     await compteur.update(normalized, { transaction: t });
+
+    const after = {
+      jours_acquis:   toNumber(compteur.jours_acquis, 0),
+      jours_pris:     toNumber(compteur.jours_pris, 0),
+      jours_reportes: toNumber(compteur.jours_reportes, 0),
+      jours_reserves: toNumber(compteur.jours_reserves, 0),
+    };
+
+    auditCounter.updated(compteur, before, after, performedBy, req).catch((e) =>
+      logger.error('auditCounter.updated error', { error: e.message })
+    );
 
     return compteur;
   });
 }
 
-async function deleteCounter({ entrepriseId, counterId }) {
+async function deleteCounter({ entrepriseId, counterId, performedBy = null, req = null }) {
   return sequelize.transaction(async (t) => {
     const where = { id: counterId };
     if (entrepriseId) {
@@ -456,6 +535,10 @@ async function deleteCounter({ entrepriseId, counterId }) {
     }
 
     await compteur.destroy({ transaction: t });
+
+    auditCounter.deleted(compteur, performedBy, req).catch((e) =>
+      logger.error('auditCounter.deleted error', { error: e.message })
+    );
   });
 }
 

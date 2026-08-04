@@ -42,15 +42,26 @@ async function runLeaveReminders() {
 }
 
 // ---------------------------------------------------------------------------
-// Relance demandes en attente depuis > 3 jours
+// Relance demandes en attente : exactement J+3 et J+7
+// Fenêtre glissante de 24h par palier — borne naturelle à 2 relances max.
+// (Item #61 : idempotence garantie par la fenêtre ; un double-run le même jour
+//  enverrait deux fois, cas adressable par un flag DB si besoin.)
 // ---------------------------------------------------------------------------
 async function runPendingLeaveReminders() {
-  const threshold = dayjs().subtract(3, 'day').toDate();
+  // Fenêtre J+3 : created_at entre 4 j et 3 j ago
+  const j3End   = dayjs().subtract(3, 'day').toDate();
+  const j3Start = dayjs().subtract(4, 'day').toDate();
+  // Fenêtre J+7 : created_at entre 8 j et 7 j ago
+  const j7End   = dayjs().subtract(7, 'day').toDate();
+  const j7Start = dayjs().subtract(8, 'day').toDate();
 
   const conges = await Conge.findAll({
     where: {
       statut: 'en_attente_manager',
-      created_at: { [Op.lte]: threshold },
+      [Op.or]: [
+        { created_at: { [Op.gt]: j3Start, [Op.lte]: j3End } },
+        { created_at: { [Op.gt]: j7Start, [Op.lte]: j7End } },
+      ],
     },
     include: [
       { model: Utilisateur, as: 'utilisateur', attributes: ['id', 'email', 'prenom', 'nom', 'entreprise_id', 'service'] },
@@ -147,38 +158,44 @@ async function runMonthlyReports() {
 }
 
 // ---------------------------------------------------------------------------
-// Relance invitations non acceptées (jamais connecté depuis > 3 jours)
+// Relance invitations non acceptées : J+1, J+3 et J+7 uniquement
+// Chaque palier utilise une fenêtre glissante de 24h — borne à 3 relances max.
 // ---------------------------------------------------------------------------
 async function runInvitationReminders() {
-  // J+1 window: created between 20h and 28h ago
+  // J+1 : créé entre 20h et 28h ago (fenêtre inchangée)
   const j1Start = dayjs().subtract(28, 'hour').toDate();
-  const j1End = dayjs().subtract(20, 'hour').toDate();
+  const j1End   = dayjs().subtract(20, 'hour').toDate();
 
-  // J+3 and beyond
-  const threshold3 = dayjs().subtract(3, 'day').toDate();
+  // J+3 : créé entre 4 j et 3 j ago
+  const j3Start = dayjs().subtract(4, 'day').toDate();
+  const j3End   = dayjs().subtract(3, 'day').toDate();
 
-  const [utilisateursJ1, utilisateursJ3] = await Promise.all([
+  // J+7 : créé entre 8 j et 7 j ago
+  const j7Start = dayjs().subtract(8, 'day').toDate();
+  const j7End   = dayjs().subtract(7, 'day').toDate();
+
+  const baseWhere = {
+    statut: 'en_attente',
+    last_login: null,
+    invite_token_hash: { [Op.ne]: null },
+  };
+
+  const [utilisateursJ1, utilisateursJ3, utilisateursJ7] = await Promise.all([
     Utilisateur.findAll({
-      where: {
-        statut: 'en_attente',
-        last_login: null,
-        invite_token_hash: { [Op.ne]: null },
-        created_at: { [Op.between]: [j1Start, j1End] },
-      },
+      where: { ...baseWhere, created_at: { [Op.gt]: j1Start, [Op.lte]: j1End } },
       attributes: ['id', 'email', 'prenom', 'nom', 'entreprise_id', 'created_at'],
     }),
     Utilisateur.findAll({
-      where: {
-        statut: 'en_attente',
-        last_login: null,
-        invite_token_hash: { [Op.ne]: null },
-        created_at: { [Op.lte]: threshold3 },
-      },
+      where: { ...baseWhere, created_at: { [Op.gt]: j3Start, [Op.lte]: j3End } },
+      attributes: ['id', 'email', 'prenom', 'nom', 'entreprise_id', 'created_at'],
+    }),
+    Utilisateur.findAll({
+      where: { ...baseWhere, created_at: { [Op.gt]: j7Start, [Op.lte]: j7End } },
       attributes: ['id', 'email', 'prenom', 'nom', 'entreprise_id', 'created_at'],
     }),
   ]);
 
-  for (const utilisateur of [...utilisateursJ1, ...utilisateursJ3]) {
+  for (const utilisateur of [...utilisateursJ1, ...utilisateursJ3, ...utilisateursJ7]) {
     const entreprise = await Entreprise.findByPk(utilisateur.entreprise_id, { attributes: ['id', 'nom'] });
     const joursSince = dayjs().diff(dayjs(utilisateur.created_at), 'day');
     try {
@@ -229,20 +246,23 @@ async function runWeeklyManagerSummary() {
 
 // ---------------------------------------------------------------------------
 // Rappels réservations de congés (J-30 et J-7 avant le départ)
+// Idempotent : verrou par flag DB — un seul UPDATE WHERE IS NULL peut réussir,
+// garantissant qu'une seule instance envoie le rappel en déploiement multi-nœud.
 // ---------------------------------------------------------------------------
 async function runReservationReminders() {
   const targets = [
-    { days: 30, label: '30 jours' },
-    { days: 7,  label: '7 jours' },
+    { days: 30, label: '30 jours', flagField: 'reminder_j30_sent_at' },
+    { days: 7,  label: '7 jours',  flagField: 'reminder_j7_sent_at'  },
   ];
 
-  for (const { days, label } of targets) {
+  for (const { days, label, flagField } of targets) {
     const targetDate = dayjs().add(days, 'day').format('YYYY-MM-DD');
 
     const reservations = await Conge.findAll({
       where: {
         statut: 'reserve',
         date_debut: targetDate,
+        [flagField]: null,
       },
       include: [
         { model: Utilisateur, as: 'utilisateur', attributes: ['id', 'email', 'prenom', 'nom', 'entreprise_id'] },
@@ -252,6 +272,14 @@ async function runReservationReminders() {
 
     for (const conge of reservations) {
       if (!conge.utilisateur) continue;
+
+      // Verrou atomique : seule l'instance qui pose le flag envoie l'email.
+      // En cluster (PM2, K8s), les autres instances obtiennent rowsClaimed = 0.
+      const [rowsClaimed] = await Conge.update(
+        { [flagField]: new Date() },
+        { where: { id: conge.id, [flagField]: null } }
+      );
+      if (rowsClaimed === 0) continue;
 
       const admins = await Utilisateur.findAll({
         where: {

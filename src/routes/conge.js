@@ -7,7 +7,7 @@ const { advancedRateLimiter } = require('../middlewares/advancedRateLimiter');
 const congeController = require('../controllers/congeController');
 const { AuditLog, Conge, Utilisateur } = require('../models');
 const validate = require('../middlewares/validate');
-const { createCongeRules, updateCongeRules, checkOverlapRules } = require('../validators/conges.validators');
+const { createCongeRules, updateCongeRules, checkOverlapRules, rejectCongeRules } = require('../validators/conges.validators');
 
 router.post('/check-overlap', authorizeRole(['employe','manager']), advancedRateLimiter('conges'), validate(checkOverlapRules), congeController.checkOverlap);
 router.post('/calculate-days', authorizeRole(['employe','manager','admin_entreprise','super_admin']), advancedRateLimiter('conges'), congeController.calculateDays);
@@ -36,7 +36,7 @@ router.get('/:id/history', authorizeRole(['employe','manager','admin_entreprise'
 router.get('/:id/attestation', authorizeRole(['employe','manager','admin_entreprise','super_admin']), validateUUIDParam('id'), congeController.getAttestationData);
 router.post('/:id/attestation/email', authorizeRole(['employe','manager','admin_entreprise','super_admin']), validateUUIDParam('id'), advancedRateLimiter('conges'), congeController.sendAttestationEmail);
 router.post('/:id/validate', authorizeRole(['manager','admin_entreprise','super_admin']), validateUUIDParam('id'), advancedRateLimiter('conges'), congeController.validate);
-router.post('/:id/reject', authorizeRole(['manager','admin_entreprise','super_admin']), validateUUIDParam('id'), advancedRateLimiter('conges'), congeController.reject);
+router.post('/:id/reject', authorizeRole(['manager','admin_entreprise','super_admin']), validateUUIDParam('id'), advancedRateLimiter('conges'), validate(rejectCongeRules), congeController.reject);
 router.post('/:id/activate', authorizeRole(['manager','admin_entreprise','super_admin']), validateUUIDParam('id'), advancedRateLimiter('conges'), congeController.activate);
 
 module.exports = router;
