@@ -11,18 +11,18 @@ class ExportService {
       order: [['nom', 'ASC']],
     })).map((e) => ({ id: e.id, nom: e.nom, statut: e.statut }));
     if (rows.length === 0) return this.buildCsvHeader(null, 'Entreprises', 3) + '"Aucune donnée"';
-    return this.buildCsvHeader(null, 'Entreprises', 3) + new Parser({ fields: ['id', 'nom', 'statut'] }).parse(rows);
+    return this.buildCsvHeader(null, 'Entreprises', 3) + new Parser({ fields: ['id', 'nom', 'statut'] }).parse(this.sanitizeCsvRows(rows));
   }
 
     static async generateUtilisateursCSV(id, filters) {
       const preview = await this.getUtilisateursPreview(id, filters, 1000);
       const numCols = preview.columns.length || 4;
       if (!preview.rows.length) return this.buildCsvHeader(filters, 'Utilisateurs', numCols) + '"Aucune donnée"';
-      return this.buildCsvHeader(filters, 'Utilisateurs', numCols) + new Parser({ fields: preview.columns }).parse(preview.rows);
+      return this.buildCsvHeader(filters, 'Utilisateurs', numCols) + new Parser({ fields: preview.columns }).parse(this.sanitizeCsvRows(preview.rows));
     }
   static async generateStatistiquesCSV(id, filters) {
     const preview = await this.getUsagePreview(id, filters, 1000);
-    return this.buildCsvHeader(filters, 'Statistiques', 2) + new Parser({ fields: preview.columns }).parse(preview.rows);
+    return this.buildCsvHeader(filters, 'Statistiques', 2) + new Parser({ fields: preview.columns }).parse(this.sanitizeCsvRows(preview.rows));
   }
 
   // =========================
@@ -65,9 +65,29 @@ class ExportService {
     });
   }
 
+  // Neutralise les valeurs qui déclenchent l'exécution de formules dans Excel /
+  // LibreOffice (CSV Injection — OWASP).  Tout champ commençant par = + - @ \t \r
+  // reçoit un préfixe apostrophe qui force le traitement en texte littéral.
+  static sanitizeCsvCell(value) {
+    if (value === null || value === undefined) return value;
+    const str = String(value);
+    return /^[=+\-@\t\r]/.test(str) ? `'${str}` : value;
+  }
+
+  static sanitizeCsvRows(rows) {
+    return rows.map((row) =>
+      Object.fromEntries(
+        Object.entries(row).map(([k, v]) => [k, this.sanitizeCsvCell(v)])
+      )
+    );
+  }
+
   static formatDate(date) {
     if (!date) return '';
-    return new Date(date).toLocaleDateString('fr-FR');
+    const s = String(date).split('T')[0];
+    const parts = s.split('-');
+    if (parts.length !== 3) return String(date);
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
   }
 
   static buildCsvHeader(filters, exportName, numCols = 1) {
@@ -169,7 +189,7 @@ class ExportService {
     const preview = await this.getCongesPreview(id, filters, 1000, role);
     const numCols = preview.columns.length || 7;
     if (!preview.rows.length) return this.buildCsvHeader(filters, 'Congés', numCols) + '"Aucune donnée"';
-    return this.buildCsvHeader(filters, 'Congés', numCols) + new Parser({ fields: preview.columns }).parse(preview.rows);
+    return this.buildCsvHeader(filters, 'Congés', numCols) + new Parser({ fields: preview.columns }).parse(this.sanitizeCsvRows(preview.rows));
   }
 
   static async generateCongesPDF(id, filters, entreprise = null, role = null) {
@@ -227,7 +247,8 @@ class ExportService {
       service: a.utilisateur?.service,
       type: a.type_absence,
       debut: this.formatDate(a.date_debut),
-      fin: this.formatDate(a.date_fin)
+      fin: this.formatDate(a.date_fin),
+      statut: a.statut,
     }));
 
     if (filters.salarie) {
@@ -246,7 +267,7 @@ class ExportService {
     const preview = await this.getAbsencesPreview(id, filters, 1000, role);
     const numCols = preview.columns.length || 6;
     if (!preview.rows.length) return this.buildCsvHeader(filters, 'Absences', numCols) + '"Aucune donnée"';
-    return this.buildCsvHeader(filters, 'Absences', numCols) + new Parser({ fields: preview.columns }).parse(preview.rows);
+    return this.buildCsvHeader(filters, 'Absences', numCols) + new Parser({ fields: preview.columns }).parse(this.sanitizeCsvRows(preview.rows));
   }
 
   static async generateAbsencesPDF(id, filters, entreprise = null, role = null) {
@@ -274,9 +295,10 @@ class ExportService {
   // ARRETS MALADIE
   // =========================
   static async getArretsMaladiePreview(entrepriseId, filters = {}, limit = 50, role = null) {
-    const userWhere = role === 'manager'
-      ? { role: { [Op.notIn]: ['admin_entreprise', 'super_admin'] } }
-      : undefined;
+    // Fix #51 : même pattern que getAbsencesPreview pour le filtre service.
+    const userWhere = {};
+    if (filters.service) userWhere.service = filters.service;
+    if (role === 'manager') userWhere.role = { [Op.notIn]: ['admin_entreprise', 'super_admin'] };
 
     const rowsDB = await Absence.findAll({
       where: {
@@ -284,7 +306,12 @@ class ExportService {
         type_absence: 'maladie',
         ...this.buildFilters(filters)
       },
-      include: [{ model: Utilisateur, as: 'utilisateur', attributes: ['prenom','nom','email'], where: userWhere }],
+      include: [{
+        model: Utilisateur,
+        as: 'utilisateur',
+        attributes: ['prenom','nom','email','service'],
+        where: Object.keys(userWhere).length ? userWhere : undefined,
+      }],
       order: this.buildOrder(filters.sortBy, filters.sortOrder),
       limit
     });
@@ -292,6 +319,7 @@ class ExportService {
     const rows = rowsDB.map(a => ({
       employe: `${a.utilisateur?.prenom || ''} ${a.utilisateur?.nom || ''}`,
       email: a.utilisateur?.email,
+      service: a.utilisateur?.service,
       debut: this.formatDate(a.date_debut),
       fin: this.formatDate(a.date_fin)
     }));
@@ -308,7 +336,7 @@ class ExportService {
     const preview = await this.getArretsMaladiePreview(id, filters, 1000, role);
     const numCols = preview.columns.length || 4;
     if (!preview.rows.length) return this.buildCsvHeader(filters, 'Arrêts maladie', numCols) + '"Aucune donnée"';
-    return this.buildCsvHeader(filters, 'Arrêts maladie', numCols) + new Parser({ fields: preview.columns }).parse(preview.rows);
+    return this.buildCsvHeader(filters, 'Arrêts maladie', numCols) + new Parser({ fields: preview.columns }).parse(this.sanitizeCsvRows(preview.rows));
   }
 
   static async generateArretsMaladiePDF(id, filters, entreprise = null, role = null) {
@@ -332,9 +360,16 @@ class ExportService {
   // AUDIT
   // =========================
   static async getAuditPreview(entrepriseId, filters = {}, limit = 50) {
+    // Fix #50 : appliquer les filtres dateDebut / dateFin sur created_at.
+    const where = { entreprise_id: entrepriseId };
+    if (filters.dateDebut || filters.dateFin) {
+      where.created_at = {};
+      if (filters.dateDebut) where.created_at[Op.gte] = filters.dateDebut;
+      if (filters.dateFin)   where.created_at[Op.lte] = filters.dateFin;
+    }
 
     const rowsDB = await AuditLog.findAll({
-      where: { entreprise_id: entrepriseId },
+      where,
       order: [['created_at','DESC']],
       limit
     });
@@ -358,7 +393,7 @@ class ExportService {
     const preview = await this.getAuditPreview(id, filters, 1000);
     const numCols = preview.columns.length || 4;
     if (!preview.rows.length) return this.buildCsvHeader(filters, "Journal d'audit", numCols) + '"Aucune donnée"';
-    return this.buildCsvHeader(filters, "Journal d'audit", numCols) + new Parser({ fields: preview.columns }).parse(preview.rows);
+    return this.buildCsvHeader(filters, "Journal d'audit", numCols) + new Parser({ fields: preview.columns }).parse(this.sanitizeCsvRows(preview.rows));
   }
 
   // =========================
@@ -374,7 +409,8 @@ class ExportService {
 static async getUtilisateursPreview(entrepriseId, filters = {}, limit = 50) {
   const rowsDB = await Utilisateur.findAll({
     where: { entreprise_id: entrepriseId },
-    limit
+    attributes: ['prenom', 'nom', 'email', 'role', 'service'],
+    limit,
   });
 
   const rows = rowsDB.map(u => ({
