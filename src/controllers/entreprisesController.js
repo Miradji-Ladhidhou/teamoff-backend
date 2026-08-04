@@ -1,8 +1,13 @@
-const { Entreprise, Utilisateur } = require('../models');
+const bcrypt  = require('bcrypt');
+const crypto  = require('crypto');
+const jwt     = require('jsonwebtoken');
+const { Entreprise, Utilisateur, sequelize } = require('../models');
 const logger = require('../utils/logger');
 const { validationResult } = require('express-validator');
-const { auditEntreprise } = require('../services/auditHelper');
+const { auditEntreprise, auditUser } = require('../services/auditHelper');
 const emailService = require('../services/emailService');
+const quotasService = require('../services/quotasService');
+const { BCRYPT_COST } = require('../services/authService');
 
 const DEFAULT_SERVICE_POLICY = {
   overlap_policy: 'block',
@@ -49,38 +54,109 @@ function getEntreprisePolicies(entreprise) {
 // ----------------------------
 // Création d'une entreprise
 // ----------------------------
+// Si le body contient un champ `admin` (email, prenom, nom), l'entreprise ET
+// l'utilisateur admin sont créés dans la même transaction DB (Fix #33).
+// En cas d'échec de l'une ou l'autre création, tout est rollbacké — aucune
+// entreprise orpheline ne peut subsister.
 async function createEntreprise(req, res, next) {
-
-  const { nom, politique_conges, parametres, statut } = req.body;
-
+  const { nom, politique_conges, parametres, statut, admin: adminData } = req.body;
   if (!nom) return res.status(400).json({ message: 'Nom requis' });
 
-  try {
+  if (adminData != null) {
+    if (!adminData.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminData.email)) {
+      return res.status(400).json({ message: 'admin.email est requis et doit être une adresse valide' });
+    }
+  }
 
-    const entreprise = await Entreprise.create(
-      {
-        nom,
-        politique_conges,
-        parametres,
-        statut
-      },
-      { userId: req.user.id }
-    );
+  try {
+    let entreprise, adminUser;
+
+    await sequelize.transaction(async (t) => {
+      entreprise = await Entreprise.create(
+        { nom, politique_conges, parametres, statut },
+        { transaction: t }
+      );
+
+      if (adminData?.email) {
+        // Vérification unicité globale de l'email : un email ne doit appartenir qu'à
+        // un seul compte, quelle que soit l'entreprise (évite l'ambiguïté de login).
+        const existing = await Utilisateur.findOne({
+          where: { email: adminData.email },
+          attributes: ['id'],
+          transaction: t,
+        });
+        if (existing) {
+          const err = new Error('Un utilisateur avec cet email existe déjà');
+          err.statusCode = 409;
+          throw err;
+        }
+
+        const placeholderHash = await bcrypt.hash(
+          crypto.randomBytes(32).toString('hex'), BCRYPT_COST
+        );
+        adminUser = await Utilisateur.create({
+          nom:    adminData.nom    || '',
+          prenom: adminData.prenom || '',
+          email:  adminData.email,
+          role:   'admin_entreprise',
+          entreprise_id: entreprise.id,
+          password_hash: placeholderHash,
+          statut: 'en_attente',
+        }, { transaction: t });
+
+        await quotasService.initializeUserCounters({
+          entrepriseId: entreprise.id,
+          utilisateurId: adminUser.id,
+          annee: new Date().getFullYear(),
+          transaction: t,
+        });
+      }
+    });
+
+    // Post-transaction : token d'invitation + emails (fire-and-forget hors transaction)
+    if (adminUser) {
+      const inviteToken = jwt.sign(
+        { id: adminUser.id, type: 'set_password' },
+        process.env.JWT_SECRET,
+        { expiresIn: '48h' }
+      );
+      const inviteHash = crypto.createHash('sha256').update(inviteToken).digest('hex');
+      await adminUser.update({ invite_token_hash: inviteHash });
+
+      emailService.sendSetPasswordEmail(adminUser, entreprise, inviteToken)
+        .catch(err => logger.error('Erreur email invitation admin entreprise', { error: err.message }));
+
+      await auditUser.created(adminUser, req.user, req);
+    }
 
     await auditEntreprise.created(entreprise, req.user, req);
 
     const creator = await Utilisateur.findByPk(req.user.id, {
       attributes: ['id', 'prenom', 'nom', 'email']
     });
-
     if (creator?.email) {
       emailService.sendEntrepriseCreatedEmail(creator, entreprise)
         .catch(err => logger.error('Erreur envoi email création entreprise', { error: err.message }));
     }
 
+    if (adminUser) {
+      return res.status(201).json({
+        entreprise,
+        admin: {
+          id:     adminUser.id,
+          email:  adminUser.email,
+          prenom: adminUser.prenom,
+          nom:    adminUser.nom,
+          role:   adminUser.role,
+          statut: adminUser.statut,
+        },
+      });
+    }
+
     res.status(201).json(entreprise);
 
   } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ message: err.message });
     logger.error('Erreur création entreprise:', err);
     next(err);
   }
@@ -158,10 +234,11 @@ async function deleteEntreprise(req, res, next) {
     const entreprise = await Entreprise.findByPk(req.params.id);
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
 
-    await entreprise.destroy({ userId: req.user.id });
-
-    // === Audit ===
+    // Log écrit AVANT destroy : avec SET NULL, le destroy nullifie entreprise_id
+    // mais entity_id + action + metadata restent intacts pour traçabilité post-mortem.
     await auditEntreprise.deleted(entreprise, req.user, req);
+
+    await entreprise.destroy({ userId: req.user.id });
 
     res.json({ message: 'Entreprise supprimée' });
   } catch (err) {

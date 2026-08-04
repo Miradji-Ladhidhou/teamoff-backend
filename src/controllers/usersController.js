@@ -7,7 +7,7 @@ const { Utilisateur, Entreprise, sequelize } = require('../models');
 const emailService = require('../services/emailService');
 const { auditUser } = require('../services/auditHelper');
 const logger = require('../utils/logger');
-const { validatePasswordPolicy } = require('../services/authService');
+const { validatePasswordPolicy, BCRYPT_COST } = require('../services/authService');
 const quotasService = require('../services/quotasService');
 
 // Champs jamais exposés dans les réponses API
@@ -97,7 +97,7 @@ async function updateOwnPasswordIfRequested(utilisateur, { currentPassword, newP
   }
 
   await validatePasswordPolicy(newPassword);
-  utilisateur.password_hash = await bcrypt.hash(newPassword, 10);
+  utilisateur.password_hash = await bcrypt.hash(newPassword, BCRYPT_COST);
 
   const notificationEmail = email && email !== utilisateur.email ? email : utilisateur.email;
   emailService.sendPasswordResetConfirmation(notificationEmail)
@@ -136,7 +136,7 @@ async function createUser(req, res, next) {
     }
 
     // Mdp placeholder — l'utilisateur définira le sien via le lien d'invitation
-    const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+    const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_COST);
 
     let newUser = null;
 
@@ -315,11 +315,31 @@ async function updateUser(req, res, next) {
       return res.status(403).json({ message: 'Vous ne pouvez attribuer que manager ou employe' });
     }
 
+    // Garde self-disable / last-admin : refuse la désactivation si elle crée un lock-out
+    if (statut === 'inactif' && utilisateur.role === 'admin_entreprise') {
+      if (utilisateur.id === req.user.id) {
+        return res.status(409).json({ message: 'Vous ne pouvez pas vous désactiver vous-même.' });
+      }
+      const activeAdminCount = await Utilisateur.count({
+        where: {
+          entreprise_id: utilisateur.entreprise_id,
+          role: 'admin_entreprise',
+          statut: 'actif',
+          id: { [Op.ne]: utilisateur.id },
+        },
+      });
+      if (activeAdminCount === 0) {
+        return res.status(409).json({
+          message: 'Impossible de désactiver le dernier administrateur actif de cette entreprise.',
+        });
+      }
+    }
+
     const oldData = utilisateur.toJSON();
 
     if (password) {
       await validatePasswordPolicy(password);
-      utilisateur.password_hash = await bcrypt.hash(password, 10);
+      utilisateur.password_hash = await bcrypt.hash(password, BCRYPT_COST);
       emailService.sendPasswordResetConfirmation(email || utilisateur.email)
         .catch(emailErr => logger.error('Erreur envoi email confirmation mot de passe', { error: emailErr.message }));
     }

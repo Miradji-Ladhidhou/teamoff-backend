@@ -1,6 +1,30 @@
 const { SystemSetting } = require('../models');
+const { encryptSecret, decryptSecret, isEncrypted } = require('../utils/settingsCrypto');
 
 const SETTINGS_KEY = 'global';
+
+// Champs contenant des secrets chiffrés au repos (RGPD / sécurité backup)
+const SECRET_FIELDS = ['smtpPassword', 'slackWebhook'];
+
+function encryptSecretFields(settings) {
+  const out = { ...settings };
+  for (const field of SECRET_FIELDS) {
+    if (out[field] && !isEncrypted(out[field])) {
+      out[field] = encryptSecret(out[field]);
+    }
+  }
+  return out;
+}
+
+function decryptSecretFields(settings) {
+  const out = { ...settings };
+  for (const field of SECRET_FIELDS) {
+    if (out[field] && isEncrypted(out[field])) {
+      out[field] = decryptSecret(out[field]);
+    }
+  }
+  return out;
+}
 
 const DEFAULT_SETTINGS = {
   appName: 'TeamOff',
@@ -13,7 +37,7 @@ const DEFAULT_SETTINGS = {
   smtpUser: '',
   smtpPassword: '',
   emailFrom: '',
-  sessionTimeout: 60,
+  sessionTimeout: 15,
   maxLoginAttempts: 5,
   passwordMinLength: 8,
   requireSpecialChars: true,
@@ -66,17 +90,21 @@ async function getOrCreateSettingsRow() {
 
 async function getSettings() {
   const row = await getOrCreateSettingsRow();
+  // Déchiffrer les secrets avant de retourner (emailService / notificationService reçoivent du plaintext)
   return {
-    ...sanitizeSettings(row.data),
+    ...sanitizeSettings(decryptSecretFields(row.data || {})),
     updatedAt: row.updatedAt,
   };
 }
 
 async function updateSettings(partial, updatedBy = null) {
   const row = await getOrCreateSettingsRow();
-  const merged = sanitizeSettings({ ...row.data, ...partial });
+  // Déchiffrer le stocké avant merge pour éviter double-chiffrement
+  const current = decryptSecretFields(row.data || {});
+  const merged  = sanitizeSettings({ ...current, ...partial });
 
-  row.data = merged;
+  // Chiffrer les secrets avant persistance
+  row.data = encryptSecretFields(merged);
   row.updated_by = updatedBy;
   await row.save();
 
@@ -86,10 +114,8 @@ async function updateSettings(partial, updatedBy = null) {
     fetchedAt: Date.now(),
   };
 
-  return {
-    ...merged,
-    updatedAt: row.updatedAt,
-  };
+  // Retourner en plaintext (les callers s'attendent à des valeurs lisibles)
+  return { ...merged, updatedAt: row.updatedAt };
 }
 
 async function updateSection(section, values, updatedBy = null) {

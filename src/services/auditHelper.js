@@ -1,7 +1,20 @@
 // src/services/auditHelper.js
-const { AuditLog } = require('../models'); // ton modèle AuditLog
+const { AuditLog, Utilisateur } = require('../models');
 const auditActions = require('./auditActions');
 const logger = require('../utils/logger');
+
+// Pour les événements pré-authentification (LOGIN_FAILED, PASSWORD_RESET_REQUEST),
+// l'utilisateur n'est pas encore identifié. On tente de résoudre l'entreprise
+// depuis l'email tenté afin d'enrichir le log ; si l'email est inconnu, null est accepté.
+async function resolveEntrepriseIdFromEmail(email) {
+  if (!email) return null;
+  try {
+    const user = await Utilisateur.findOne({ where: { email }, attributes: ['entreprise_id'] });
+    return user?.entreprise_id || null;
+  } catch {
+    return null;
+  }
+}
 
 function resolveEntrepriseId({ performedBy, entity, entityId, metadata }) {
   if (performedBy?.entreprise_id) return performedBy.entreprise_id;
@@ -19,10 +32,6 @@ function resolveEntrepriseId({ performedBy, entity, entityId, metadata }) {
  * Fonction interne pour créer un audit dans la base
  */
 async function logAudit({ action, entity, entity_id, user_id, entreprise_id, ip, userAgent, metadata }) {
-  if (!entreprise_id) {
-    return;
-  }
-
   try {
     await AuditLog.create({
       action,
@@ -100,7 +109,33 @@ const auditConge = {
   approved: (conge, performedBy, req) =>
     auditEntity({ action: auditActions.CONGE_APPROVED, entity: 'conge', entityId: conge.id, performedBy, req }),
   rejected: (conge, performedBy, req) =>
-    auditEntity({ action: auditActions.CONGE_REJECTED, entity: 'conge', entityId: conge.id, performedBy, req })
+    auditEntity({ action: auditActions.CONGE_REJECTED, entity: 'conge', entityId: conge.id, performedBy, req }),
+
+  // Action système (pas de req/user) — activation automatique d'une réservation N+1.
+  activated: (conge, metadata = {}) =>
+    logAudit({
+      action: auditActions.CONGE_RESERVE_ACTIVATED,
+      entity: 'conge',
+      entity_id: conge.id,
+      user_id: null,
+      entreprise_id: conge.entreprise_id,
+      ip: null,
+      userAgent: null,
+      metadata,
+    }),
+
+  // Balance insuffisante pour activer la réservation lors de ce cycle.
+  skipped: (conge, metadata = {}) =>
+    logAudit({
+      action: auditActions.CONGE_RESERVE_SKIPPED,
+      entity: 'conge',
+      entity_id: conge.id,
+      user_id: null,
+      entreprise_id: conge.entreprise_id,
+      ip: null,
+      userAgent: null,
+      metadata,
+    }),
 };
 
 const auditFerie = {
@@ -115,16 +150,118 @@ const auditFerie = {
 const auditAuth = {
   loginSuccess: (user, req) =>
     auditEntity({ action: auditActions.LOGIN_SUCCESS, entity: 'auth', entityId: user?.id, performedBy: user, req }),
-  loginFailed: (email, req) =>
-    auditEntity({ action: auditActions.LOGIN_FAILED, entity: 'auth', entityId: null, performedBy: null, req, metadata: { email } }),
+
+  // Événements pré-authentification : performedBy est null, entreprise_id résolu depuis l'email.
+  // logAudit est appelé directement pour contourner auditEntity qui exige un performedBy.
+  loginFailed: async (email, req) => {
+    const entreprise_id = await resolveEntrepriseIdFromEmail(email);
+    return logAudit({
+      action: auditActions.LOGIN_FAILED,
+      entity: 'auth',
+      entity_id: null,
+      user_id: null,
+      entreprise_id,
+      ip: req?.ip || null,
+      userAgent: req?.get?.('User-Agent') || null,
+      metadata: { email },
+    });
+  },
+
+  // Verrouillage de compte après trop de tentatives échouées.
+  // reqContext = { ip, userAgent } — optionnel, transmis depuis le contrôleur.
+  accountLocked: (user, failedAttempts, lockedUntil, reqContext = {}) =>
+    logAudit({
+      action: auditActions.ACCOUNT_LOCKED,
+      entity: 'utilisateur',
+      entity_id: user.id,
+      user_id: null,
+      entreprise_id: user.entreprise_id,
+      ip: reqContext.ip || null,
+      userAgent: reqContext.userAgent || null,
+      metadata: {
+        email: user.email,
+        failed_attempts: failedAttempts,
+        locked_until: lockedUntil instanceof Date ? lockedUntil.toISOString() : lockedUntil,
+      },
+    }),
+
   logout: (user, req) =>
     auditEntity({ action: auditActions.LOGOUT, entity: 'auth', entityId: user?.id, performedBy: user, req }),
   passwordChanged: (user, req) =>
     auditEntity({ action: auditActions.PASSWORD_CHANGED, entity: 'auth', entityId: user.id, performedBy: user, req }),
-  passwordResetRequest: (email, req) =>
-    auditEntity({ action: auditActions.PASSWORD_RESET_REQUEST, entity: 'auth', entityId: null, performedBy: null, req, metadata: { email } }),
+
+  passwordResetRequest: async (email, req) => {
+    const entreprise_id = await resolveEntrepriseIdFromEmail(email);
+    return logAudit({
+      action: auditActions.PASSWORD_RESET_REQUEST,
+      entity: 'auth',
+      entity_id: null,
+      user_id: null,
+      entreprise_id,
+      ip: req?.ip || null,
+      userAgent: req?.get?.('User-Agent') || null,
+      metadata: { email },
+    });
+  },
+
   passwordResetSuccess: (user, req) =>
-    auditEntity({ action: auditActions.PASSWORD_RESET_SUCCESS, entity: 'auth', entityId: user.id, performedBy: user, req })
+    auditEntity({ action: auditActions.PASSWORD_RESET_SUCCESS, entity: 'auth', entityId: user.id, performedBy: user, req }),
+
+  twoFactorEnabled: (user, req) =>
+    auditEntity({ action: auditActions.TWO_FACTOR_ENABLED, entity: 'utilisateur', entityId: user.id, performedBy: user, req }),
+
+  twoFactorDisabled: (user, req) =>
+    auditEntity({ action: auditActions.TWO_FACTOR_DISABLED, entity: 'utilisateur', entityId: user.id, performedBy: user, req }),
+
+  twoFactorVerified: (user, req) =>
+    auditEntity({ action: auditActions.TWO_FACTOR_VERIFIED, entity: 'utilisateur', entityId: user.id, performedBy: user, req }),
+};
+
+const auditCounter = {
+  /**
+   * Audit d'une modification de solde de compteur.
+   * before/after = { jours_acquis, jours_pris, jours_reportes, jours_reserves }
+   */
+  updated: (compteur, before, after, performedBy, req) =>
+    auditEntity({
+      action: auditActions.COUNTER_UPDATED,
+      entity: 'compteur_conges',
+      entityId: compteur.id,
+      performedBy,
+      req,
+      metadata: {
+        utilisateur_cible_id: compteur.utilisateur_id,
+        conge_type_id: compteur.conge_type_id,
+        annee: compteur.annee,
+        entreprise_id: compteur.entreprise_id,
+        before,
+        after,
+      },
+    }),
+
+  /**
+   * Audit de la suppression d'un compteur (snapshot des valeurs supprimées).
+   */
+  deleted: (compteur, performedBy, req) =>
+    auditEntity({
+      action: auditActions.COUNTER_DELETED,
+      entity: 'compteur_conges',
+      entityId: compteur.id,
+      performedBy,
+      req,
+      metadata: {
+        utilisateur_cible_id: compteur.utilisateur_id,
+        conge_type_id: compteur.conge_type_id,
+        annee: compteur.annee,
+        entreprise_id: compteur.entreprise_id,
+        snapshot: {
+          jours_acquis:   Number(compteur.jours_acquis),
+          jours_pris:     Number(compteur.jours_pris),
+          jours_reportes: Number(compteur.jours_reportes),
+          jours_reserves: Number(compteur.jours_reserves),
+        },
+      },
+    }),
 };
 
 module.exports = {
@@ -133,5 +270,6 @@ module.exports = {
   auditUser,
   auditConge,
   auditFerie,
-  auditAuth
+  auditAuth,
+  auditCounter,
 };

@@ -5,6 +5,21 @@ const jwt = require('jsonwebtoken');
 const { Utilisateur, Entreprise } = require('../models');
 const authService = require('../services/authService');
 const logger = require('../utils/logger');
+const { encryptTotpSecret, decryptTotpSecret } = require('../utils/totpCrypto');
+const { auditAuth } = require('../services/auditHelper');
+
+// window:1 → ±1 step × 30 s = 90 s de validité maximale pour un code TOTP.
+const TOTP_WINDOW_MS = 90 * 1000;
+
+function isReplay(user, token) {
+  if (!user.totp_used_token || !user.totp_used_at) return false;
+  if (user.totp_used_token !== token) return false;
+  return (Date.now() - new Date(user.totp_used_at).getTime()) < TOTP_WINDOW_MS;
+}
+
+async function markUsed(user, token) {
+  await user.update({ totp_used_token: token, totp_used_at: new Date() });
+}
 
 async function setup2FA(req, res) {
   try {
@@ -17,8 +32,8 @@ async function setup2FA(req, res) {
       length: 20,
     });
 
-    // Store secret temporarily (not yet enabled)
-    await user.update({ totp_secret: secret.base32 });
+    // Stocker chiffré — AES-256-GCM via TOTP_ENCRYPTION_KEY
+    await user.update({ totp_secret: encryptTotpSecret(secret.base32) });
 
     const qrCodeDataUrl = await QRCode.toDataURL(secret.otpauth_url);
 
@@ -39,16 +54,26 @@ async function enable2FA(req, res) {
       return res.status(400).json({ message: 'Configurez d\'abord le 2FA' });
     }
 
+    const token = String(code).replace(/\s/g, '');
+
+    if (isReplay(user, token)) {
+      return res.status(401).json({ message: 'Code TOTP déjà utilisé. Attendez le prochain code.' });
+    }
+
     const valid = speakeasy.totp.verify({
-      secret: user.totp_secret,
+      secret: decryptTotpSecret(user.totp_secret),
       encoding: 'base32',
-      token: String(code).replace(/\s/g, ''),
+      token,
       window: 1,
     });
 
     if (!valid) return res.status(400).json({ message: 'Code invalide' });
 
+    await markUsed(user, token);
     await user.update({ totp_enabled: true });
+    auditAuth.twoFactorEnabled(user, req).catch((e) =>
+      logger.error('auditAuth.twoFactorEnabled error', { error: e.message })
+    );
     res.json({ message: '2FA activé avec succès' });
   } catch (err) {
     logger.error('enable2FA error', { error: err.message });
@@ -68,6 +93,9 @@ async function disable2FA(req, res) {
     if (!valid) return res.status(400).json({ message: 'Mot de passe incorrect' });
 
     await user.update({ totp_secret: null, totp_enabled: false });
+    auditAuth.twoFactorDisabled(user, req).catch((e) =>
+      logger.error('auditAuth.twoFactorDisabled error', { error: e.message })
+    );
     res.json({ message: '2FA désactivé' });
   } catch (err) {
     logger.error('disable2FA error', { error: err.message });
@@ -94,15 +122,22 @@ async function verify2FA(req, res) {
       return res.status(400).json({ message: '2FA non configuré' });
     }
 
+    const token = String(code).replace(/\s/g, '');
+
+    if (isReplay(user, token)) {
+      return res.status(401).json({ message: 'Code TOTP déjà utilisé. Attendez le prochain code.' });
+    }
+
     const valid = speakeasy.totp.verify({
-      secret: user.totp_secret,
+      secret: decryptTotpSecret(user.totp_secret),
       encoding: 'base32',
-      token: String(code).replace(/\s/g, ''),
+      token,
       window: 1,
     });
 
     if (!valid) return res.status(400).json({ message: 'Code invalide' });
 
+    await markUsed(user, token);
     const accessToken = authService.generateAccessToken(user);
     const refreshToken = jwt.sign(
       { id: user.id, type: 'refresh' },
@@ -124,6 +159,10 @@ async function verify2FA(req, res) {
       path: '/api/auth/refresh',
     };
     res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS);
+
+    auditAuth.twoFactorVerified(user, req).catch((e) =>
+      logger.error('auditAuth.twoFactorVerified error', { error: e.message })
+    );
 
     res.json({
       token: accessToken,

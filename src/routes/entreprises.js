@@ -35,6 +35,18 @@ router.get('/:id/politique', authorizeRole(['super_admin', 'admin_entreprise'], 
 // mise à jour de la politique de congés d'une entreprise (super_admin et admin_entreprise de l'entreprise concernée)
 router.put('/:id/politique', authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id), validateUUIDParam('id'),
   body('politique_conges').isObject().withMessage('Politique_conges doit être un objet JSON'),
+  body('politique_conges.max_consecutive_days')
+    .optional()
+    .isInt({ min: 1, max: 365 })
+    .withMessage('max_consecutive_days doit être un entier entre 1 et 365'),
+  body('politique_conges.minimum_notice_days')
+    .optional()
+    .isInt({ min: 0, max: 365 })
+    .withMessage('minimum_notice_days doit être un entier entre 0 et 365'),
+  body('politique_conges.report_max_jours')
+    .optional()
+    .isInt({ min: 0, max: 365 })
+    .withMessage('report_max_jours doit être un entier entre 0 et 365'),
   entreprisesController.updatePolitiqueConges
 );
 

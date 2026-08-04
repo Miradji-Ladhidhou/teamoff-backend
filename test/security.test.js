@@ -317,6 +317,62 @@ describe('Pas d\'exposition d\'informations sensibles', () => {
 });
 
 // ===========================================================================
+describe('Rate limiting — bypass header sécurisé', () => {
+  // isWhitelisted est exportée pour permettre les tests unitaires
+  const { isWhitelisted } = require('../src/middlewares/advancedRateLimiter');
+
+  function makeReq(headers = {}, user = null) {
+    return { headers, user, ip: '127.0.0.1' };
+  }
+
+  it('x-internal-script avec valeur arbitraire ne bypasse plus (header legacy supprimé)', () => {
+    expect(isWhitelisted(makeReq({ 'x-internal-script': 'true' }))).toBe(false);
+  });
+
+  it('x-internal-script avec valeur "1" ne bypasse plus', () => {
+    expect(isWhitelisted(makeReq({ 'x-internal-script': '1' }))).toBe(false);
+  });
+
+  it('x-internal-secret avec mauvaise valeur ne bypasse pas', () => {
+    process.env.INTERNAL_API_SECRET = 'correct-secret-test';
+    const result = isWhitelisted(makeReq({ 'x-internal-secret': 'wrong-value' }));
+    delete process.env.INTERNAL_API_SECRET;
+    expect(result).toBe(false);
+  });
+
+  it('x-internal-secret sans INTERNAL_API_SECRET défini ne bypasse pas (sécurité par défaut)', () => {
+    const saved = process.env.INTERNAL_API_SECRET;
+    delete process.env.INTERNAL_API_SECRET;
+    const result = isWhitelisted(makeReq({ 'x-internal-secret': 'any-value' }));
+    if (saved !== undefined) process.env.INTERNAL_API_SECRET = saved;
+    expect(result).toBe(false);
+  });
+
+  it('x-internal-secret avec la bonne valeur bypasse (script interne légitime)', () => {
+    process.env.INTERNAL_API_SECRET = 'correct-secret-test';
+    const result = isWhitelisted(makeReq({ 'x-internal-secret': 'correct-secret-test' }));
+    delete process.env.INTERNAL_API_SECRET;
+    expect(result).toBe(true);
+  });
+
+  it('super_admin est toujours whitelisté (rôle vérifié en DB via authJwt)', () => {
+    expect(isWhitelisted(makeReq({}, { id: 'some-uuid', role: 'super_admin' }))).toBe(true);
+  });
+
+  it('admin_entreprise n\'est pas whitelisté', () => {
+    expect(isWhitelisted(makeReq({}, { id: 'some-uuid', role: 'admin_entreprise' }))).toBe(false);
+  });
+
+  it('manager n\'est pas whitelisté', () => {
+    expect(isWhitelisted(makeReq({}, { id: 'some-uuid', role: 'manager' }))).toBe(false);
+  });
+
+  it('requête sans user ni header passe par le rate limiter normalement', () => {
+    expect(isWhitelisted(makeReq())).toBe(false);
+  });
+});
+
+// ===========================================================================
 describe('Content-Type — les réponses sont toujours JSON', () => {
   const endpoints = [
     { method: 'get',  path: '/api/users',         token: 'admin' },

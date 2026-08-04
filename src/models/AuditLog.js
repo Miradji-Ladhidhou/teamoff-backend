@@ -30,9 +30,9 @@ module.exports = (sequelize, DataTypes) => {
       },
       entreprise_id: {
         type: DataTypes.UUID,
-        allowNull: false,
+        allowNull: true,
         references: { model: 'entreprise', key: 'id' },
-        onDelete: 'CASCADE',
+        onDelete: 'SET NULL',
       },
       ip_address: {
         type: DataTypes.STRING,

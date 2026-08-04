@@ -120,17 +120,30 @@ class MonitoringService {
     };
   }
 
-  // Nettoyer les anciennes métriques
-  static async cleanupOldMetrics(daysToKeep = 30) {
-    const retentionDays = Number(daysToKeep);
-    const safeRetentionDays = Number.isFinite(retentionDays) && retentionDays > 0 ? retentionDays : 30;
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - safeRetentionDays);
+  // Rétention minimale obligatoire pour les audit logs (politique de sécurité)
+  static MIN_RETENTION_DAYS = 90;
 
+  // Nettoyer les anciennes métriques
+  // callerUser : { id, role } de l'utilisateur qui lance le cleanup (pour audit trail)
+  static async cleanupOldMetrics(daysToKeep = 90, callerUser = null) {
+    const retentionDays = Number(daysToKeep);
+    if (!Number.isFinite(retentionDays) || retentionDays < MonitoringService.MIN_RETENTION_DAYS) {
+      throw Object.assign(
+        new Error(`daysToKeep doit être ≥ ${MonitoringService.MIN_RETENTION_DAYS} jours`),
+        { code: 'RETENTION_TOO_SHORT' }
+      );
+    }
+
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+
+    // Les logs AUDIT_CLEANUP ne sont jamais purgés : ils constituent la traçabilité
+    // des purges elles-mêmes et doivent survivre à toute rétention.
     const [deletedAuditLogs, deletedNotifications] = await Promise.all([
       AuditLog.destroy({
         where: {
-          createdAt: { [Op.lt]: cutoffDate }
+          created_at: { [Op.lt]: cutoffDate },
+          action: { [Op.ne]: 'AUDIT_CLEANUP' },
         }
       }),
       Notification.destroy({
@@ -140,11 +153,24 @@ class MonitoringService {
       })
     ]);
 
+    // Journaliser l'action de cleanup (qui, quand, combien)
+    await AuditLog.create({
+      action: 'AUDIT_CLEANUP',
+      entity: 'system',
+      user_id: callerUser?.id ?? null,
+      metadata: {
+        daysToKeep: retentionDays,
+        cutoffDate: cutoffDate.toISOString(),
+        deletedAuditLogs,
+        deletedNotifications,
+      },
+    }).catch(err => logger.error('Impossible de journaliser le cleanup:', err));
+
     return {
       cutoffDate: cutoffDate.toISOString(),
       deletedAuditLogs,
       deletedNotifications,
-      retentionDays: safeRetentionDays,
+      retentionDays,
     };
   }
 }
