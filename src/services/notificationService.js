@@ -150,6 +150,10 @@ async function sendEmail({ to, subject, html, templateName, data }) {
     throw new Error('No recipients defined');
   }
 
+  // Fix #47 : respecter le flag emailNotifications configuré par l'admin.
+  const { emailNotifications } = await systemSettingsService.getSettings();
+  if (!emailNotifications) return;
+
   const normalizedSubject = normalizeSubject(subject);
   let professionalHtml;
 
@@ -239,14 +243,24 @@ async function creerNotification({
     url
   }, transaction ? { transaction } : {});
 
-  sseManager.sendToUser(utilisateur_id, 'notification', {
+  const payload = {
     id: notif.id,
     type: notif.type,
     message: notif.message,
     url: notif.url,
     lu: notif.lu,
     created_at: notif.created_at,
-  });
+  };
+
+  // Fix #47 : respecter le flag pushNotifications configuré par l'admin.
+  const { pushNotifications } = await systemSettingsService.getSettings();
+  if (pushNotifications) {
+    if (transaction?.afterCommit) {
+      transaction.afterCommit(() => sseManager.sendToUser(utilisateur_id, 'notification', payload));
+    } else {
+      sseManager.sendToUser(utilisateur_id, 'notification', payload);
+    }
+  }
 
   return notif;
 }
@@ -307,12 +321,19 @@ async function getNotificationsUtilisateur(utilisateurId) {
 /**
  * Marquer notification comme lue
  */
-async function marquerCommeLue(notificationId) {
-
+async function marquerCommeLue(notificationId, utilisateurId) {
   const notification = await Notification.findByPk(notificationId);
 
   if (!notification) {
-    throw new Error('Notification introuvable');
+    const err = new Error('Notification introuvable');
+    err.status = 404;
+    throw err;
+  }
+
+  if (notification.utilisateur_id !== utilisateurId) {
+    const err = new Error('Accès refusé');
+    err.status = 403;
+    throw err;
   }
 
   notification.lu = true;
