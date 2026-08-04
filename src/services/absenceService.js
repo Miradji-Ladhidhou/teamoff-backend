@@ -2,14 +2,28 @@ const { Absence, Utilisateur } = require('../models');
 const emailService = require('./emailService');
 const logger = require('../utils/logger');
 const { Op } = require('sequelize');
+const { formatDateFR } = require('../utils/dateFormatter');
 
 async function notifyAbsenceCreated(absence, entreprise_id) {
   try {
-    const [employe, managers, admin] = await Promise.all([
+    const [employe, admin] = await Promise.all([
       Utilisateur.findByPk(absence.utilisateur_id),
-      Utilisateur.findAll({ where: { entreprise_id, role: 'manager' } }),
       Utilisateur.findOne({ where: { entreprise_id, role: 'admin_entreprise' } }),
     ]);
+
+    // Notifier en priorité les managers du même service que l'employé.
+    // Fallback : tous les managers actifs de l'entreprise si aucun n'est dans ce service.
+    let managers = [];
+    if (employe?.service) {
+      managers = await Utilisateur.findAll({
+        where: { entreprise_id, role: 'manager', service: employe.service, statut: 'actif' },
+      });
+    }
+    if (managers.length === 0) {
+      managers = await Utilisateur.findAll({
+        where: { entreprise_id, role: 'manager', statut: 'actif' },
+      });
+    }
 
     const base = {
       prenom: employe?.prenom || '',
@@ -29,7 +43,7 @@ async function notifyAbsenceCreated(absence, entreprise_id) {
         employe.email,
         'Nouvelle absence enregistrée',
         'absence-notification',
-        { ...base, content: `<p>Bonjour ${employe.prenom},<br>Votre absence (${absence.type_absence}) du ${absence.date_debut} au ${absence.date_fin} a bien été enregistrée.<br>Commentaire : ${absence.commentaire}</p>` }
+        { ...base, content: `<p>Bonjour ${employe.prenom},<br>Votre absence (${absence.type_absence}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)} a bien été enregistrée.<br>Commentaire : ${absence.commentaire}</p>` }
       ));
     }
 
@@ -38,7 +52,7 @@ async function notifyAbsenceCreated(absence, entreprise_id) {
         admin.email,
         'Nouvelle absence déclarée',
         'absence-notification',
-        { ...base, content: `<p>Nouvelle absence déclarée par ${employe?.prenom} ${employe?.nom} (${employe?.email}) du ${absence.date_debut} au ${absence.date_fin}.<br>Type : ${absence.type_absence}<br>Commentaire : ${absence.commentaire}</p>` }
+        { ...base, content: `<p>Nouvelle absence déclarée par ${employe?.prenom} ${employe?.nom} (${employe?.email}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.<br>Type : ${absence.type_absence}<br>Commentaire : ${absence.commentaire}</p>` }
       ));
     }
 
@@ -48,7 +62,7 @@ async function notifyAbsenceCreated(absence, entreprise_id) {
           manager.email,
           'Nouvelle absence dans votre équipe',
           'absence-notification',
-          { ...base, content: `<p>Nouvelle absence déclarée par ${employe?.prenom} ${employe?.nom} (${employe?.email}) du ${absence.date_debut} au ${absence.date_fin}.<br>Type : ${absence.type_absence}<br>Commentaire : ${absence.commentaire}</p>` }
+          { ...base, content: `<p>Nouvelle absence déclarée par ${employe?.prenom} ${employe?.nom} (${employe?.email}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.<br>Type : ${absence.type_absence}<br>Commentaire : ${absence.commentaire}</p>` }
         ));
       }
     }
@@ -67,12 +81,36 @@ async function createAbsence({ utilisateur_id, entreprise_id, type_absence, date
     throw Object.assign(new Error('La date de fin doit être postérieure ou égale à la date de début'), { status: 400 });
   }
 
+  // Fix #45 : vérification de chevauchement avant création.
+  // Deux intervalles [A,B] et [C,D] se chevauchent si A <= D et B >= C.
+  const existing = await Absence.findOne({
+    where: {
+      utilisateur_id,
+      date_debut: { [Op.lte]: date_fin },
+      date_fin:   { [Op.gte]: date_debut },
+    },
+    attributes: ['id', 'date_debut', 'date_fin'],
+  });
+  if (existing) {
+    throw Object.assign(
+      new Error(
+        `Une absence existe déjà sur cette période ` +
+        `(du ${formatDateFR(existing.date_debut)} au ${formatDateFR(existing.date_fin)}). ` +
+        `Veuillez choisir une période différente.`
+      ),
+      { status: 409 }
+    );
+  }
+
   const absence = await Absence.create({ utilisateur_id, entreprise_id, type_absence, date_debut, date_fin, commentaire });
 
   notifyAbsenceCreated(absence, entreprise_id);
 
   return absence;
 }
+
+// Rôles pouvant voir le commentaire d'un arrêt maladie d'un collègue (RGPD Art. 9)
+const MEDICAL_COMMENT_ROLES = ['manager', 'admin_entreprise', 'super_admin'];
 
 async function listAbsences({ role, id: userId, entreprise_id }, query) {
   const { type_absence, utilisateur_id, date_debut, date_fin } = query;
@@ -93,11 +131,54 @@ async function listAbsences({ role, id: userId, entreprise_id }, query) {
     if (date_fin)   where.date_fin   = { [Op.lte]: date_fin };
   }
 
-  return Absence.findAll({
+  const rows = await Absence.findAll({
     where,
     include: [{ model: Utilisateur, as: 'utilisateur', attributes: ['id', 'prenom', 'nom', 'role'] }],
     order: [['date_debut', 'DESC']],
   });
+
+  // RGPD Art. 9 — le commentaire d'un arrêt maladie est une donnée de santé.
+  // Il est masqué pour les employés qui consultent l'absence d'un collègue.
+  // L'employé voit son propre commentaire ; manager/admin voient tout.
+  if (MEDICAL_COMMENT_ROLES.includes(role)) return rows;
+
+  return rows.map(absence => {
+    if (absence.type_absence === 'maladie' && absence.utilisateur_id !== userId) {
+      const plain = absence.toJSON();
+      plain.commentaire = null;
+      return plain;
+    }
+    return absence;
+  });
 }
 
-module.exports = { createAbsence, listAbsences, notifyAbsenceCreated };
+async function deleteAbsence(id, user) {
+  const absence = await Absence.findByPk(id);
+  if (!absence) throw Object.assign(new Error('Absence non trouvée'), { status: 404 });
+
+  const isSuperAdmin    = user.role === 'super_admin';
+  const isAdminOrAbove  = ['admin_entreprise', 'super_admin'].includes(user.role);
+  const isManager       = user.role === 'manager';
+  const isOwner         = absence.utilisateur_id === user.id;
+  const sameEntreprise  = absence.entreprise_id === user.entreprise_id;
+
+  // Vérification d'appartenance à l'entreprise (sauf super_admin qui voit tout)
+  if (!isSuperAdmin && !sameEntreprise) {
+    throw Object.assign(new Error('Accès interdit'), { status: 403 });
+  }
+
+  // Un employé ne peut supprimer que sa propre absence encore non traitée
+  if (!isSuperAdmin && !isAdminOrAbove && !isManager) {
+    if (!isOwner) throw Object.assign(new Error('Accès interdit'), { status: 403 });
+    if (absence.statut !== 'signalée') {
+      throw Object.assign(
+        new Error('Impossible de supprimer une absence déjà approuvée ou rejetée'),
+        { status: 409 }
+      );
+    }
+  }
+
+  await absence.destroy();
+}
+
+module.exports = { createAbsence, listAbsences, notifyAbsenceCreated, deleteAbsence };
