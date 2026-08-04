@@ -47,7 +47,7 @@ async function getCalendrier(req, res, next) {
     if (req.user.role === 'employe') {
       where[Op.or] = [
         { utilisateur_id: req.user.id },
-        { statut: { [Op.notIn]: ['refuse_manager', 'refuse_final'] } },
+        { statut: { [Op.notIn]: ['refuse_manager', 'refuse_final', 'annule'] } },
       ];
     }
 
