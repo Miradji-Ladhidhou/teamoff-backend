@@ -2169,6 +2169,7 @@ async function calculateDaysPreview({ date_debut, date_fin, debut_demi_journee, 
       exclude_holidays: blockedDays.exclude_holidays !== false,
       count_saturday: blockedDays.count_saturday === true,
       count_sunday: blockedDays.count_sunday === true,
+      autoriser_reservation_sans_solde: leaveRules.autoriser_reservation_sans_solde !== false,
     },
   };
 }

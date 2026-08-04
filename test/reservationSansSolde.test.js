@@ -347,6 +347,55 @@ describe('Feature N+1 G — R1 skip (trop grande), R2 activée (tient dans le bu
 // F) tryActivateReservations → idempotente
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// H) createConge → manager peut réserver N+1 sans solde (même logique qu'employe)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Feature N+1 H — manager peut réserver N+1 sans solde', () => {
+  let ent, manager, type;
+
+  beforeAll(async () => {
+    const hash = await bcrypt.hash('Test1234!', 10);
+    ent  = await mkEntreprise('H', true);
+    manager = await Utilisateur.create({
+      entreprise_id: ent.id,
+      prenom: 'Man', nom: `H_${TS}`,
+      email: `manager.H.${TS}@test.internal`,
+      role: 'manager', password_hash: hash, statut: 'actif',
+    });
+    type = await mkCongeType(ent.id, 'H');
+    await mkCompteur(ent.id, manager.id, type.id, NEXT_YEAR, { jours_acquis: 0, jours_reserves: 0 });
+  });
+
+  afterAll(async () => {
+    await Conge.destroy({ where: { entreprise_id: ent.id } });
+    await CompteurConges.destroy({ where: { entreprise_id: ent.id } });
+    await Utilisateur.destroy({ where: { entreprise_id: ent.id } });
+    await CongeType.destroy({ where: { entreprise_id: ent.id } });
+    await Entreprise.destroy({ where: { id: ent.id } });
+  });
+
+  it('crée le congé avec statut=reserve pour un manager avec solde=0 et année N+1', async () => {
+    const conge = await createConge({
+      conge_type_id: type.id,
+      date_debut: `${NEXT_YEAR}-08-04`,
+      date_fin:   `${NEXT_YEAR}-08-08`,
+      reqUser: manager,
+    });
+
+    expect(conge.statut).toBe('reserve');
+
+    const compteur = await CompteurConges.findOne({
+      where: { utilisateur_id: manager.id, conge_type_id: type.id, annee: NEXT_YEAR },
+    });
+    expect(Number(compteur.jours_reserves)).toBeGreaterThan(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// F) tryActivateReservations → idempotente
+// ─────────────────────────────────────────────────────────────────────────────
+
 describe('Feature N+1 F — tryActivateReservations idempotente', () => {
   let ent, emp, type, conge;
 
