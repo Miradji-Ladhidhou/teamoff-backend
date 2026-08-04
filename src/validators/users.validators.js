@@ -20,6 +20,7 @@ const createUserRules = [
     .isLength({ max: 255 }),
   body('email')
     .isString().trim().notEmpty()
+    .isEmail().withMessage('email invalide')
     .isLength({ max: 255 }),
   body('role')
     .isIn(VALID_ROLES).withMessage('rôle invalide'),
@@ -50,6 +51,7 @@ const updateUserRules = [
   body('email')
     .optional({ nullable: true })
     .isString()
+    .isEmail().withMessage('email invalide')
     .isLength({ max: 255 }),
   body('role')
     .optional({ nullable: true })

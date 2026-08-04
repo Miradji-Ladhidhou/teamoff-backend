@@ -47,7 +47,26 @@ class ExportController {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
       const type = req.query.type || 'conges';
-      const preview = await ExportService.getPreview(type, entrepriseId, req.query, req.query.limit, req.user.role);
+      const role = req.user.role;
+
+      // Droits miroirs des routes CSV/PDF : les types sensibles exigent admin_entreprise+.
+      // Un manager ne doit pas contourner adminOrSuper via /preview.
+      const ADMIN_ONLY_TYPES = new Set(['audit', 'utilisateurs', 'usage', 'statistiques']);
+      const ALL_TYPES = new Set(['conges', 'absences', 'arrets_maladie', 'audit', 'utilisateurs', 'usage', 'statistiques']);
+
+      if (!ALL_TYPES.has(type)) {
+        return res.status(400).json({ message: `Type de preview non supporté : ${type}` });
+      }
+
+      const isAdminOrSuper = role === 'admin_entreprise' || role === 'super_admin';
+      if (ADMIN_ONLY_TYPES.has(type) && !isAdminOrSuper) {
+        return res.status(403).json({ message: 'Accès refusé : ce type de preview requiert le rôle admin_entreprise ou super_admin.' });
+      }
+
+      // Fix #52 : borner limit pour éviter un LIMIT 999999 en base (DoS).
+      const rawLimit = parseInt(req.query.limit, 10);
+      const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 500) : 50;
+      const preview = await ExportService.getPreview(type, entrepriseId, req.query, limit, role);
       res.json({ type, ...preview });
     } catch (err) { handleExportError(next, err); }
   }

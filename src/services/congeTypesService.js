@@ -31,6 +31,10 @@ async function createType(entrepriseId, { code, libelle, quota_annuel, demi_jour
 }
 
 async function updateType(id, entrepriseId, body) {
+  // Fix #54 : même validation que createType — quota_annuel doit être >= 0.
+  if (body.quota_annuel !== undefined && (isNaN(Number(body.quota_annuel)) || Number(body.quota_annuel) < 0)) {
+    throw new AppError('quota_annuel doit être un nombre positif', 400);
+  }
   const type = await getTypeById(id, entrepriseId);
   const allowed = ['code', 'libelle', 'quota_annuel', 'demi_journee_autorisee'];
   const updates = {};

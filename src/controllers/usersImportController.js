@@ -5,6 +5,7 @@ const { Utilisateur, Entreprise, sequelize } = require('../models');
 const emailService = require('../services/emailService');
 const quotasService = require('../services/quotasService');
 const logger = require('../utils/logger');
+const { BCRYPT_COST } = require('../services/authService');
 
 const ALLOWED_ROLES = ['employe', 'manager', 'admin_entreprise'];
 const MAX_ROWS = 200;
@@ -76,7 +77,7 @@ async function importUsersCSV(req, res, next) {
       }
 
       const tempPassword = crypto.randomBytes(6).toString('hex').slice(0, 8) + 'A1!';
-      const hash = await bcrypt.hash(tempPassword, 10);
+      const hash = await bcrypt.hash(tempPassword, BCRYPT_COST);
 
       let newUser = null;
       await sequelize.transaction(async (t) => {

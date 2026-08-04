@@ -84,11 +84,113 @@ describe('Absence API', () => {
     expect(res.body.commentaire).toBe('Modifié');
   });
 
-  test('GET /api/absences - manager voit toutes les absences de l’entreprise', async () => {
+  test("GET /api/absences - manager voit toutes les absences de l'entreprise", async () => {
     const res = await request(app)
       .get('/api/absences')
       .set('Authorization', `Bearer ${tokenManager}`);
     expect(res.statusCode).toBe(200);
     expect(res.body.some(a => a.utilisateur_id === employe.id)).toBe(true);
+  });
+});
+
+// ===========================================================================
+describe('RGPD Art. 9 — commentaire arrêt maladie', () => {
+  let employe2, tokenEmploye2, absenceMaladieId;
+
+  beforeAll(async () => {
+    // Deuxième employé dans la même entreprise
+    employe2 = await Utilisateur.create({
+      entreprise_id: entreprise.id,
+      prenom: 'Collègue',
+      nom: 'Test',
+      email: 'collegue.absence@example.com',
+      role: 'employe',
+      password_hash: 'hash',
+      statut: 'actif',
+    });
+    const jwt = require('jsonwebtoken');
+    tokenEmploye2 = jwt.sign(
+      { id: employe2.id, role: 'employe', entreprise_id: entreprise.id },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+
+    // Créer une absence maladie avec commentaire sensible pour employe (le premier)
+    const res = await request(app)
+      .post('/api/absences')
+      .set('Authorization', `Bearer ${tokenEmploye}`)
+      .send({
+        type_absence: 'maladie',
+        date_debut: '2026-09-01',
+        date_fin: '2026-09-05',
+        commentaire: 'Post-opératoire — données médicales confidentielles',
+      });
+    expect(res.statusCode).toBe(201);
+    absenceMaladieId = res.body.id;
+  });
+
+  afterAll(async () => {
+    await Utilisateur.destroy({ where: { id: employe2.id } });
+  });
+
+  test('un collègue (employe) ne voit pas le commentaire maladie d\'un autre employé', async () => {
+    const res = await request(app)
+      .get('/api/absences')
+      .set('Authorization', `Bearer ${tokenEmploye2}`);
+
+    expect(res.statusCode).toBe(200);
+    const absenceDuCollègue = res.body.find(a => a.id === absenceMaladieId);
+    expect(absenceDuCollègue).toBeDefined();
+    // Le commentaire doit être masqué
+    expect(absenceDuCollègue.commentaire).toBeNull();
+  });
+
+  test('l\'employé voit son propre commentaire maladie', async () => {
+    const res = await request(app)
+      .get('/api/absences')
+      .set('Authorization', `Bearer ${tokenEmploye}`);
+
+    expect(res.statusCode).toBe(200);
+    const saPropreAbsence = res.body.find(a => a.id === absenceMaladieId);
+    expect(saPropreAbsence).toBeDefined();
+    // L'employé voit son propre commentaire
+    expect(saPropreAbsence.commentaire).toBe('Post-opératoire — données médicales confidentielles');
+  });
+
+  test('un manager voit le commentaire maladie de tous les employés', async () => {
+    const res = await request(app)
+      .get('/api/absences')
+      .set('Authorization', `Bearer ${tokenManager}`);
+
+    expect(res.statusCode).toBe(200);
+    const absenceDuCollègue = res.body.find(a => a.id === absenceMaladieId);
+    expect(absenceDuCollègue).toBeDefined();
+    // Le manager voit le commentaire complet
+    expect(absenceDuCollègue.commentaire).toBe('Post-opératoire — données médicales confidentielles');
+  });
+
+  test('une absence exceptionnelle expose son commentaire à tous (non sensible)', async () => {
+    const resCreate = await request(app)
+      .post('/api/absences')
+      .set('Authorization', `Bearer ${tokenEmploye}`)
+      .send({
+        type_absence: 'absence_exceptionnelle',
+        date_debut: '2026-09-10',
+        date_fin: '2026-09-10',
+        commentaire: 'Déménagement',
+      });
+    expect(resCreate.statusCode).toBe(201);
+    const exId = resCreate.body.id;
+
+    const res = await request(app)
+      .get('/api/absences')
+      .set('Authorization', `Bearer ${tokenEmploye2}`);
+
+    const absenceExc = res.body.find(a => a.id === exId);
+    expect(absenceExc).toBeDefined();
+    // Les absences non-maladie ne sont pas masquées
+    expect(absenceExc.commentaire).toBe('Déménagement');
+
+    await Absence.destroy({ where: { id: exId } });
   });
 });
