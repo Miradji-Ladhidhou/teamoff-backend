@@ -3,7 +3,8 @@ const quotasService = require('../services/quotasService');
 const { tryActivateReservations } = require('../services/congesService');
 const logger = require('../utils/logger');
 const UsageService = require('../services/usageService');
-const { Utilisateur } = require('../models');
+const { Utilisateur, MouvementSolde, CongeType } = require('../models');
+const { Op } = require('sequelize');
 
 async function ensureUserAccess(req, utilisateurId) {
   const utilisateur = await Utilisateur.findByPk(utilisateurId, {
@@ -210,6 +211,44 @@ async function monthlyAccrual(req, res, next) {
   }
 }
 
+async function getHistorique(req, res, next) {
+  try {
+    const { utilisateur_id } = req.params;
+    const reqUser = req.user;
+
+    const utilisateur = await Utilisateur.findByPk(utilisateur_id, { attributes: ['id', 'entreprise_id'] });
+    if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
+
+    const isSelf = reqUser.id === utilisateur_id;
+    const isAdmin = ['admin_entreprise', 'super_admin', 'manager'].includes(reqUser.role);
+    if (!isSelf && !isAdmin) return res.status(403).json({ message: 'Accès interdit' });
+    if (isAdmin && reqUser.role !== 'super_admin' && reqUser.entreprise_id !== utilisateur.entreprise_id) {
+      return res.status(403).json({ message: 'Accès interdit' });
+    }
+
+    const annee = req.query.annee ? parseInt(req.query.annee, 10) : new Date().getFullYear();
+    const conge_type_id = req.query.conge_type_id || null;
+    const page  = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
+    const offset = (page - 1) * limit;
+
+    const where = { utilisateur_id, annee };
+    if (conge_type_id) where.conge_type_id = conge_type_id;
+
+    const { count, rows } = await MouvementSolde.findAndCountAll({
+      where,
+      include: [{ model: CongeType, as: 'conge_type', attributes: ['id', 'libelle'] }],
+      order: [['date', 'DESC'], ['created_at', 'DESC']],
+      limit,
+      offset,
+    });
+
+    return res.json({ total: count, page, limit, items: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   initQuota,
   getSolde,
@@ -220,4 +259,5 @@ module.exports = {
   removeUserCounter,
   recalculateProrata,
   monthlyAccrual,
+  getHistorique,
 };

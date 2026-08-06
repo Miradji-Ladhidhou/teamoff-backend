@@ -110,6 +110,8 @@ function normalizeLeavePolicy(rawPolicy = {}) {
     report_max_jours: Math.max(0, Number(rawPolicy?.report_max_jours) || 0),
     // Réservation N+1 sans solde — true par défaut pour ne pas casser les entreprises existantes.
     autoriser_reservation_sans_solde: rawPolicy?.autoriser_reservation_sans_solde !== false,
+    // Historique de solde visible par l'employé — true par défaut.
+    afficher_historique_employe: rawPolicy?.afficher_historique_employe !== false,
   };
 }
 

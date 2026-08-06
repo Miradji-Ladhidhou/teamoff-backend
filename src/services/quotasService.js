@@ -235,6 +235,19 @@ async function initQuotaAnnuel(entrepriseId, annee) {
           await newCounter.save({ transaction: t });
 
           quotasLog(`[report-annuel] ${utilisateur.id} / ${type.libelle}: ${carry}j reportes de ${prevYear} vers ${annee}`);
+
+          const { logMouvement } = require('./mouvementSoldeService');
+          await logMouvement({
+            entreprise_id: entrepriseId,
+            utilisateur_id: utilisateur.id,
+            conge_type_id: type.id,
+            annee: Number(annee),
+            type: 'report_annee',
+            quantite: +carry,
+            solde_apres: toNumber(newCounter.jours_acquis, 0) - toNumber(newCounter.jours_reserves, 0),
+            description: `Report année ${prevYear} → ${annee}`,
+            transaction: t,
+          });
         }
       }
     }
@@ -343,6 +356,19 @@ async function ajouterAcquisitionMensuelle(entrepriseId, annee, mois, options = 
           compteur.dernier_credit_mensuel = targetMonthKey;
           await compteur.save({ transaction: t });
           applied += 1;
+
+          const { logMouvement } = require('./mouvementSoldeService');
+          await logMouvement({
+            entreprise_id: entrepriseId,
+            utilisateur_id: utilisateur.id,
+            conge_type_id: type.id,
+            annee: targetYear,
+            type: 'credit_mensuel',
+            quantite: +monthlyCredit,
+            solde_apres: toNumber(compteur.jours_acquis, 0) - toNumber(compteur.jours_reserves, 0),
+            description: `Crédit mensuel · ${targetMonthKey}`,
+            transaction: t,
+          });
         } else {
           toApply += 1;
         }
@@ -513,6 +539,21 @@ async function createOrUpdateCounter({ entrepriseId, utilisateurId, congeTypeId,
     auditCounter.updated(compteur, before, after, performedBy, req).catch((e) =>
       logger.error('auditCounter.updated error', { error: e.message })
     );
+
+    const delta = (toNumber(after.jours_acquis, 0) - toNumber(after.jours_reserves, 0))
+                - (toNumber(before.jours_acquis, 0) - toNumber(before.jours_reserves, 0));
+    const { logMouvement } = require('./mouvementSoldeService');
+    await logMouvement({
+      entreprise_id: compteur.entreprise_id,
+      utilisateur_id: compteur.utilisateur_id,
+      conge_type_id: compteur.conge_type_id,
+      annee: compteur.annee,
+      type: 'ajustement_admin',
+      quantite: Number(delta.toFixed(2)),
+      solde_apres: toNumber(after.jours_acquis, 0) - toNumber(after.jours_reserves, 0),
+      description: 'Ajustement administratif',
+      transaction: t,
+    });
 
     return compteur;
   });

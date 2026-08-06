@@ -24,6 +24,7 @@ const SystemSetting = require('./SystemSetting')(sequelize, DataTypes);
 const HolidayTemplate = require('./HolidayTemplate')(sequelize, DataTypes);
 const HolidayTemplateItem = require('./HolidayTemplateItem')(sequelize, DataTypes);
 const Absence = require('./Absence')(sequelize, DataTypes);
+const MouvementSolde = require('./MouvementSolde')(sequelize, DataTypes);
 
 // ======================
 // Associations
@@ -108,6 +109,15 @@ HolidayTemplateItem.belongsTo(HolidayTemplate, { foreignKey: 'template_id', as: 
 Absence.belongsTo(Utilisateur, { foreignKey: 'utilisateur_id', as: 'utilisateur' });
 Absence.belongsTo(Entreprise, { foreignKey: 'entreprise_id', as: 'entreprise' });
 
+// ----------------------
+// MouvementSolde relations
+// ----------------------
+MouvementSolde.belongsTo(Utilisateur, { foreignKey: 'utilisateur_id', as: 'utilisateur' });
+MouvementSolde.belongsTo(Entreprise, { foreignKey: 'entreprise_id', as: 'entreprise' });
+MouvementSolde.belongsTo(CongeType, { foreignKey: 'conge_type_id', as: 'conge_type' });
+Utilisateur.hasMany(MouvementSolde, { foreignKey: 'utilisateur_id', as: 'mouvements_solde' });
+Entreprise.hasMany(MouvementSolde, { foreignKey: 'entreprise_id', as: 'mouvements_solde', onDelete: 'CASCADE' });
+
 // ======================
 // Export
 // ======================
@@ -126,4 +136,5 @@ module.exports = {
   HolidayTemplate,
   HolidayTemplateItem,
   Absence,
+  MouvementSolde,
 };
