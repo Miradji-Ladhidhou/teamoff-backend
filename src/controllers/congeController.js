@@ -134,7 +134,7 @@ async function getAttestationData(req, res, next) {
     const acquis   = parseFloat(compteur?.jours_acquis   ?? 0);
     const pris     = parseFloat(compteur?.jours_pris     ?? 0);
     const reserves = parseFloat(compteur?.jours_reserves ?? 0);
-    const soldeRestant = acquis - pris - reserves;
+    const soldeRestant = acquis - reserves;
 
     const start = dayjs(conge.date_debut);
     const end = dayjs(conge.date_fin);
@@ -192,7 +192,7 @@ async function getAttestationData(req, res, next) {
       solde: compteur ? {
         annee: anneeConge,
         type: conge.conge_type?.libelle || '',
-        jours_acquis: acquis,
+        jours_acquis_initial: acquis + pris,
         jours_pris: pris,
         jours_reserves: reserves,
         solde_restant: soldeRestant,
