@@ -2,8 +2,7 @@
 
 module.exports = {
   async up(queryInterface) {
-    // Trouver et supprimer toute contrainte unique sur (entreprise_id, email)
-    // sans dépendre du nom exact (qui varie entre dev et prod)
+    // Supprimer toute contrainte unique sur (entreprise_id, email) — nom inconnu en prod
     await queryInterface.sequelize.query(`
       DO $$
       DECLARE
@@ -16,10 +15,10 @@ module.exports = {
           WHERE t.relname = 'utilisateur'
             AND c.contype = 'u'
             AND (
-              SELECT array_agg(a.attname ORDER BY a.attname)
+              SELECT array_agg(a.attname::text ORDER BY a.attname)
               FROM pg_attribute a
               WHERE a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-            ) = ARRAY['email','entreprise_id']
+            ) = ARRAY['email','entreprise_id']::text[]
         LOOP
           EXECUTE 'ALTER TABLE utilisateur DROP CONSTRAINT ' || quote_ident(r.conname);
         END LOOP;
@@ -40,11 +39,12 @@ module.exports = {
           JOIN pg_class i ON i.oid = x.indexrelid
           WHERE t.relname = 'utilisateur'
             AND x.indisunique = true
+            AND NOT x.indisprimary
             AND (
-              SELECT array_agg(a.attname ORDER BY a.attname)
+              SELECT array_agg(a.attname::text ORDER BY a.attname)
               FROM pg_attribute a
               WHERE a.attrelid = x.indrelid AND a.attnum = ANY(x.indkey)
-            ) = ARRAY['email','entreprise_id']
+            ) = ARRAY['email','entreprise_id']::text[]
         LOOP
           EXECUTE 'DROP INDEX IF EXISTS ' || quote_ident(r.relname);
         END LOOP;
