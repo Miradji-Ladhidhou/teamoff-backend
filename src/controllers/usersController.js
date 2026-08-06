@@ -68,7 +68,7 @@ async function applyOwnProfileFields(utilisateur, { nom, prenom, email }) {
     const normalized = String(email).trim().toLowerCase();
     if (normalized !== utilisateur.email) {
       const existing = await Utilisateur.findOne({
-        where: { entreprise_id: utilisateur.entreprise_id, email: normalized },
+        where: { email: normalized },
       });
       if (existing) {
         const err = new Error('Cette adresse email est déjà utilisée');
@@ -191,7 +191,7 @@ async function createUser(req, res, next) {
     });
   } catch (err) {
     logger.error('Erreur création utilisateur', { error: err.message });
-    res.status(err.status || 500).json({ message: err.status ? err.message : 'Erreur serveur' });
+    next(err);
   }
 }
 
@@ -286,7 +286,7 @@ async function updateUser(req, res, next) {
       const normalized = String(email).trim().toLowerCase();
       if (normalized !== utilisateur.email) {
         const existing = await Utilisateur.findOne({
-          where: { entreprise_id: utilisateur.entreprise_id, email: normalized },
+          where: { email: normalized },
         });
         if (existing) return res.status(409).json({ message: 'Cette adresse email est déjà utilisée' });
         email = normalized;
