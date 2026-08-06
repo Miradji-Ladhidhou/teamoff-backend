@@ -88,8 +88,8 @@ module.exports = (sequelize, DataTypes) => {
       { fields: ['entreprise_id', 'role'] },
     ],
     uniqueKeys: {
-      entreprise_email_unique: {
-        fields: ['entreprise_id', 'email'],
+      utilisateur_email_unique: {
+        fields: ['email'],
       },
     },
   });
