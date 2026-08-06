@@ -9,7 +9,8 @@ const sequelize = require('../config/database');
 const systemSettingsService = require('../services/systemSettingsService');
 const emailService = require('../services/emailService');
 const backupService = require('../services/backupService');
-const { uploadBackupToDrive, listDriveBackups } = require('../services/googleDriveService');
+const { uploadBackupToDrive, listDriveBackups, downloadFromDrive } = require('../services/googleDriveService');
+const { restoreFromFile } = require('../services/backupService');
 const auditActions = require('../services/auditActions');
 const { AuditLog, Utilisateur } = require('../models');
 const { initBackupCron } = require('../cron/backupCron');
@@ -367,6 +368,31 @@ router.get('/drive-backups', async (req, res, next) => {
     res.json({ files });
   } catch (error) {
     next(error);
+  }
+});
+
+router.post('/actions/restore-drive', async (req, res, next) => {
+  const { fileId, filename } = req.body;
+  if (!fileId) return res.status(400).json({ message: 'fileId est requis.' });
+
+  let tempPath = null;
+  try {
+    tempPath = await downloadFromDrive(fileId, filename);
+    await restoreFromFile(tempPath);
+
+    await logSettingsAudit(req, auditActions.SYSTEM_BACKUP_CREATED, {
+      action: 'restore',
+      filename: filename || fileId,
+      source: 'google_drive',
+    });
+
+    res.json({ message: `Base de données restaurée depuis "${filename || fileId}" avec succès.` });
+  } catch (error) {
+    next(error);
+  } finally {
+    if (tempPath && fs.existsSync(tempPath)) {
+      try { fs.unlinkSync(tempPath); } catch { /* ignore */ }
+    }
   }
 });
 

@@ -3,6 +3,7 @@
 const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 function getDriveClient() {
   const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
@@ -74,4 +75,26 @@ async function listDriveBackups(maxResults = 20) {
   return response.data.files || [];
 }
 
-module.exports = { uploadBackupToDrive, listDriveBackups };
+async function downloadFromDrive(fileId, filename) {
+  const drive = getDriveClient();
+
+  const destPath = path.join(os.tmpdir(), filename || `restore_${Date.now()}.sql`);
+  const dest = fs.createWriteStream(destPath);
+
+  const response = await drive.files.get(
+    { fileId, alt: 'media' },
+    { responseType: 'stream' }
+  );
+
+  await new Promise((resolve, reject) => {
+    response.data
+      .on('error', reject)
+      .pipe(dest)
+      .on('error', reject)
+      .on('finish', resolve);
+  });
+
+  return destPath;
+}
+
+module.exports = { uploadBackupToDrive, listDriveBackups, downloadFromDrive };

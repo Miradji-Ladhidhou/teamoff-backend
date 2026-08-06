@@ -73,6 +73,8 @@ async function runDatabaseBackup() {
       '--format=plain',
       '--no-owner',
       '--no-privileges',
+      '--clean',
+      '--if-exists',
       '--host',
       host,
       '--port',
@@ -118,6 +120,67 @@ async function runDatabaseBackup() {
   }
 }
 
+async function restoreFromFile(filePath) {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    const err = new Error('DATABASE_URL est manquante.');
+    err.statusCode = 500;
+    throw err;
+  }
+
+  if (!fs.existsSync(filePath)) {
+    const err = new Error('Fichier de sauvegarde introuvable.');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const parsedUrl = new URL(databaseUrl);
+  const databaseName = parsedUrl.pathname.replace(/^\//, '');
+  const username = decodeURIComponent(parsedUrl.username || '');
+  const password = decodeURIComponent(parsedUrl.password || '');
+  const host = parsedUrl.hostname;
+  const port = parsedUrl.port || '5432';
+
+  const childEnv = { ...process.env, PGPASSWORD: password };
+  const sslMode = parsedUrl.searchParams.get('sslmode');
+  if (sslMode) childEnv.PGSSLMODE = sslMode;
+
+  const psqlArgs = [
+    '--host', host,
+    '--port', String(port),
+    '--username', username,
+    '--dbname', databaseName,
+    '--file', filePath,
+    '--single-transaction',
+    '--set', 'ON_ERROR_STOP=1',
+  ];
+
+  const psqlCandidates = [
+    process.env.PSQL_BIN,
+    '/opt/homebrew/bin/psql',
+    '/usr/local/bin/psql',
+    'psql',
+  ].filter(Boolean);
+
+  let lastError = null;
+  for (const bin of psqlCandidates) {
+    try {
+      await execFileAsync(bin, psqlArgs, { env: childEnv });
+      lastError = null;
+      break;
+    } catch (e) {
+      lastError = e;
+    }
+  }
+
+  if (lastError) {
+    const detail = (lastError.stderr || lastError.message || '').toString().trim();
+    const err = new Error(`Échec de la restauration : ${detail || 'Erreur inconnue.'}`);
+    err.statusCode = 500;
+    throw err;
+  }
+}
+
 function getBackupPathByFilename(filename) {
   const safeName = path.basename(filename || '');
   if (!safeName || safeName !== filename) {
@@ -157,6 +220,7 @@ function cleanupOldBackups(retentionDays = 7) {
 module.exports = {
   backupsDir,
   runDatabaseBackup,
+  restoreFromFile,
   getBackupPathByFilename,
   cleanupOldBackups,
 };
