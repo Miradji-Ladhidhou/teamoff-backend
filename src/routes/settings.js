@@ -9,6 +9,7 @@ const sequelize = require('../config/database');
 const systemSettingsService = require('../services/systemSettingsService');
 const emailService = require('../services/emailService');
 const backupService = require('../services/backupService');
+const { uploadBackupToDrive, listDriveBackups } = require('../services/googleDriveService');
 const auditActions = require('../services/auditActions');
 const { AuditLog, Utilisateur } = require('../models');
 const { initBackupCron } = require('../cron/backupCron');
@@ -325,6 +326,45 @@ router.post('/actions/backup', async (req, res, next) => {
         downloadUrl: `/api/settings/backups/${backup.filename}`,
       },
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/actions/backup-drive', async (req, res, next) => {
+  try {
+    const backup = await backupService.runDatabaseBackup();
+    const driveFile = await uploadBackupToDrive(backup.filePath, backup.filename);
+
+    await logSettingsAudit(req, auditActions.SYSTEM_BACKUP_CREATED, {
+      filename: backup.filename,
+      sizeBytes: backup.sizeBytes,
+      destination: 'google_drive',
+      driveFileId: driveFile.id,
+    });
+
+    res.json({
+      message: 'Sauvegarde envoyée sur Google Drive avec succès.',
+      backup: {
+        filename: backup.filename,
+        sizeBytes: backup.sizeBytes,
+        createdAt: backup.createdAt,
+      },
+      drive: {
+        fileId: driveFile.id,
+        name: driveFile.name,
+        webViewLink: driveFile.webViewLink,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/drive-backups', async (req, res, next) => {
+  try {
+    const files = await listDriveBackups(30);
+    res.json({ files });
   } catch (error) {
     next(error);
   }
