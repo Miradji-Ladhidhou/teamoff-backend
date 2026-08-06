@@ -3,7 +3,7 @@ const notificationService = require('../services/notificationSocketService');
 const joursFeriesService = require('../services/joursFeriesService');
 const { getLeaveRules } = require('../services/politiqueConges');
 const emailService = require('../services/emailService');
-const { Conge, Utilisateur, CongeType, Entreprise } = require('../models');
+const { Conge, Utilisateur, CongeType, Entreprise, CompteurConges } = require('../models');
 const dayjs = require('dayjs');
 const isSameOrBefore = require('dayjs/plugin/isSameOrBefore');
 dayjs.extend(isSameOrBefore);
@@ -127,6 +127,15 @@ async function getAttestationData(req, res, next) {
     const leaveRules = getLeaveRules(conge.entreprise);
     const { count_saturday, count_sunday } = leaveRules.blocked_days || {};
 
+    const anneeConge = dayjs(conge.date_debut).year();
+    const compteur = await CompteurConges.findOne({
+      where: { utilisateur_id: conge.utilisateur_id, conge_type_id: conge.conge_type_id, annee: anneeConge },
+    });
+    const acquis   = parseFloat(compteur?.jours_acquis   ?? 0);
+    const pris     = parseFloat(compteur?.jours_pris     ?? 0);
+    const reserves = parseFloat(compteur?.jours_reserves ?? 0);
+    const soldeRestant = acquis - pris - reserves;
+
     const start = dayjs(conge.date_debut);
     const end = dayjs(conge.date_fin);
     const jours_calendaires = end.diff(start, 'day') + 1;
@@ -163,6 +172,7 @@ async function getAttestationData(req, res, next) {
         type: conge.conge_type?.libelle || '',
         date_debut: conge.date_debut,
         date_fin: conge.date_fin,
+        date_creation: conge.createdAt || null,
         debut_demi_journee: conge.debut_demi_journee || null,
         fin_demi_journee: conge.fin_demi_journee || null,
         statut: conge.statut,
@@ -175,6 +185,14 @@ async function getAttestationData(req, res, next) {
         ouvres: parseFloat(conge.jours_calcules) || 0,
         detail,
       },
+      solde: compteur ? {
+        annee: anneeConge,
+        type: conge.conge_type?.libelle || '',
+        jours_acquis: acquis,
+        jours_pris: pris,
+        jours_reserves: reserves,
+        solde_restant: soldeRestant,
+      } : null,
     });
   }
   catch(err) { next(err); }
