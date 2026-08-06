@@ -172,7 +172,7 @@ async function getAttestationData(req, res, next) {
         type: conge.conge_type?.libelle || '',
         date_debut: conge.date_debut,
         date_fin: conge.date_fin,
-        date_creation: conge.createdAt || null,
+        date_creation: conge.created_at || null,
         debut_demi_journee: conge.debut_demi_journee || null,
         fin_demi_journee: conge.fin_demi_journee || null,
         statut: conge.statut,
@@ -184,6 +184,10 @@ async function getAttestationData(req, res, next) {
         calendaires: jours_calendaires,
         ouvres: parseFloat(conge.jours_calcules) || 0,
         detail,
+        politique: {
+          count_saturday: count_saturday === true,
+          count_sunday: count_sunday === true,
+        },
       },
       solde: compteur ? {
         annee: anneeConge,
