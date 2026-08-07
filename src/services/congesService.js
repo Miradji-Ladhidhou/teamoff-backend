@@ -1025,7 +1025,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
       }
 
       if (['manager', 'manager_only'].includes(leaveRules.approval_workflow)) {
-        const compteur = await CompteurConges.findOne({
+        let compteur = await CompteurConges.findOne({
           where: {
             utilisateur_id: conge.utilisateur_id,
             conge_type_id: conge.conge_type_id,
@@ -1034,7 +1034,15 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
           transaction: t,
           lock: t.LOCK.UPDATE
         });
-        if (!compteur) throw new Error('Compteur de congés introuvable pour validation');
+        if (!compteur) {
+          compteur = await ensureCounter({
+            entrepriseId: conge.entreprise_id,
+            utilisateurId: conge.utilisateur_id,
+            congeTypeId: conge.conge_type_id,
+            annee: dayjs(conge.date_debut).year(),
+            transaction: t,
+          });
+        }
 
         compteur.jours_acquis = Math.max(0, safeNumber(compteur.jours_acquis) - safeNumber(joursConge));
         compteur.jours_pris = safeNumber(compteur.jours_pris) + safeNumber(joursConge);
@@ -1184,7 +1192,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
       await conge.save({ transaction: t });
 
       // Mise à jour compteur
-      const compteur = await CompteurConges.findOne({
+      let compteur = await CompteurConges.findOne({
         where: {
           utilisateur_id: conge.utilisateur_id,
           conge_type_id: conge.conge_type_id,
@@ -1193,7 +1201,15 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         transaction: t,
         lock: t.LOCK.UPDATE
       });
-      if (!compteur) throw new Error('Compteur de congés introuvable pour validation');
+      if (!compteur) {
+        compteur = await ensureCounter({
+          entrepriseId: conge.entreprise_id,
+          utilisateurId: conge.utilisateur_id,
+          congeTypeId: conge.conge_type_id,
+          annee: dayjs(conge.date_debut).year(),
+          transaction: t,
+        });
+      }
 
       compteur.jours_acquis = Math.max(0, safeNumber(compteur.jours_acquis) - safeNumber(joursConge));
       compteur.jours_pris = safeNumber(compteur.jours_pris) + safeNumber(joursConge);
