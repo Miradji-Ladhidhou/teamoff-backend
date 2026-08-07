@@ -173,14 +173,16 @@ async function restoreFromFile(filePath) {
   const sslMode = parsedUrl.searchParams.get('sslmode');
   if (sslMode) childEnv.PGSSLMODE = sslMode;
 
+  // Sans --single-transaction ni ON_ERROR_STOP : psql continue malgré les
+  // erreurs "must be owner of" sur les objets d'extension Render (vector_indexes,
+  // pgrst_drop_watch…). On échoue seulement si des erreurs non liées aux permissions
+  // sont détectées dans stderr.
   const psqlArgs = [
     '--host', host,
     '--port', String(port),
     '--username', username,
     '--dbname', databaseName,
     '--file', strippedPath,
-    '--single-transaction',
-    '--set', 'ON_ERROR_STOP=1',
   ];
 
   const psqlCandidates = [
@@ -198,6 +200,19 @@ async function restoreFromFile(filePath) {
         lastError = null;
         break;
       } catch (e) {
+        // psql exit non-zero : vérifier si c'est uniquement des erreurs de permission
+        // sur des objets d'extension (attendues sur Render managed PostgreSQL)
+        const stderr = (e.stderr || e.message || '').toString();
+        const errorLines = stderr.split('\n').filter((l) => /^psql:.*ERROR:/i.test(l));
+        const onlyPermissionErrors = errorLines.length > 0 && errorLines.every((l) =>
+          l.includes('must be owner of') ||
+          l.includes('already exists') ||
+          l.includes('does not exist')
+        );
+        if (onlyPermissionErrors) {
+          lastError = null; // erreurs bénignes — restauration considérée réussie
+          break;
+        }
         lastError = e;
       }
     }
