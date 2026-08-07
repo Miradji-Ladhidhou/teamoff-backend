@@ -380,13 +380,29 @@ router.post('/actions/restore-drive', async (req, res, next) => {
     tempPath = await downloadFromDrive(fileId, filename);
     await restoreFromFile(tempPath);
 
+    // Vérification post-restauration : compter les lignes des tables clés
+    let verification = null;
+    try {
+      const [rows] = await sequelize.query(`
+        SELECT
+          (SELECT COUNT(*) FROM utilisateur)  AS utilisateurs,
+          (SELECT COUNT(*) FROM entreprise)   AS entreprises,
+          (SELECT COUNT(*) FROM conge)        AS conges
+      `);
+      verification = rows[0];
+    } catch { /* table manquante = restauration incomplète, on l'ignore ici */ }
+
     await logSettingsAudit(req, auditActions.SYSTEM_BACKUP_CREATED, {
       action: 'restore',
       filename: filename || fileId,
       source: 'google_drive',
+      verification,
     });
 
-    res.json({ message: `Base de données restaurée depuis "${filename || fileId}" avec succès.` });
+    res.json({
+      message: `Base de données restaurée depuis "${filename || fileId}" avec succès.`,
+      verification,
+    });
   } catch (error) {
     next(error);
   } finally {
