@@ -6,26 +6,20 @@ const path = require('path');
 const os = require('os');
 
 function getDriveClient() {
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (!raw) {
-    const err = new Error('GOOGLE_SERVICE_ACCOUNT_JSON est manquant dans les variables d\'environnement.');
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    const err = new Error(
+      'Variables Google OAuth manquantes : GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_REFRESH_TOKEN'
+    );
     err.statusCode = 500;
     throw err;
   }
 
-  let credentials;
-  try {
-    credentials = JSON.parse(raw);
-  } catch {
-    const err = new Error('GOOGLE_SERVICE_ACCOUNT_JSON est invalide (JSON malformé).');
-    err.statusCode = 500;
-    throw err;
-  }
-
-  const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ['https://www.googleapis.com/auth/drive.file'],
-  });
+  const auth = new google.auth.OAuth2(clientId, clientSecret);
+  auth.setCredentials({ refresh_token: refreshToken });
 
   return google.drive({ version: 'v3', auth });
 }
