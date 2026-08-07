@@ -120,6 +120,29 @@ async function runDatabaseBackup() {
   }
 }
 
+// Supprime les statements EVENT TRIGGER du SQL (pgrst_drop_watch etc. sont
+// créés par PostgREST/Render avec un superuser — l'app user n'en est pas propriétaire).
+function stripEventTriggers(content) {
+  const lines = content.split('\n');
+  const result = [];
+  let skip = false;
+
+  for (const line of lines) {
+    const upper = line.trim().toUpperCase();
+    if (
+      upper.startsWith('DROP EVENT TRIGGER') ||
+      upper.startsWith('CREATE EVENT TRIGGER') ||
+      upper.startsWith('ALTER EVENT TRIGGER')
+    ) {
+      skip = true;
+    }
+    if (!skip) result.push(line);
+    if (skip && upper.includes(';')) skip = false;
+  }
+
+  return result.join('\n');
+}
+
 async function restoreFromFile(filePath) {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -133,6 +156,11 @@ async function restoreFromFile(filePath) {
     err.statusCode = 404;
     throw err;
   }
+
+  // Écrire une version filtrée sans les EVENT TRIGGERs
+  const strippedPath = filePath + '.stripped.sql';
+  const strippedContent = stripEventTriggers(fs.readFileSync(filePath, 'utf8'));
+  fs.writeFileSync(strippedPath, strippedContent);
 
   const parsedUrl = new URL(databaseUrl);
   const databaseName = parsedUrl.pathname.replace(/^\//, '');
@@ -150,7 +178,7 @@ async function restoreFromFile(filePath) {
     '--port', String(port),
     '--username', username,
     '--dbname', databaseName,
-    '--file', filePath,
+    '--file', strippedPath,
     '--single-transaction',
     '--set', 'ON_ERROR_STOP=1',
   ];
@@ -163,14 +191,18 @@ async function restoreFromFile(filePath) {
   ].filter(Boolean);
 
   let lastError = null;
-  for (const bin of psqlCandidates) {
-    try {
-      await execFileAsync(bin, psqlArgs, { env: childEnv });
-      lastError = null;
-      break;
-    } catch (e) {
-      lastError = e;
+  try {
+    for (const bin of psqlCandidates) {
+      try {
+        await execFileAsync(bin, psqlArgs, { env: childEnv });
+        lastError = null;
+        break;
+      } catch (e) {
+        lastError = e;
+      }
     }
+  } finally {
+    try { fs.unlinkSync(strippedPath); } catch { /* ignore */ }
   }
 
   if (lastError) {
