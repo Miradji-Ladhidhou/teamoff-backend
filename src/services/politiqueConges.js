@@ -1,7 +1,6 @@
 const DEFAULT_LEAVE_POLICY = {
-  overlap_policy: 'block',
+  overlap_behavior: 'block',
   max_employees_on_leave: {
-    global: null,
     by_service: {}
   },
   blocked_days: {
@@ -84,19 +83,14 @@ function normalizeNotificationSettings(settings = {}) {
 }
 
 function normalizeLeavePolicy(rawPolicy = {}) {
-  const overlapPolicy = ['block', 'warning', 'allow'].includes(rawPolicy?.overlap_policy)
-    ? rawPolicy.overlap_policy
-    : DEFAULT_LEAVE_POLICY.overlap_policy;
-
   const approvalWorkflow = normalizeApprovalWorkflow(rawPolicy?.approval_workflow);
-
-  const globalLimit = Number(rawPolicy?.max_employees_on_leave?.global);
-  const normalizedGlobalLimit = Number.isFinite(globalLimit) && globalLimit > 0 ? globalLimit : null;
+  const overlapBehavior = ['block', 'warning'].includes(rawPolicy?.overlap_behavior)
+    ? rawPolicy.overlap_behavior
+    : DEFAULT_LEAVE_POLICY.overlap_behavior;
 
   return {
-    overlap_policy: overlapPolicy,
+    overlap_behavior: overlapBehavior,
     max_employees_on_leave: {
-      global: normalizedGlobalLimit,
       by_service: rawPolicy?.max_employees_on_leave?.by_service || {},
     },
     blocked_days: normalizeBlockedDays(rawPolicy?.blocked_days),
@@ -129,8 +123,8 @@ function getEffectiveLeaveRules(baseRules, service) {
     },
   };
 
-  if (['block', 'warning', 'allow'].includes(servicePolicy.overlap_policy)) {
-    effective.overlap_policy = servicePolicy.overlap_policy;
+  if (['block', 'warning'].includes(servicePolicy.overlap_behavior)) {
+    effective.overlap_behavior = servicePolicy.overlap_behavior;
   }
 
   if (['auto', 'manager', 'manager_admin', 'manager_only', 'admin_only'].includes(servicePolicy.approval_workflow)) {

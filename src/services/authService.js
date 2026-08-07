@@ -14,7 +14,7 @@ const BCRYPT_COST = 12;
 
 const DEFAULT_LEAVE_POLICY = {
   approval_workflow: 'manager_admin',
-  overlap_policy: 'block',
+  overlap_behavior: 'block',
   minimum_notice_days: 0,
   max_consecutive_days: 365,
   include_holidays_in_count: false,
@@ -24,7 +24,6 @@ const DEFAULT_LEAVE_POLICY = {
   blocked_days: [],
   service_policies: {},
   max_employees_on_leave: {
-    global: 0,
     by_service: {},
   },
 };

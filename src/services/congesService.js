@@ -270,7 +270,7 @@ async function getEntrepriseLeaveRules(entrepriseId, transaction = null) {
 async function computeOverlapContext({ entrepriseId, utilisateurId, dateDebut, dateFin, userService = null, transaction = null, excludeCongeId = null }) {
   const where = {
     entreprise_id: entrepriseId,
-    statut: { [Op.in]: ['en_attente_manager', 'valide_manager', 'valide_final'] },
+    statut: { [Op.in]: ['reserve', 'en_attente_manager', 'valide_manager', 'valide_final'] },
     date_debut: { [Op.lte]: dateFin },
     date_fin: { [Op.gte]: dateDebut }
   };
@@ -287,7 +287,7 @@ async function computeOverlapContext({ entrepriseId, utilisateurId, dateDebut, d
       attributes: ['id', 'service'],
       required: false,
     }],
-    attributes: ['id', 'utilisateur_id'],
+    attributes: ['id', 'utilisateur_id', 'date_debut', 'date_fin'],
     transaction,
   });
 
@@ -309,24 +309,36 @@ async function computeOverlapContext({ entrepriseId, utilisateurId, dateDebut, d
   };
 }
 
-function buildOverlapMessage({ dateDebut, dateFin, overlapWithSameUser, limitReached, serviceLimitReached, userService, projectedOnLeaveCount, globalLimit, projectedServiceOnLeaveCount, serviceLimit }) {
-  if (overlapWithSameUser) {
-    return 'Chevauchement de congé détecté';
-  }
+function computeConflictPeriod(overlappingConges, userService, requestedStart, requestedEnd) {
+  const relevant = userService
+    ? overlappingConges.filter((c) => c.utilisateur?.service === userService)
+    : overlappingConges;
+  if (!relevant.length) return null;
 
-  const details = [];
-  if (limitReached) {
-    details.push(`Capacité globale dépassée (${projectedOnLeaveCount}/${globalLimit})`);
+  let conflictStart = requestedEnd;
+  let conflictEnd = requestedStart;
+  for (const leave of relevant) {
+    const intStart = leave.date_debut > requestedStart ? leave.date_debut : requestedStart;
+    const intEnd = leave.date_fin < requestedEnd ? leave.date_fin : requestedEnd;
+    if (intStart <= intEnd) {
+      if (intStart < conflictStart) conflictStart = intStart;
+      if (intEnd > conflictEnd) conflictEnd = intEnd;
+    }
+  }
+  return conflictStart <= conflictEnd ? { start: conflictStart, end: conflictEnd } : null;
+}
+
+function buildOverlapMessage({ overlapWithSameUser, serviceLimitReached, userService, projectedServiceOnLeaveCount, serviceLimit, conflictPeriod }) {
+  if (overlapWithSameUser) {
+    return 'Chevauchement : vous avez déjà un congé sur cette période';
   }
   if (serviceLimitReached) {
-    details.push(`Capacité du service ${userService || 'inconnu'} dépassée (${projectedServiceOnLeaveCount}/${serviceLimit})`);
+    const where = conflictPeriod
+      ? ` du ${formatDateFR(conflictPeriod.start)} au ${formatDateFR(conflictPeriod.end)}`
+      : '';
+    return `Le service "${userService || 'votre service'}" atteint sa capacité maximale (${projectedServiceOnLeaveCount}/${serviceLimit} absences simultanées)${where}`;
   }
-
-  if (!details.length) {
-    return null;
-  }
-
-  return `Alerte chevauchement (${dateDebut} - ${dateFin}) : ${details.join(' ; ')}`;
+  return null;
 }
 
 async function checkOverlapConge({ utilisateur_id, conge_type_id, date_debut, date_fin, debut_demi_journee, fin_demi_journee, reqUser }) {
@@ -378,10 +390,6 @@ async function checkOverlapConge({ utilisateur_id, conge_type_id, date_debut, da
     userService: utilisateur.service || null,
   });
 
-  const globalLimit = Number(leaveRules.max_employees_on_leave.global);
-  const projectedOnLeaveCount = overlapContext.overlappingCount + 1;
-  const limitReached = Number.isFinite(globalLimit) && projectedOnLeaveCount > globalLimit;
-
   const userService = utilisateur.service || null;
   const serviceLimit = Number(userService ? leaveRules.max_employees_on_leave.by_service?.[userService] : null);
   const projectedServiceOnLeaveCount = overlapContext.overlappingCountByService + 1;
@@ -389,48 +397,28 @@ async function checkOverlapConge({ utilisateur_id, conge_type_id, date_debut, da
     userService && Number.isFinite(serviceLimit) && serviceLimit > 0 && projectedServiceOnLeaveCount > serviceLimit
   );
 
-  const message = buildOverlapMessage({
-    dateDebut: date_debut,
-    dateFin: date_fin,
-    overlapWithSameUser: overlapContext.overlapWithSameUser,
-    limitReached,
-    serviceLimitReached,
-    userService,
-    projectedOnLeaveCount,
-    globalLimit,
-    projectedServiceOnLeaveCount,
-    serviceLimit,
-  });
-
-  if (overlapContext.overlapWithSameUser || (leaveRules.overlap_policy === 'block' && (limitReached || serviceLimitReached))) {
-    return {
-      action: 'block',
-      message: message || 'Cette demande est bloquée par la politique de chevauchement.',
+  if (overlapContext.overlapWithSameUser || serviceLimitReached) {
+    const conflictPeriod = serviceLimitReached
+      ? computeConflictPeriod(overlapContext.overlappingConges, userService, date_debut, date_fin)
+      : null;
+    const message = buildOverlapMessage({
       overlapWithSameUser: overlapContext.overlapWithSameUser,
-      limitReached,
       serviceLimitReached,
-      policy: leaveRules.overlap_policy,
-      projectedOnLeaveCount,
-      globalLimit: Number.isFinite(globalLimit) ? globalLimit : null,
+      userService,
+      projectedServiceOnLeaveCount,
+      serviceLimit,
+      conflictPeriod,
+    });
+    const behavior = overlapContext.overlapWithSameUser ? 'block' : (leaveRules.overlap_behavior || 'block');
+    return {
+      action: behavior,
+      message: message || 'Capacité du service atteinte pour cette période.',
+      overlapWithSameUser: overlapContext.overlapWithSameUser,
+      serviceLimitReached,
       projectedServiceOnLeaveCount,
       serviceLimit: Number.isFinite(serviceLimit) ? serviceLimit : null,
       userService,
-    };
-  }
-
-  if (leaveRules.overlap_policy === 'warning' && (limitReached || serviceLimitReached)) {
-    return {
-      action: 'warning',
-      message: message || 'Attention: un chevauchement a été détecté.',
-      overlapWithSameUser: overlapContext.overlapWithSameUser,
-      limitReached,
-      serviceLimitReached,
-      policy: leaveRules.overlap_policy,
-      projectedOnLeaveCount,
-      globalLimit: Number.isFinite(globalLimit) ? globalLimit : null,
-      projectedServiceOnLeaveCount,
-      serviceLimit: Number.isFinite(serviceLimit) ? serviceLimit : null,
-      userService,
+      conflictPeriod,
     };
   }
 
@@ -438,11 +426,7 @@ async function checkOverlapConge({ utilisateur_id, conge_type_id, date_debut, da
     action: 'allow',
     message: null,
     overlapWithSameUser: false,
-    limitReached: false,
     serviceLimitReached: false,
-    policy: leaveRules.overlap_policy,
-    projectedOnLeaveCount,
-    globalLimit: Number.isFinite(globalLimit) ? globalLimit : null,
     projectedServiceOnLeaveCount,
     serviceLimit: Number.isFinite(serviceLimit) ? serviceLimit : null,
     userService,
@@ -478,10 +462,6 @@ async function getValidationOverlapStatus(congeId, reqUser) {
     excludeCongeId: conge.id,
   });
 
-  const globalLimit = Number(leaveRules.max_employees_on_leave.global);
-  const projectedOnLeaveCount = overlapContext.overlappingCount + 1;
-  const limitReached = Number.isFinite(globalLimit) && projectedOnLeaveCount > globalLimit;
-
   const userService = utilisateur.service || null;
   const serviceLimit = Number(userService ? leaveRules.max_employees_on_leave.by_service?.[userService] : null);
   const projectedServiceOnLeaveCount = overlapContext.overlappingCountByService + 1;
@@ -489,27 +469,25 @@ async function getValidationOverlapStatus(congeId, reqUser) {
     userService && Number.isFinite(serviceLimit) && serviceLimit > 0 && projectedServiceOnLeaveCount > serviceLimit
   );
 
-  const hasOverlap = Boolean(overlapContext.overlapWithSameUser || limitReached || serviceLimitReached);
+  const hasOverlap = Boolean(overlapContext.overlapWithSameUser || serviceLimitReached);
+  const conflictPeriod = serviceLimitReached
+    ? computeConflictPeriod(overlapContext.overlappingConges, userService, conge.date_debut, conge.date_fin)
+    : null;
 
   return {
     conge_id: conge.id,
     has_overlap: hasOverlap,
     overlap_with_same_user: overlapContext.overlapWithSameUser,
-    limit_reached: limitReached,
     service_limit_reached: serviceLimitReached,
-    policy: leaveRules.overlap_policy,
+    conflict_period: conflictPeriod,
     message: hasOverlap
       ? buildOverlapMessage({
-        dateDebut: conge.date_debut,
-        dateFin: conge.date_fin,
         overlapWithSameUser: overlapContext.overlapWithSameUser,
-        limitReached,
         serviceLimitReached,
         userService,
-        projectedOnLeaveCount,
-        globalLimit,
         projectedServiceOnLeaveCount,
         serviceLimit,
+        conflictPeriod,
       })
       : 'Aucun chevauchement détecté pour cette validation.',
     requires_manager_comment: Boolean(reqUser?.role === 'manager' && hasOverlap),
@@ -631,10 +609,6 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       transaction: t,
     });
 
-    const globalLimit = leaveRules.max_employees_on_leave.global;
-    const projectedOnLeaveCount = overlapContext.overlappingCount + 1;
-    const limitReached = Number.isFinite(globalLimit) && projectedOnLeaveCount > globalLimit;
-
     const userService = utilisateur.service || null;
     const serviceLimitRaw = userService
       ? leaveRules.max_employees_on_leave.by_service?.[userService]
@@ -645,38 +619,26 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       ? projectedServiceOnLeaveCount > serviceLimit
       : false;
 
-    const overlapMessage = buildOverlapMessage({
-      dateDebut: date_debut,
-      dateFin: date_fin,
-      overlapWithSameUser: overlapContext.overlapWithSameUser,
-      limitReached,
-      serviceLimitReached,
-      userService,
-      projectedOnLeaveCount,
-      globalLimit,
-      projectedServiceOnLeaveCount,
-      serviceLimit,
-    });
-
-    const overlapWarningPayload = leaveRules.overlap_policy === 'warning' && (limitReached || serviceLimitReached)
-      ? {
-        message: overlapMessage || 'Attention: un chevauchement a été détecté.',
-        limitReached,
-        serviceLimitReached,
-        globalLimit: Number.isFinite(Number(globalLimit)) ? Number(globalLimit) : null,
-        projectedOnLeaveCount,
-        serviceLimit: Number.isFinite(serviceLimit) ? serviceLimit : null,
-        projectedServiceOnLeaveCount,
-        userService,
-      }
-      : null;
-
     if (overlapContext.overlapWithSameUser) {
-      throw new Error(overlapMessage || 'Chevauchement de congé détecté');
+      throw new Error('Chevauchement : vous avez déjà un congé sur cette période');
     }
 
-    if (leaveRules.overlap_policy === 'block' && (limitReached || serviceLimitReached)) {
-      throw new Error(overlapMessage || 'Limite d\'employés en congé simultanément atteinte');
+    let overlapWarningPayload = null;
+    if (serviceLimitReached) {
+      const conflictPeriod = computeConflictPeriod(overlapContext.overlappingConges, userService, date_debut, date_fin);
+      const overlapMessage = buildOverlapMessage({
+        overlapWithSameUser: false,
+        serviceLimitReached: true,
+        userService,
+        projectedServiceOnLeaveCount,
+        serviceLimit,
+        conflictPeriod,
+      });
+      const behavior = leaveRules.overlap_behavior || 'block';
+      if (behavior === 'block') {
+        throw new Error(overlapMessage || 'Capacité du service atteinte pour cette période');
+      }
+      overlapWarningPayload = { message: overlapMessage, conflictPeriod };
     }
 
     const jours = await calcJoursConges(utilisateur.entreprise_id, date_debut, date_fin, debutDemiJournee, finDemiJournee, t);
@@ -690,16 +652,23 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     const soldeDisponible = safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves);
     const soldeInsuffisant = jours > soldeDisponible;
 
-    // Réservation prévisionnelle N+1 — gate par la politique entreprise.
+    // Réservation prévisionnelle — uniquement pour l'année N+1, pas N+2 ou au-delà.
     const anneeConge = dayjs(date_debut).year();
     const anneeActuelle = dayjs().year();
     const canReserveWithoutBalance = leaveRules.autoriser_reservation_sans_solde !== false;
-    const isReservation = soldeInsuffisant && anneeConge > anneeActuelle && canReserveWithoutBalance;
+    const isNextYear = anneeConge === anneeActuelle + 1;
+    const isReservation = soldeInsuffisant && isNextYear && canReserveWithoutBalance;
 
     if (soldeInsuffisant && !isReservation) {
-      if (anneeConge > anneeActuelle && !canReserveWithoutBalance) {
+      if (anneeConge > anneeActuelle + 1) {
         throw Object.assign(
-          new Error("Réservation anticipée impossible : la politique de votre entreprise n'autorise pas la réservation de congés sans solde suffisant."),
+          new Error(`Les réservations ne sont possibles que pour l'année suivante (${anneeActuelle + 1}). Les congés pour ${anneeConge} ne peuvent pas encore être posés.`),
+          { status: 422 }
+        );
+      }
+      if (isNextYear && !canReserveWithoutBalance) {
+        throw Object.assign(
+          new Error("Réservation anticipée désactivée : votre entreprise n'autorise pas la réservation de congés N+1 sans solde suffisant."),
           { status: 422 }
         );
       }
@@ -778,7 +747,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
             type_conge: congeType.libelle || 'Type non renseigne',
             commentaire_employe: safeCommentaire || 'Aucun',
             overlap_warning_html: overlapWarningPayload
-              ? `<div style="margin-top:12px;padding:12px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;color:#92400e;"><strong>Alerte chevauchement :</strong><br/>${overlapWarningPayload.message}</div>`
+              ? `<div style="margin-top:12px;padding:12px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;color:#92400e;"><strong>⚠ Alerte chevauchement :</strong><br/>${overlapWarningPayload.message}</div>`
               : '',
             action_url: buildCongeUrl(conge.id),
           }
@@ -807,7 +776,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
           type_conge: congeType.libelle || 'Type non renseigne',
           commentaire_employe: safeCommentaire || 'Aucun',
           overlap_warning_html: overlapWarningPayload
-            ? `<div style="margin-top:12px;padding:12px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;color:#92400e;"><strong>Alerte chevauchement :</strong><br/>${overlapWarningPayload.message}</div>`
+            ? `<div style="margin-top:12px;padding:12px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;color:#92400e;"><strong>⚠ Alerte chevauchement :</strong><br/>${overlapWarningPayload.message}</div>`
             : '',
           action_url: buildCongeUrl(conge.id),
         }
@@ -874,9 +843,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
             date_debut,
             date_fin,
             statut_label: approvalWorkflow === 'auto' ? 'Validee automatiquement' : 'En attente de validation',
-            overlap_warning_html: overlapWarningPayload
-              ? `<div style="margin-top:12px;padding:12px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;color:#92400e;"><strong>Alerte chevauchement :</strong><br/>${overlapWarningPayload.message}</div>`
-              : '',
+            overlap_warning_html: '',
             action_url: buildCongeUrl(conge.id),
           }
         });
@@ -906,10 +873,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     await auditConge.created(conge, reqUser, req || null);
 
     const congeResponse = conge.toJSON();
-    if (overlapWarningPayload) {
-      congeResponse.overlap_warning = overlapWarningPayload;
-    }
-
+    if (overlapWarningPayload) congeResponse.overlap_warning = overlapWarningPayload;
     return congeResponse;
   });
   emailQueue.forEach(payload => fireEmail(payload));
@@ -986,10 +950,6 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         excludeCongeId: conge.id,
       });
 
-      const globalLimit = Number(leaveRules.max_employees_on_leave.global);
-      const projectedOnLeaveCount = overlapContext.overlappingCount + 1;
-      const limitReached = Number.isFinite(globalLimit) && projectedOnLeaveCount > globalLimit;
-
       const userService = utilisateur?.service || null;
       const serviceLimitRaw = userService
         ? leaveRules.max_employees_on_leave.by_service?.[userService]
@@ -1001,21 +961,20 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
       );
 
       const hasOverlapAtValidation = Boolean(
-        overlapContext.overlapWithSameUser || limitReached || serviceLimitReached
+        overlapContext.overlapWithSameUser || serviceLimitReached
       );
 
+      const conflictPeriodValidation = serviceLimitReached
+        ? computeConflictPeriod(overlapContext.overlappingConges, userService, conge.date_debut, conge.date_fin)
+        : null;
       const overlapMessage = hasOverlapAtValidation
         ? buildOverlapMessage({
-          dateDebut: conge.date_debut,
-          dateFin: conge.date_fin,
           overlapWithSameUser: overlapContext.overlapWithSameUser,
-          limitReached,
           serviceLimitReached,
           userService,
-          projectedOnLeaveCount,
-          globalLimit,
           projectedServiceOnLeaveCount,
           serviceLimit,
+          conflictPeriod: conflictPeriodValidation,
         })
         : null;
 
@@ -1152,14 +1111,12 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
       // Vérification de capacité (absente dans la branche admin avant ce fix).
       // On ne compte que les congés DÉJÀ approuvés (valide_manager / valide_final),
       // pas les en_attente_manager qui pourraient encore être refusés.
-      const adminGlobalLimit = Number(leaveRules.max_employees_on_leave.global);
       const adminUserService = utilisateur?.service || null;
       const adminServiceLimitRaw = adminUserService
         ? leaveRules.max_employees_on_leave.by_service?.[adminUserService]
         : null;
       const adminServiceLimit = Number(adminServiceLimitRaw);
-      const hasCapacityLimit = (adminGlobalLimit > 0) ||
-        (adminUserService && Number.isFinite(adminServiceLimit) && adminServiceLimit > 0);
+      const hasCapacityLimit = adminUserService && Number.isFinite(adminServiceLimit) && adminServiceLimit > 0;
 
       if (hasCapacityLimit) {
         const approvedRows = await Conge.findAll({
@@ -1178,11 +1135,6 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
           transaction: t,
         });
 
-        const uniqueUsers    = new Set(approvedRows.map(r => r.utilisateur_id));
-        const approvedCount  = uniqueUsers.size;
-        const adminLimitReached = adminGlobalLimit > 0
-          && (approvedCount + 1) > adminGlobalLimit;
-
         const serviceApproved = adminUserService
           ? new Set(approvedRows
               .filter(r => r.utilisateur?.service === adminUserService)
@@ -1193,14 +1145,9 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
           && (serviceApproved + 1) > adminServiceLimit
         );
 
-        if (adminLimitReached || adminServiceLimitReached) {
-          const details = [];
-          if (adminLimitReached)
-            details.push(`Capacité globale dépassée (${approvedCount + 1}/${adminGlobalLimit})`);
-          if (adminServiceLimitReached)
-            details.push(`Capacité service "${adminUserService}" dépassée`);
+        if (adminServiceLimitReached) {
           const err = new Error(
-            `Impossible de valider : ${details.join(', ')} sur la période ${formatDateFR(conge.date_debut)} – ${formatDateFR(conge.date_fin)}`
+            `Impossible de valider : Capacité service "${adminUserService}" dépassée sur la période ${formatDateFR(conge.date_debut)} – ${formatDateFR(conge.date_fin)}`
           );
           err.statusCode = 409;
           throw err;
@@ -1801,38 +1748,29 @@ async function updateConge(id, data, user, req = null) {
         throw err;
       }
 
-      if (leaveRulesOv.overlap_policy === 'block') {
-        const globalLimitOv = leaveRulesOv.max_employees_on_leave.global; // null si non défini
-        const projectedOv = overlapCtx.overlappingCount + 1;
-        const limitReachedOv = Number.isFinite(globalLimitOv) && projectedOv > globalLimitOv;
+      const serviceLimitRawOv = uService
+        ? leaveRulesOv.max_employees_on_leave.by_service?.[uService]
+        : null;
+      const serviceLimitOv = Number(serviceLimitRawOv);
+      const projectedServiceOv = overlapCtx.overlappingCountByService + 1;
+      const serviceLimitReachedOv = Boolean(
+        uService && Number.isFinite(serviceLimitOv) && serviceLimitOv > 0
+        && projectedServiceOv > serviceLimitOv
+      );
 
-        const serviceLimitRawOv = uService
-          ? leaveRulesOv.max_employees_on_leave.by_service?.[uService]
-          : null;
-        const serviceLimitOv = Number(serviceLimitRawOv);
-        const projectedServiceOv = overlapCtx.overlappingCountByService + 1;
-        const serviceLimitReachedOv = Boolean(
-          uService && Number.isFinite(serviceLimitOv) && serviceLimitOv > 0
-          && projectedServiceOv > serviceLimitOv
-        );
-
-        if (limitReachedOv || serviceLimitReachedOv) {
-          const msg = buildOverlapMessage({
-            dateDebut: nextDateDebut,
-            dateFin: nextDateFin,
-            overlapWithSameUser: false,
-            limitReached: limitReachedOv,
-            serviceLimitReached: serviceLimitReachedOv,
-            userService: uService,
-            projectedOnLeaveCount: projectedOv,
-            globalLimit: globalLimitOv,
-            projectedServiceOnLeaveCount: projectedServiceOv,
-            serviceLimit: serviceLimitOv,
-          });
-          const err = new Error(msg || 'Modification rejetée : limite d\'employés en congé simultanément atteinte.');
-          err.statusCode = 409;
-          throw err;
-        }
+      if (serviceLimitReachedOv && (leaveRulesOv.overlap_behavior || 'block') === 'block') {
+        const conflictPeriodOv = computeConflictPeriod(overlapCtx.overlappingConges, uService, nextDateDebut, nextDateFin);
+        const msg = buildOverlapMessage({
+          overlapWithSameUser: false,
+          serviceLimitReached: true,
+          userService: uService,
+          projectedServiceOnLeaveCount: projectedServiceOv,
+          serviceLimit: serviceLimitOv,
+          conflictPeriod: conflictPeriodOv,
+        });
+        const err = new Error(msg || 'Modification rejetée : capacité du service atteinte.');
+        err.statusCode = 409;
+        throw err;
       }
     }
 

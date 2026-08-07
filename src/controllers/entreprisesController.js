@@ -10,7 +10,7 @@ const quotasService = require('../services/quotasService');
 const { BCRYPT_COST } = require('../services/authService');
 
 const DEFAULT_SERVICE_POLICY = {
-  overlap_policy: 'block',
+  overlap_behavior: 'block',
   minimum_notice_days: 0,
   max_consecutive_days: 365,
   approval_workflow: 'manager_admin',
@@ -22,16 +22,15 @@ function normalizeServiceName(value) {
 }
 
 function normalizeServicePolicy(policy = {}) {
-  const overlapPolicy = ['block', 'warning', 'allow'].includes(policy.overlap_policy)
-    ? policy.overlap_policy
-    : DEFAULT_SERVICE_POLICY.overlap_policy;
-
   const approvalWorkflow = ['manager_admin', 'manager_only', 'admin_only'].includes(policy.approval_workflow)
     ? policy.approval_workflow
     : DEFAULT_SERVICE_POLICY.approval_workflow;
+  const overlapBehavior = ['block', 'warning'].includes(policy.overlap_behavior)
+    ? policy.overlap_behavior
+    : DEFAULT_SERVICE_POLICY.overlap_behavior;
 
   return {
-    overlap_policy: overlapPolicy,
+    overlap_behavior: overlapBehavior,
     minimum_notice_days: Number(policy.minimum_notice_days || 0),
     max_consecutive_days: Number(policy.max_consecutive_days || DEFAULT_SERVICE_POLICY.max_consecutive_days),
     approval_workflow: approvalWorkflow,
