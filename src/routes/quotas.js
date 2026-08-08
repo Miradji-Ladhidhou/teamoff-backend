@@ -12,6 +12,7 @@ const {
 	recalculateProrata,
 	monthlyAccrual,
 	getHistorique,
+	getHistoriqueEntreprise,
 } = require('../controllers/quotasController');
 const validateUUIDParam = require('../middlewares/validateUUIDParam');
 const validate = require('../middlewares/validate');
@@ -27,5 +28,6 @@ router.delete('/counters/:counter_id', authorizeRole(['admin_entreprise', 'super
 router.post('/monthly-accrual', authorizeRole(['admin_entreprise', 'super_admin']), monthlyAccrual);
 router.post('/recalculate-prorata', authorizeRole(['admin_entreprise', 'super_admin']), recalculateProrata);
 router.get('/historique/:utilisateur_id', authorizeRole(['employe', 'manager', 'admin_entreprise', 'super_admin']), validateUUIDParam('utilisateur_id'), getHistorique);
+router.get('/historique-entreprise', authorizeRole(['admin_entreprise', 'super_admin']), getHistoriqueEntreprise);
 
 module.exports = router;

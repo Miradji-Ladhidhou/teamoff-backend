@@ -249,6 +249,45 @@ async function getHistorique(req, res, next) {
   }
 }
 
+async function getHistoriqueEntreprise(req, res, next) {
+  try {
+    const reqUser = req.user;
+    if (!['admin_entreprise', 'super_admin'].includes(reqUser.role)) {
+      return res.status(403).json({ message: 'Accès interdit' });
+    }
+
+    const entrepriseId = reqUser.role === 'super_admin'
+      ? (req.query.entreprise_id || null)
+      : reqUser.entreprise_id;
+
+    if (!entrepriseId) return res.status(400).json({ message: 'entreprise_id requis' });
+
+    const annee        = req.query.annee ? parseInt(req.query.annee, 10) : new Date().getFullYear();
+    const conge_type_id = req.query.conge_type_id || null;
+    const limit        = Math.min(Math.max(parseInt(req.query.limit, 10) || 200, 1), 2000);
+    const page         = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const offset       = (page - 1) * limit;
+
+    const where = { entreprise_id: entrepriseId, annee };
+    if (conge_type_id) where.conge_type_id = conge_type_id;
+
+    const { count, rows } = await MouvementSolde.findAndCountAll({
+      where,
+      include: [
+        { model: CongeType,    as: 'conge_type',  attributes: ['id', 'libelle'] },
+        { model: Utilisateur,  as: 'utilisateur', attributes: ['id', 'prenom', 'nom', 'service'] },
+      ],
+      order: [['date', 'DESC'], ['created_at', 'DESC']],
+      limit,
+      offset,
+    });
+
+    return res.json({ total: count, page, limit, items: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   initQuota,
   getSolde,
@@ -260,4 +299,5 @@ module.exports = {
   recalculateProrata,
   monthlyAccrual,
   getHistorique,
+  getHistoriqueEntreprise,
 };
