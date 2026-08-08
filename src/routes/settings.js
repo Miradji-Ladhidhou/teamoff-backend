@@ -172,7 +172,7 @@ router.get('/history/csv', async (req, res, next) => {
         : 'Inconnu';
 
       return {
-        date: new Date(log.createdAt).toLocaleString('fr-FR'),
+        date: log.createdAt ? new Date(log.createdAt).toLocaleString('fr-FR') : '',
         action: log.action,
         acteur: actor,
         email_acteur: u?.email || '',
