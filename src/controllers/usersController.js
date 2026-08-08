@@ -14,7 +14,7 @@ const quotasService = require('../services/quotasService');
 const EXCLUDED_FIELDS = { exclude: ['password_hash', 'refresh_token_hash', 'invite_token_hash'] };
 
 // Compte racine insupprimable — protégé contre toute suppression accidentelle ou malveillante
-const PROTECTED_SUPER_ADMIN_EMAIL = 'ladhidhoum@gmail.com';
+const PROTECTED_SUPER_ADMIN_EMAIL = 'saas.teamoff@gmail.com';
 
 // Sanitize HTML (nom/prenom)
 function sanitize(value) {

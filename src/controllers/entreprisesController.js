@@ -10,7 +10,7 @@ const quotasService = require('../services/quotasService');
 const { BCRYPT_COST } = require('../services/authService');
 
 // Compte racine insupprimable — l'entreprise qui le contient l'est également
-const PROTECTED_SUPER_ADMIN_EMAIL = 'ladhidhoum@gmail.com';
+const PROTECTED_SUPER_ADMIN_EMAIL = 'saas.teamoff@gmail.com';
 
 const DEFAULT_SERVICE_POLICY = {
   overlap_behavior: 'block',
