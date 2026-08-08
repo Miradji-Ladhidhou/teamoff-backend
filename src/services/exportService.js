@@ -407,9 +407,11 @@ class ExportService {
   }
 
 static async getUtilisateursPreview(entrepriseId, filters = {}, limit = 50) {
+  const where = entrepriseId ? { entreprise_id: entrepriseId } : {};
   const rowsDB = await Utilisateur.findAll({
-    where: { entreprise_id: entrepriseId },
-    attributes: ['prenom', 'nom', 'email', 'role', 'service'],
+    where,
+    attributes: ['prenom', 'nom', 'email', 'role', 'service', 'statut'],
+    order: [['nom', 'ASC'], ['prenom', 'ASC']],
     limit,
   });
 
@@ -417,7 +419,8 @@ static async getUtilisateursPreview(entrepriseId, filters = {}, limit = 50) {
     nom: `${u.prenom || ''} ${u.nom || ''}`.trim(),
     email: u.email,
     role: u.role,
-    service: u.service
+    service: u.service || '',
+    statut: u.statut || '',
   }));
 
   return {
