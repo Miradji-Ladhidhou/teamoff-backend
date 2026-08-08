@@ -318,6 +318,11 @@ async function updateUser(req, res, next) {
       return res.status(403).json({ message: 'Vous ne pouvez attribuer que manager ou employe' });
     }
 
+    // Seul un super_admin peut modifier le rôle d'un admin_entreprise
+    if (role && role !== utilisateur.role && utilisateur.role === 'admin_entreprise' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ message: "Seul un super administrateur peut modifier le rôle d'un administrateur d'entreprise" });
+    }
+
     // Compte racine : toute tentative de désactivation bloquée
     if (statut === 'inactif' && utilisateur.email === PROTECTED_SUPER_ADMIN_EMAIL) {
       return res.status(403).json({ message: 'Ce compte administrateur est protégé et ne peut pas être désactivé' });
