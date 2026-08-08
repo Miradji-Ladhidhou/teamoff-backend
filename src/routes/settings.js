@@ -172,7 +172,21 @@ router.get('/history/csv', async (req, res, next) => {
         : 'Inconnu';
 
       return {
-        date: (() => { const d = log.createdAt ?? log.created_at; if (!d) return ''; try { return new Date(d).toLocaleString('fr-FR', { timeZone: req.query.timezone || 'UTC' }); } catch { return new Date(d).toLocaleString('fr-FR'); } })(),
+        date: (() => {
+          const raw = log.createdAt ?? log.created_at;
+          if (!raw) return '';
+          const d = new Date(raw);
+          const tz = req.query.timezone || 'UTC';
+          try {
+            const p = Object.fromEntries(
+              new Intl.DateTimeFormat('fr-FR', {
+                timeZone: tz, day: '2-digit', month: '2-digit', year: 'numeric',
+                hour: '2-digit', minute: '2-digit', hour12: false,
+              }).formatToParts(d).map(({ type, value }) => [type, value])
+            );
+            return `${p.day}-${p.month}-${p.year} ${p.hour}:${p.minute}`;
+          } catch { return d.toISOString().replace('T', ' ').slice(0, 16); }
+        })(),
         action: log.action,
         acteur: actor,
         email_acteur: u?.email || '',

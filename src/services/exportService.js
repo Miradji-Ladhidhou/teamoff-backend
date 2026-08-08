@@ -94,26 +94,24 @@ class ExportService {
   static buildCsvHeader(filters, exportName, numCols = 1) {
     const pad = numCols > 1 ? ','.repeat(numCols - 1) : '';
 
-    // Date/heure locale selon le fuseau horaire du navigateur transmis via filters.timezone
+    // Date/heure au format DD-MM-YYYY HH:MM dans le fuseau du navigateur (filters.timezone)
     const tz = filters?.timezone;
     const now = new Date();
-    let nowStr;
-    if (tz) {
+    const _fmt = (d, zone) => {
       try {
-        nowStr = now.toLocaleString('fr-FR', {
-          timeZone: tz,
-          day: '2-digit', month: '2-digit', year: 'numeric',
-          hour: '2-digit', minute: '2-digit',
-        });
+        const p = Object.fromEntries(
+          new Intl.DateTimeFormat('fr-FR', {
+            timeZone: zone, day: '2-digit', month: '2-digit', year: 'numeric',
+            hour: '2-digit', minute: '2-digit', hour12: false,
+          }).formatToParts(d).map(({ type, value }) => [type, value])
+        );
+        return `${p.day}-${p.month}-${p.year} ${p.hour}:${p.minute}`;
       } catch {
-        // Fuseau invalide → fallback ISO UTC
-        const iso = now.toISOString();
-        nowStr = `${iso.slice(8,10)}-${iso.slice(5,7)}-${iso.slice(0,4)} ${iso.slice(11,16)} UTC`;
+        const iso = d.toISOString();
+        return `${iso.slice(8,10)}-${iso.slice(5,7)}-${iso.slice(0,4)} ${iso.slice(11,16)}`;
       }
-    } else {
-      const iso = now.toISOString();
-      nowStr = `${iso.slice(8,10)}-${iso.slice(5,7)}-${iso.slice(0,4)} ${iso.slice(11,16)} UTC`;
-    }
+    };
+    const nowStr = _fmt(now, tz || 'UTC');
 
     const lines = [
       `"Export TeamOff - ${exportName}"${pad}`,
