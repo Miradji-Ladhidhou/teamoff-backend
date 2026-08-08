@@ -94,24 +94,11 @@ class ExportService {
   static buildCsvHeader(filters, exportName, numCols = 1) {
     const pad = numCols > 1 ? ','.repeat(numCols - 1) : '';
 
-    // Date/heure au format DD-MM-YYYY HH:MM dans le fuseau du navigateur (filters.timezone)
-    const tz = filters?.timezone;
-    const now = new Date();
-    const _fmt = (d, zone) => {
-      try {
-        const p = Object.fromEntries(
-          new Intl.DateTimeFormat('fr-FR', {
-            timeZone: zone, day: '2-digit', month: '2-digit', year: 'numeric',
-            hour: '2-digit', minute: '2-digit', hour12: false,
-          }).formatToParts(d).map(({ type, value }) => [type, value])
-        );
-        return `${p.day}-${p.month}-${p.year} ${p.hour}:${p.minute}`;
-      } catch {
-        const iso = d.toISOString();
-        return `${iso.slice(8,10)}-${iso.slice(5,7)}-${iso.slice(0,4)} ${iso.slice(11,16)}`;
-      }
-    };
-    const nowStr = _fmt(now, tz || 'UTC');
+    // Date/heure formatée côté navigateur et transmise telle quelle (DD-MM-YYYY HH:MM)
+    const nowStr = filters?.generatedAt || (() => {
+      const iso = new Date().toISOString();
+      return `${iso.slice(8,10)}-${iso.slice(5,7)}-${iso.slice(0,4)} ${iso.slice(11,16)}`;
+    })();
 
     const lines = [
       `"Export TeamOff - ${exportName}"${pad}`,
