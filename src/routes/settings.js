@@ -152,18 +152,13 @@ function getSettingsHistoryWhere() {
 router.get('/history/csv', async (req, res, next) => {
   try {
     const logs = await AuditLog.findAll({
-      where: {
-        ...getSettingsHistoryWhere(),
-        user_id: {
-          [Op.ne]: null,
-        },
-      },
+      where: getSettingsHistoryWhere(),
       include: [
         {
           model: Utilisateur,
           as: 'utilisateur',
           attributes: ['prenom', 'nom', 'email'],
-          required: true,
+          required: false,
         },
       ],
       order: [['created_at', 'DESC']],
@@ -171,24 +166,25 @@ router.get('/history/csv', async (req, res, next) => {
     });
 
     const rows = logs.map((log) => {
-      const actor = log.utilisateur
-        ? [log.utilisateur.prenom, log.utilisateur.nom].filter(Boolean).join(' ').trim() || log.utilisateur.email
+      const u = log.utilisateur;
+      const actor = u
+        ? [u.prenom, u.nom].filter(Boolean).join(' ').trim() || u.email || 'Inconnu'
         : 'Inconnu';
 
       return {
-        date: new Date(log.createdAt).toISOString(),
+        date: new Date(log.createdAt).toLocaleString('fr-FR'),
         action: log.action,
         acteur: actor,
-        email_acteur: log.utilisateur?.email || '',
+        email_acteur: u?.email || '',
         ip: log.ip_address || '',
         details: JSON.stringify(log.metadata || {}),
       };
     });
 
     const sanitize = (v) => {
-      if (v === null || v === undefined) return v;
+      if (v === null || v === undefined) return '';
       const s = String(v);
-      return /^[=+\-@\t\r]/.test(s) ? `'${s}` : v;
+      return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
     };
     const safeRows = rows.map((r) =>
       Object.fromEntries(Object.entries(r).map(([k, v]) => [k, sanitize(v)]))
@@ -201,7 +197,8 @@ router.get('/history/csv', async (req, res, next) => {
     const filename = `settings_history_${new Date().toISOString().slice(0, 10)}.csv`;
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    return res.status(200).send(csv);
+    // BOM UTF-8 pour compatibilité Excel
+    return res.status(200).send('﻿' + csv);
   } catch (error) {
     return next(error);
   }
