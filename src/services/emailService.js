@@ -29,7 +29,7 @@ function escapeHtml(str) {
 }
 
 // Keys whose values are pre-built server-side HTML and must NOT be escaped.
-const SAFE_HTML_KEYS = new Set(['content', 'table_rows', 'comments_rows', 'decompte_rows']);
+const SAFE_HTML_KEYS = new Set(['content', 'table_rows', 'comments_rows', 'decompte_rows', 'employe_context']);
 
 class EmailService {
   constructor() {

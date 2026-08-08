@@ -10,6 +10,8 @@ dayjs.extend(isSameOrBefore);
 
 const DAY_LABELS = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
 
+const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
 function findJourFerie(dateStr, joursFeries) {
   const [y, m, d] = dateStr.split('-').map(Number);
   return joursFeries.find(jf => {
@@ -324,8 +326,8 @@ async function sendAttestationEmail(req, res, next) {
     const nom_complet = `${employe?.prenom || ''} ${employe?.nom || ''}`.trim();
 
     const employe_context = [
-      employe?.service ? `, employé(e) au sein du service <strong style="color:#1e3a5f;font-weight:700;">${employe.service}</strong>` : '',
-      embaucheLabel ? `, en poste depuis le <strong style="color:#1e3a5f;font-weight:700;">${embaucheLabel}</strong>` : '',
+      employe?.service ? `, employé(e) au sein du service <strong style="color:#1e3a5f;font-weight:700;">${esc(employe.service)}</strong>` : '',
+      embaucheLabel ? `, en poste depuis le <strong style="color:#1e3a5f;font-weight:700;">${esc(embaucheLabel)}</strong>` : '',
     ].join('');
 
     const statut_color = conge.statut === 'valide_final' ? '#15803d' : '#1a2b40';
