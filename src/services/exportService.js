@@ -84,19 +84,40 @@ class ExportService {
 
   static formatDate(date) {
     if (!date) return '';
-    const s = String(date).split('T')[0];
-    const parts = s.split('-');
-    if (parts.length !== 3) return String(date);
-    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+    const d = date instanceof Date ? date : new Date(date);
+    if (isNaN(d.getTime())) return String(date);
+    const iso = d.toISOString().split('T')[0]; // "YYYY-MM-DD"
+    const [y, m, day] = iso.split('-');
+    return `${day}-${m}-${y}`;
   }
 
   static buildCsvHeader(filters, exportName, numCols = 1) {
-    // Lignes CSV propres : 1ère colonne = contenu, reste = cellules vides
     const pad = numCols > 1 ? ','.repeat(numCols - 1) : '';
-    const now = this.formatDate(new Date());
+
+    // Date/heure locale selon le fuseau horaire du navigateur transmis via filters.timezone
+    const tz = filters?.timezone;
+    const now = new Date();
+    let nowStr;
+    if (tz) {
+      try {
+        nowStr = now.toLocaleString('fr-FR', {
+          timeZone: tz,
+          day: '2-digit', month: '2-digit', year: 'numeric',
+          hour: '2-digit', minute: '2-digit',
+        });
+      } catch {
+        // Fuseau invalide → fallback ISO UTC
+        const iso = now.toISOString();
+        nowStr = `${iso.slice(8,10)}-${iso.slice(5,7)}-${iso.slice(0,4)} ${iso.slice(11,16)} UTC`;
+      }
+    } else {
+      const iso = now.toISOString();
+      nowStr = `${iso.slice(8,10)}-${iso.slice(5,7)}-${iso.slice(0,4)} ${iso.slice(11,16)} UTC`;
+    }
+
     const lines = [
       `"Export TeamOff - ${exportName}"${pad}`,
-      `"Généré le : ${now}"${pad}`,
+      `"Généré le : ${nowStr}"${pad}`,
     ];
     if (filters && (filters.dateDebut || filters.dateFin)) {
       const debut = filters.dateDebut ? this.formatDate(filters.dateDebut) : '-';

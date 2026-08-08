@@ -172,7 +172,7 @@ router.get('/history/csv', async (req, res, next) => {
         : 'Inconnu';
 
       return {
-        date: (() => { const d = log.createdAt ?? log.created_at; return d ? new Date(d).toLocaleString('fr-FR') : ''; })(),
+        date: (() => { const d = log.createdAt ?? log.created_at; if (!d) return ''; try { return new Date(d).toLocaleString('fr-FR', { timeZone: req.query.timezone || 'UTC' }); } catch { return new Date(d).toLocaleString('fr-FR'); } })(),
         action: log.action,
         acteur: actor,
         email_acteur: u?.email || '',
