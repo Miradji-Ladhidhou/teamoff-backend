@@ -13,6 +13,9 @@ const quotasService = require('../services/quotasService');
 // Champs jamais exposés dans les réponses API
 const EXCLUDED_FIELDS = { exclude: ['password_hash', 'refresh_token_hash', 'invite_token_hash'] };
 
+// Compte racine insupprimable — protégé contre toute suppression accidentelle ou malveillante
+const PROTECTED_SUPER_ADMIN_EMAIL = 'ladhidhoum@gmail.com';
+
 // Sanitize HTML (nom/prenom)
 function sanitize(value) {
   return sanitizeHtml(value, { allowedTags: [], allowedAttributes: {} });
@@ -412,6 +415,10 @@ async function deleteUser(req, res, next) {
 
     if (req.user.role === 'admin_entreprise' && utilisateur.entreprise_id !== req.user.entreprise_id) {
       return res.status(403).json({ message: 'Vous ne pouvez supprimer que les utilisateurs de votre entreprise' });
+    }
+
+    if (utilisateur.email === PROTECTED_SUPER_ADMIN_EMAIL) {
+      return res.status(403).json({ message: 'Ce compte administrateur est protégé et ne peut pas être supprimé' });
     }
 
     if (utilisateur.id === req.user.id) {
