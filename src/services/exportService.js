@@ -147,7 +147,7 @@ class ExportService {
 
     const rowsDB = await Conge.findAll({
       where: {
-        entreprise_id: entrepriseId,
+        ...(entrepriseId ? { entreprise_id: entrepriseId } : {}),
         ...this.buildFilters(filters)
       },
       include: [
@@ -225,7 +225,7 @@ class ExportService {
 
     const rowsDB = await Absence.findAll({
       where: {
-        entreprise_id: entrepriseId,
+        ...(entrepriseId ? { entreprise_id: entrepriseId } : {}),
         type_absence: { [Op.ne]: 'maladie' },
         ...this.buildFilters(filters)
       },
@@ -302,7 +302,7 @@ class ExportService {
 
     const rowsDB = await Absence.findAll({
       where: {
-        entreprise_id: entrepriseId,
+        ...(entrepriseId ? { entreprise_id: entrepriseId } : {}),
         type_absence: 'maladie',
         ...this.buildFilters(filters)
       },
