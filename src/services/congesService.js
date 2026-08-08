@@ -676,14 +676,21 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     }
 
     const approvalWorkflow = leaveRules.approval_workflow;
+    // Un manager ne peut pas valider son propre congé : on saute l'étape manager
+    const isManagerOwnLeave = reqUser.role === 'manager' && reqUser.id === utilisateurId;
     let statutConge;
     if (isReservation) {
       statutConge = 'reserve';
       compteur.jours_reserves = safeNumber(compteur.jours_reserves) + safeNumber(jours);
-    } else if (approvalWorkflow === 'auto') {
+    } else if (approvalWorkflow === 'auto' || (isManagerOwnLeave && approvalWorkflow === 'manager_only')) {
+      // auto OU manager_only sur son propre congé (personne d'autre pour valider)
       statutConge = 'valide_final';
       compteur.jours_acquis = Math.max(0, safeNumber(compteur.jours_acquis) - safeNumber(jours));
       compteur.jours_pris = safeNumber(compteur.jours_pris) + safeNumber(jours);
+    } else if (isManagerOwnLeave && approvalWorkflow === 'manager_admin') {
+      // manager_admin : saute la validation manager, attend l'admin directement
+      statutConge = 'valide_manager';
+      compteur.jours_reserves = safeNumber(compteur.jours_reserves) + safeNumber(jours);
     } else {
       statutConge = 'en_attente_manager';
       compteur.jours_reserves = safeNumber(compteur.jours_reserves) + safeNumber(jours);
@@ -710,12 +717,12 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       utilisateur_id: utilisateurId,
       conge_type_id,
       annee: anneeConge,
-      type: isReservation ? 'reservation' : approvalWorkflow === 'auto' ? 'validation_auto' : 'reservation',
+      type: isReservation ? 'reservation' : statutConge === 'valide_final' ? 'validation_auto' : 'reservation',
       quantite: -jours,
       solde_apres: safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves),
       source_id: conge.id,
       description: descriptionConge(
-        isReservation ? 'Réservation N+1' : approvalWorkflow === 'auto' ? 'Congé validé (auto)' : 'Congé posé (en attente)',
+        isReservation ? 'Réservation N+1' : statutConge === 'valide_final' ? 'Congé validé (auto)' : 'Congé posé (en attente)',
         date_debut, date_fin
       ),
       transaction: t,
@@ -926,6 +933,10 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
     }
 
     if (effectiveRole === 'manager') {
+      if (reqUser.id === conge.utilisateur_id) {
+        throw new Error('Un manager ne peut pas valider son propre congé');
+      }
+
       if (leaveRules.approval_workflow === 'auto') {
         throw new Error('Workflow auto: aucune validation manuelle nécessaire');
       }
