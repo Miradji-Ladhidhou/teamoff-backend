@@ -52,7 +52,7 @@ class ExportController {
       // Droits miroirs des routes CSV/PDF : les types sensibles exigent admin_entreprise+.
       // Un manager ne doit pas contourner adminOrSuper via /preview.
       const ADMIN_ONLY_TYPES = new Set(['audit', 'utilisateurs', 'usage', 'statistiques']);
-      const ALL_TYPES = new Set(['conges', 'absences', 'arrets_maladie', 'audit', 'utilisateurs', 'usage', 'statistiques']);
+      const ALL_TYPES = new Set(['conges', 'absences', 'arrets_maladie', 'tout', 'audit', 'utilisateurs', 'usage', 'statistiques']);
 
       if (!ALL_TYPES.has(type)) {
         return res.status(400).json({ message: `Type de preview non supporté : ${type}` });
@@ -161,6 +161,17 @@ class ExportController {
     try {
       const data = await ExportService.generateEntreprisesCSV();
       sendCSV(res, data, 'entreprises.csv');
+    } catch (err) { handleExportError(next, err); }
+  }
+
+  // =========================
+  // TOUT (congés + absences + arrêts maladie)
+  // =========================
+  static async exportToutCSV(req, res, next) {
+    try {
+      const entrepriseId = await resolveEntrepriseId(req);
+      const data = await ExportService.generateToutCSV(entrepriseId, req.query, req.user?.role);
+      sendCSV(res, data, 'absences-conges.csv');
     } catch (err) { handleExportError(next, err); }
   }
 

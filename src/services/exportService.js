@@ -498,6 +498,53 @@ static async getUsagePreview(entrepriseId, filters = {}, limit = 50) {
 }
 
   // =========================
+  // TOUT (congés + absences + arrêts maladie)
+  // =========================
+  static async getToutPreview(entrepriseId, filters = {}, limit = 50, role = null) {
+    const COLS = ['categorie', 'employe', 'email', 'service', 'type', 'debut', 'fin', 'statut'];
+
+    const [congesP, absencesP, arretsP] = await Promise.all([
+      this.getCongesPreview(entrepriseId, filters, limit, role),
+      this.getAbsencesPreview(entrepriseId, filters, limit, role),
+      this.getArretsMaladiePreview(entrepriseId, filters, limit, role),
+    ]);
+
+    const toISO = (ddmmyyyy) => {
+      if (!ddmmyyyy) return '';
+      const p = ddmmyyyy.split('-');
+      return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : ddmmyyyy;
+    };
+
+    const asc = (filters.sortOrder || 'desc').toLowerCase() === 'asc' ? 1 : -1;
+
+    const allRows = [
+      ...congesP.rows.map(r => ({ categorie: 'Congé', ...r })),
+      ...absencesP.rows.map(r => ({ categorie: 'Absence', ...r })),
+      ...arretsP.rows.map(r => ({
+        categorie: 'Arrêt maladie', employe: r.employe, email: r.email,
+        service: r.service, type: '', debut: r.debut, fin: r.fin, statut: '',
+      })),
+    ].sort((a, b) => toISO(a.debut).localeCompare(toISO(b.debut)) * asc);
+
+    return {
+      columns: COLS,
+      rows: allRows.slice(0, limit),
+      count: allRows.length,
+      limitedTo: limit,
+    };
+  }
+
+  static async generateToutCSV(entrepriseId, filters, role = null) {
+    const preview = await this.getToutPreview(entrepriseId, filters, 1000, role);
+    const numCols = preview.columns.length;
+    if (!preview.rows.length) {
+      return this.buildCsvHeader(filters, 'Congés, absences & arrêts maladie', numCols) + '"Aucune donnée"';
+    }
+    return this.buildCsvHeader(filters, 'Congés, absences & arrêts maladie', numCols) +
+      new Parser({ fields: preview.columns }).parse(this.sanitizeCsvRows(preview.rows));
+  }
+
+  // =========================
 // PREVIEW GLOBAL (CORRIGÉ)
 // =========================
 static async getPreview(type, entrepriseId, filters, limit, role = null) {
@@ -510,6 +557,9 @@ static async getPreview(type, entrepriseId, filters, limit, role = null) {
 
     case 'arrets_maladie':
       return this.getArretsMaladiePreview(entrepriseId, filters, limit, role);
+
+    case 'tout':
+      return this.getToutPreview(entrepriseId, filters, limit, role);
 
     case 'audit':
       return this.getAuditPreview(entrepriseId, filters, limit);

@@ -31,6 +31,11 @@ router.get('/arrets-maladie/csv', managerOrAbove, ExportController.exportArretsM
 router.get('/arrets-maladie/pdf', managerOrAbove, ExportController.exportArretsMaladiePDF);
 
 // -----------------------------
+// TOUT (congés + absences + arrêts maladie)
+// -----------------------------
+router.get('/tout/csv', managerOrAbove, ExportController.exportToutCSV);
+
+// -----------------------------
 // UTILISATEURS
 // -----------------------------
 router.get('/utilisateurs/csv', adminOrSuper, ExportController.exportUtilisateursCSV);
