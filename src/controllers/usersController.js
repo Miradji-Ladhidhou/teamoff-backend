@@ -323,6 +323,11 @@ async function updateUser(req, res, next) {
       return res.status(403).json({ message: 'Ce compte administrateur est protégé et ne peut pas être désactivé' });
     }
 
+    // Seul un super_admin peut désactiver un admin_entreprise
+    if (statut === 'inactif' && utilisateur.role === 'admin_entreprise' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ message: 'Seul un super administrateur peut désactiver un administrateur d\'entreprise' });
+    }
+
     // Garde self-disable / last-admin : refuse la désactivation si elle crée un lock-out
     if (statut === 'inactif' && utilisateur.role === 'admin_entreprise') {
       if (utilisateur.id === req.user.id) {
@@ -424,6 +429,10 @@ async function deleteUser(req, res, next) {
 
     if (utilisateur.email === PROTECTED_SUPER_ADMIN_EMAIL) {
       return res.status(403).json({ message: 'Ce compte administrateur est protégé et ne peut pas être supprimé' });
+    }
+
+    if (utilisateur.role === 'admin_entreprise' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ message: 'Seul un super administrateur peut supprimer un administrateur d\'entreprise' });
     }
 
     if (utilisateur.id === req.user.id) {
