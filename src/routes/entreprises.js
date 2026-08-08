@@ -29,8 +29,8 @@ router.patch('/:id/statut', authorizeRole(['super_admin']), validateUUIDParam('i
 // jours bloqués — accessible à tous les rôles authentifiés de l'entreprise
 router.get('/:id/blocked-days', authorizeRole(['super_admin', 'admin_entreprise', 'manager', 'employe']), validateUUIDParam('id'), entreprisesController.getBlockedDays);
 
-// gestion de la politique de congés d'une entreprise (super_admin et admin_entreprise de l'entreprise concernée)
-router.get('/:id/politique', authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id), validateUUIDParam('id'), entreprisesController.getPolitiqueConges);
+// lecture de la politique — managers inclus (lecture seule, même contrôle d'entreprise)
+router.get('/:id/politique', authorizeRole(['super_admin', 'admin_entreprise', 'manager'], req => req.params.id), validateUUIDParam('id'), entreprisesController.getPolitiqueConges);
 
 // mise à jour de la politique de congés d'une entreprise (super_admin et admin_entreprise de l'entreprise concernée)
 router.put('/:id/politique', authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id), validateUUIDParam('id'),
