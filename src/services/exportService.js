@@ -360,32 +360,62 @@ class ExportService {
   // AUDIT
   // =========================
   static async getAuditPreview(entrepriseId, filters = {}, limit = 50) {
-    // Fix #50 : appliquer les filtres dateDebut / dateFin sur created_at.
-    const where = { entreprise_id: entrepriseId };
+    const where = entrepriseId ? { entreprise_id: entrepriseId } : {};
+
+    if (filters.action) where.action = filters.action;
+
     if (filters.dateDebut || filters.dateFin) {
       where.created_at = {};
-      if (filters.dateDebut) where.created_at[Op.gte] = filters.dateDebut;
-      if (filters.dateFin)   where.created_at[Op.lte] = filters.dateFin;
+      if (filters.dateDebut) where.created_at[Op.gte] = new Date(filters.dateDebut);
+      if (filters.dateFin) {
+        const fin = new Date(filters.dateFin);
+        fin.setHours(23, 59, 59, 999);
+        where.created_at[Op.lte] = fin;
+      }
+    }
+
+    if (filters.search) {
+      const s = String(filters.search).slice(0, 100);
+      where[Op.or] = [
+        { action:      { [Op.iLike]: `%${s}%` } },
+        { entity:      { [Op.iLike]: `%${s}%` } },
+        { ip_address:  { [Op.iLike]: `%${s}%` } },
+        { '$utilisateur.email$':  { [Op.iLike]: `%${s}%` } },
+        { '$utilisateur.prenom$': { [Op.iLike]: `%${s}%` } },
+        { '$utilisateur.nom$':    { [Op.iLike]: `%${s}%` } },
+      ];
     }
 
     const rowsDB = await AuditLog.findAll({
       where,
-      order: [['created_at','DESC']],
-      limit
+      include: [{
+        model: Utilisateur,
+        as: 'utilisateur',
+        attributes: ['prenom', 'nom', 'email'],
+        required: false,
+      }],
+      order: [['created_at', 'DESC']],
+      limit,
     });
 
+    const FALLBACK_COLS = ['date', 'action', 'entite', 'utilisateur', 'email', 'ip'];
+
     const rows = rowsDB.map(l => ({
-      date: this.formatDate(l.createdAt),
-      action: l.action,
-      entite: l.entity,
-      utilisateur: l.user_id
+      date:        this.formatDate(l.createdAt ?? l.created_at),
+      action:      l.action || '',
+      entite:      l.entity || '',
+      utilisateur: l.utilisateur
+        ? `${l.utilisateur.prenom || ''} ${l.utilisateur.nom || ''}`.trim()
+        : 'Système',
+      email: l.utilisateur?.email || '',
+      ip:    l.ip_address || '',
     }));
 
     return {
-      columns: Object.keys(rows[0] || {}),
+      columns: rows.length ? Object.keys(rows[0]) : FALLBACK_COLS,
       rows,
       count: rows.length,
-      limitedTo: limit
+      limitedTo: limit,
     };
   }
 
