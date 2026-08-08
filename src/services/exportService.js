@@ -17,8 +17,11 @@ class ExportService {
     static async generateUtilisateursCSV(id, filters) {
       const preview = await this.getUtilisateursPreview(id, filters, 1000);
       const numCols = preview.columns.length || 4;
-      if (!preview.rows.length) return this.buildCsvHeader(filters, 'Utilisateurs', numCols) + '"Aucune donnée"';
-      return this.buildCsvHeader(filters, 'Utilisateurs', numCols) + new Parser({ fields: preview.columns }).parse(this.sanitizeCsvRows(preview.rows));
+      const f = filters?.generatedAt
+        ? { ...filters, generatedAt: filters.generatedAt.slice(0, 10) }
+        : filters;
+      if (!preview.rows.length) return this.buildCsvHeader(f, 'Utilisateurs', numCols) + '"Aucune donnée"';
+      return this.buildCsvHeader(f, 'Utilisateurs', numCols) + new Parser({ fields: preview.columns }).parse(this.sanitizeCsvRows(preview.rows));
     }
   static async generateStatistiquesCSV(id, filters) {
     const preview = await this.getUsagePreview(id, filters, 1000);
