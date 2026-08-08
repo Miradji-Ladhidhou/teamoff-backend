@@ -318,6 +318,11 @@ async function updateUser(req, res, next) {
       return res.status(403).json({ message: 'Vous ne pouvez attribuer que manager ou employe' });
     }
 
+    // Compte racine : toute tentative de désactivation bloquée
+    if (statut === 'inactif' && utilisateur.email === PROTECTED_SUPER_ADMIN_EMAIL) {
+      return res.status(403).json({ message: 'Ce compte administrateur est protégé et ne peut pas être désactivé' });
+    }
+
     // Garde self-disable / last-admin : refuse la désactivation si elle crée un lock-out
     if (statut === 'inactif' && utilisateur.role === 'admin_entreprise') {
       if (utilisateur.id === req.user.id) {
