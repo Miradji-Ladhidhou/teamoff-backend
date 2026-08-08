@@ -125,7 +125,7 @@ async function runMonthlyReports() {
       where: {
         entreprise_id: entreprise.id,
         date_debut: { [Op.between]: [startOfLastMonth, endOfLastMonth] },
-        statut: { [Op.in]: ['valide', 'annule'] },
+        statut: 'valide_final',
       },
       include: [
         { model: Utilisateur, as: 'utilisateur', attributes: ['prenom', 'nom'] },
@@ -141,8 +141,8 @@ async function runMonthlyReports() {
     const reportData = {
       periode: now.subtract(1, 'month').format('MMMM YYYY'),
       total_conges: conges.length,
-      total_valides: conges.filter((c) => c.statut === 'valide').length,
-      total_annules: conges.filter((c) => c.statut === 'annule').length,
+      total_valides: conges.length,
+      total_annules: 0,
       total_jours: conges.reduce((s, c) => s + (c.jours_calcules || 0), 0),
     };
 

@@ -34,7 +34,11 @@ async function getCalendrier(req, res, next) {
       where.entreprise_id = targetEntrepriseId;
     }
 
+    const VALID_STATUTS = ['reserve', 'en_attente_manager', 'valide_manager', 'refuse_manager', 'valide_final', 'refuse_final'];
     if (statut && statut !== 'all') {
+      if (!VALID_STATUTS.includes(statut)) {
+        return res.json([]);
+      }
       where.statut = statut;
     }
 
@@ -47,7 +51,7 @@ async function getCalendrier(req, res, next) {
     if (req.user.role === 'employe') {
       where[Op.or] = [
         { utilisateur_id: req.user.id },
-        { statut: { [Op.notIn]: ['refuse_manager', 'refuse_final', 'annule'] } },
+        { statut: { [Op.notIn]: ['refuse_manager', 'refuse_final'] } },
       ];
     }
 
