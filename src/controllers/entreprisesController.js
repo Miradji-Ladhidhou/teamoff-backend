@@ -9,6 +9,9 @@ const emailService = require('../services/emailService');
 const quotasService = require('../services/quotasService');
 const { BCRYPT_COST } = require('../services/authService');
 
+// Compte racine insupprimable — l'entreprise qui le contient l'est également
+const PROTECTED_SUPER_ADMIN_EMAIL = 'ladhidhoum@gmail.com';
+
 const DEFAULT_SERVICE_POLICY = {
   overlap_behavior: 'block',
   minimum_notice_days: 0,
@@ -232,6 +235,13 @@ async function deleteEntreprise(req, res, next) {
   try {
     const entreprise = await Entreprise.findByPk(req.params.id);
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
+
+    const hasProtectedAdmin = await Utilisateur.count({
+      where: { entreprise_id: entreprise.id, email: PROTECTED_SUPER_ADMIN_EMAIL },
+    });
+    if (hasProtectedAdmin) {
+      return res.status(403).json({ message: 'Cette entreprise est protégée et ne peut pas être supprimée' });
+    }
 
     // Log écrit AVANT destroy : avec SET NULL, le destroy nullifie entreprise_id
     // mais entity_id + action + metadata restent intacts pour traçabilité post-mortem.
