@@ -314,8 +314,8 @@ async function updateUser(req, res, next) {
       }
     }
 
-    if (req.user.role === 'admin_entreprise' && role && !['manager', 'employe'].includes(role)) {
-      return res.status(403).json({ message: 'Vous ne pouvez attribuer que manager ou employe' });
+    if (req.user.role === 'admin_entreprise' && role && !['admin_entreprise', 'manager', 'employe'].includes(role)) {
+      return res.status(403).json({ message: "Vous ne pouvez attribuer que les rôles admin_entreprise, manager ou employe" });
     }
 
     // Seul un super_admin peut modifier le rôle d'un admin_entreprise
@@ -402,8 +402,8 @@ async function changeUserRole(req, res, next) {
 
     const { role } = req.body;
 
-    if (req.user.role === 'admin_entreprise' && role && !['manager', 'employe'].includes(role)) {
-      return res.status(403).json({ message: 'Vous ne pouvez attribuer que manager ou employe' });
+    if (req.user.role === 'admin_entreprise' && role && !['admin_entreprise', 'manager', 'employe'].includes(role)) {
+      return res.status(403).json({ message: "Vous ne pouvez attribuer que les rôles admin_entreprise, manager ou employe" });
     }
 
     const oldRole = utilisateur.role;
