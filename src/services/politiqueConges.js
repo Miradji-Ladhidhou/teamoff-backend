@@ -133,12 +133,16 @@ function getEffectiveLeaveRules(baseRules, service) {
     effective.approval_workflow = normalizeApprovalWorkflow(servicePolicy.approval_workflow, effective.approval_workflow);
   }
 
-  if (Number.isFinite(Number(servicePolicy.minimum_notice_days))) {
-    effective.minimum_notice_days = Math.max(0, Number(servicePolicy.minimum_notice_days));
+  // N'écraser le préavis global que si la politique de service définit explicitement > 0.
+  // Une valeur 0 signifie "non configuré" (défaut UI) et ne doit pas annuler le réglage global.
+  const svcNotice = Number(servicePolicy.minimum_notice_days);
+  if (Number.isFinite(svcNotice) && svcNotice > 0) {
+    effective.minimum_notice_days = svcNotice;
   }
 
-  if (Number.isFinite(Number(servicePolicy.max_consecutive_days))) {
-    effective.max_consecutive_days = Math.max(1, Number(servicePolicy.max_consecutive_days));
+  const svcMaxConsec = Number(servicePolicy.max_consecutive_days);
+  if (Number.isFinite(svcMaxConsec) && svcMaxConsec > 0) {
+    effective.max_consecutive_days = Math.max(1, svcMaxConsec);
   }
 
   if (Number.isFinite(Number(servicePolicy.max_employees_on_leave))) {
