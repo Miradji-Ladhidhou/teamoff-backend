@@ -1545,7 +1545,9 @@ async function getCongeById(id, user) {
     ]
   });
   if (!conge) throw new Error('Congé introuvable');
-  if (user.role !== 'super_admin' && user.entreprise_id !== conge.entreprise_id && user.id !== conge.utilisateur_id)
+  if (user.role !== 'super_admin' && user.entreprise_id !== conge.entreprise_id)
+    throw new Error('Accès interdit');
+  if (user.role === 'employe' && user.id !== conge.utilisateur_id)
     throw new Error('Accès interdit');
 
   const annee = dayjs(conge.date_debut).year();
