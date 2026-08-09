@@ -143,7 +143,7 @@ async function listAbsences({ role, id: userId, entreprise_id }, query) {
   if (MEDICAL_COMMENT_ROLES.includes(role)) return rows;
 
   return rows.map(absence => {
-    if (absence.type_absence === 'maladie' && absence.utilisateur_id !== userId) {
+    if (absence.utilisateur_id !== userId) {
       const plain = absence.toJSON();
       plain.commentaire = null;
       return plain;

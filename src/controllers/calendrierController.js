@@ -88,6 +88,19 @@ async function getCalendrier(req, res, next) {
       order: [['date_debut', 'ASC']],
     });
 
+    // Masquer les commentaires des collègues pour les employés
+    if (req.user.role === 'employe') {
+      const result = conges.map(c => {
+        if (c.utilisateur_id === req.user.id) return c;
+        const plain = c.toJSON();
+        plain.commentaire_employe = null;
+        plain.commentaire_manager = null;
+        plain.commentaire_admin   = null;
+        return plain;
+      });
+      return res.json(result);
+    }
+
     res.json(conges);
   } catch (err) {
     logger.error(err);
