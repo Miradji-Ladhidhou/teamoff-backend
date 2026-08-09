@@ -95,15 +95,15 @@ async function importUsersCSV(req, res, next) {
       }
     }
 
-    // Pré-calcul des mots de passe (hors transaction pour éviter de tenir la connexion DB)
+    // Pré-calcul des mots de passe hors transaction (bcrypt est CPU-intensif, pas de hold de connexion DB)
+    // On génère pour TOUS les emails : si l'utilisateur existe déjà à l'intérieur de la transaction,
+    // le mot de passe sera simplement ignoré — ce qui évite un crash si un utilisateur est créé/supprimé
+    // entre ce point et le début de la transaction.
     const newUserPasswords = new Map();
     for (const [email] of emailToInfo) {
-      const exists = await Utilisateur.findOne({ where: { email } });
-      if (!exists) {
-        const tempPassword = crypto.randomBytes(6).toString('hex').slice(0, 8) + 'A1!';
-        const hash = await bcrypt.hash(tempPassword, BCRYPT_COST);
-        newUserPasswords.set(email, { tempPassword, hash });
-      }
+      const tempPassword = crypto.randomBytes(6).toString('hex').slice(0, 8) + 'A1!';
+      const hash = await bcrypt.hash(tempPassword, BCRYPT_COST);
+      newUserPasswords.set(email, { tempPassword, hash });
     }
 
     const annee = new Date().getFullYear();
@@ -192,11 +192,14 @@ async function getImportTemplate(req, res, next) {
     const congeTypes = await CongeType.findAll({ where: { entreprise_id } });
     const lines = ['nom,prenom,email,role,service,date_embauche,type_conge,jours_acquis,jours_pris'];
 
+    const csvField = (v) => (v.includes(',') || v.includes('"') || v.includes('\n'))
+      ? `"${v.replace(/"/g, '""')}"` : v;
+
     if (congeTypes.length === 0) {
       lines.push('Dupont,Marie,marie.dupont@exemple.fr,employe,RH,2021-03-01,,0,0');
     } else {
       for (const ct of congeTypes) {
-        lines.push(`Dupont,Marie,marie.dupont@exemple.fr,employe,RH,2021-03-01,${ct.libelle},0,0`);
+        lines.push(`Dupont,Marie,marie.dupont@exemple.fr,employe,RH,2021-03-01,${csvField(ct.libelle)},0,0`);
       }
     }
 
