@@ -1164,7 +1164,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
           && (serviceApproved + 1) > adminServiceLimit
         );
 
-        if (adminServiceLimitReached) {
+        if (adminServiceLimitReached && leaveRules.overlap_behavior !== 'warning') {
           const err = new Error(
             `Impossible de valider : Capacité service "${adminUserService}" dépassée sur la période ${formatDateFR(conge.date_debut)} – ${formatDateFR(conge.date_fin)}`
           );
