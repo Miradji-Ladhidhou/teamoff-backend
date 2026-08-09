@@ -4,6 +4,7 @@ const { Op } = require('sequelize');
 const { Conge, Utilisateur, Entreprise, CompteurConges, CongeType } = require('../models');
 const emailService = require('../services/emailService');
 const logger = require('../utils/logger');
+const { formatDateFR } = require('../utils/dateFormatter');
 
 // ---------------------------------------------------------------------------
 // Rappels congés à venir (J-3 et J-1)
@@ -302,8 +303,8 @@ async function runReservationReminders() {
             {
               destinataire_prenom: admin.prenom || 'Responsable',
               demandeur_nom: demandeurNom,
-              date_debut: conge.date_debut,
-              date_fin: conge.date_fin,
+              date_debut: formatDateFR(conge.date_debut),
+              date_fin: formatDateFR(conge.date_fin),
               type_conge: conge.conge_type?.libelle || 'Congé',
               jours_calcules: conge.jours_calcules,
               jours_avant: days,

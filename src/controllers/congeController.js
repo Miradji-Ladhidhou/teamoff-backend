@@ -234,7 +234,7 @@ async function sendAttestationEmail(req, res, next) {
     const fmtDate = (d) => {
       if (!d) return '—';
       const [y, m, day] = String(d).split('T')[0].split('-');
-      return `${day}-${m}-${y}`;
+      return `${day}/${m}/${y}`;
     };
 
     const fmtEmbauche = (d) => {

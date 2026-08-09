@@ -45,7 +45,7 @@ function formatDateFR(dateStr) {
   const s = String(dateStr).split('T')[0];
   const parts = s.split('-');
   if (parts.length !== 3) return String(dateStr);
-  return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
 }
 
 module.exports = { isValidTimezone, normalizeTimezone, resolveTimezone, formatDateInTimezone, toIsoString, formatDateFR };

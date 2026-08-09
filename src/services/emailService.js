@@ -5,6 +5,7 @@ const path = require('path');
 const { Utilisateur, Entreprise } = require('../models');
 const systemSettingsService = require('./systemSettingsService');
 const logger = require('../utils/logger');
+const { formatDateFR } = require('../utils/dateFormatter');
 
 const isEmailDebug = process.env.EMAIL_DEBUG === 'true';
 
@@ -606,8 +607,8 @@ class EmailService {
         destinataire_prenom: utilisateur.prenom || 'Collaborateur',
         type_conge: conge.conge_type?.libelle || 'Congé',
         delai_label: delaiLabel,
-        date_debut: conge.date_debut,
-        date_fin: conge.date_fin,
+        date_debut: formatDateFR(conge.date_debut),
+        date_fin: formatDateFR(conge.date_fin),
         jours_calcules: conge.jours_calcules || '?',
         action_url: `${getFrontendUrl()}/dashboard`,
       }
@@ -660,8 +661,8 @@ class EmailService {
         destinataire_prenom: manager.prenom || 'Manager',
         demandeur_nom: `${conge.utilisateur?.prenom || ''} ${conge.utilisateur?.nom || ''}`.trim(),
         type_conge: conge.conge_type?.libelle || 'Congé',
-        date_debut: conge.date_debut,
-        date_fin: conge.date_fin,
+        date_debut: formatDateFR(conge.date_debut),
+        date_fin: formatDateFR(conge.date_fin),
         jours_calcules: conge.jours_calcules || '?',
         jours_attente: joursAttente,
         date_soumission: new Date(conge.created_at).toLocaleDateString('fr-FR'),
@@ -744,7 +745,7 @@ class EmailService {
       const name = `${c.utilisateur?.prenom || ''} ${c.utilisateur?.nom || ''}`.trim();
       const service = c.utilisateur?.service || '-';
       const type = c.conge_type?.libelle || 'Congé';
-      const fmtD = (d) => { if (!d) return ''; const p = String(d).split('T')[0].split('-'); return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : d; };
+      const fmtD = (d) => { if (!d) return ''; const p = String(d).split('T')[0].split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : d; };
       return `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${name}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${service}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${type}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${fmtD(c.date_debut)}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${fmtD(c.date_fin)}</td></tr>`;
     }).join('');
 

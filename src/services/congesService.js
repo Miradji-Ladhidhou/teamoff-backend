@@ -749,8 +749,8 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
           data: {
             destinataire_prenom: manager.prenom || 'Manager',
             demandeur_nom: utilisateurNomComplet,
-            date_debut,
-            date_fin,
+            date_debut: formatDateFR(date_debut),
+            date_fin: formatDateFR(date_fin),
             type_conge: congeType.libelle || 'Type non renseigne',
             commentaire_employe: safeCommentaire || 'Aucun',
             overlap_warning_html: overlapWarningPayload
@@ -778,8 +778,8 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
         data: {
           destinataire_prenom: admin.prenom || 'Administrateur',
           demandeur_nom: utilisateurNomComplet,
-          date_debut,
-          date_fin,
+          date_debut: formatDateFR(date_debut),
+          date_fin: formatDateFR(date_fin),
           type_conge: congeType.libelle || 'Type non renseigne',
           commentaire_employe: safeCommentaire || 'Aucun',
           overlap_warning_html: overlapWarningPayload
@@ -807,8 +807,8 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
           templateName: 'leave-reservation-employee',
           data: {
             destinataire_prenom: utilisateur.prenom || 'Collaborateur',
-            date_debut,
-            date_fin,
+            date_debut: formatDateFR(date_debut),
+            date_fin: formatDateFR(date_fin),
             type_conge: congeType.libelle || 'Congé',
             jours_calcules: jours,
             action_url: buildCongeUrl(conge.id),
@@ -832,8 +832,8 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
             data: {
               destinataire_prenom: recipient.prenom || 'Responsable',
               demandeur_nom: utilisateurNomComplet,
-              date_debut,
-              date_fin,
+              date_debut: formatDateFR(date_debut),
+              date_fin: formatDateFR(date_fin),
               type_conge: congeType.libelle || 'Congé',
               jours_calcules: jours,
               action_url: buildCongeUrl(conge.id),
@@ -847,8 +847,8 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
           templateName: 'leave-created-employee',
           data: {
             destinataire_prenom: utilisateur.prenom || 'Collaborateur',
-            date_debut,
-            date_fin,
+            date_debut: formatDateFR(date_debut),
+            date_fin: formatDateFR(date_fin),
             statut_label: approvalWorkflow === 'auto' ? 'Validee automatiquement' : 'En attente de validation',
             overlap_warning_html: '',
             action_url: buildCongeUrl(conge.id),
@@ -1013,8 +1013,8 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
           data: {
             destinataire_prenom: admin.prenom || 'Administrateur',
             demandeur_nom: `${utilisateur.prenom || ''} ${utilisateur.nom || ''}`.trim() || utilisateur.nom,
-            date_debut: conge.date_debut,
-            date_fin: conge.date_fin,
+            date_debut: formatDateFR(conge.date_debut),
+            date_fin: formatDateFR(conge.date_fin),
             commentaire_employe: conge.commentaire_employe || 'Aucun',
             commentaire_manager: conge.commentaire_manager || 'Aucun',
             overlap_warning_html: hasOverlapAtValidation
@@ -1091,8 +1091,8 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
             templateName: 'leave-approved-employee',
             data: {
               destinataire_prenom: utilisateur.prenom || 'Collaborateur',
-              date_debut: conge.date_debut,
-              date_fin: conge.date_fin,
+              date_debut: formatDateFR(conge.date_debut),
+              date_fin: formatDateFR(conge.date_fin),
               commentaire: conge.commentaire_manager || conge.commentaire_admin || 'Aucun commentaire',
               action_url: buildCongeUrl(conge.id),
             }
@@ -1248,8 +1248,8 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
           templateName: 'leave-approved-employee',
           data: {
             destinataire_prenom: utilisateur.prenom || 'Collaborateur',
-            date_debut: conge.date_debut,
-            date_fin: conge.date_fin,
+            date_debut: formatDateFR(conge.date_debut),
+            date_fin: formatDateFR(conge.date_fin),
             commentaire: conge.commentaire_admin || conge.commentaire_manager || 'Aucun commentaire',
             action_url: buildCongeUrl(conge.id),
           }
@@ -1361,8 +1361,8 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
         templateName: 'leave-rejected-employee',
         data: {
           destinataire_prenom: utilisateur.prenom || 'Collaborateur',
-          date_debut: conge.date_debut,
-          date_fin: conge.date_fin,
+          date_debut: formatDateFR(conge.date_debut),
+          date_fin: formatDateFR(conge.date_fin),
           commentaire: commentaire || conge.commentaire_admin || conge.commentaire_manager || 'Aucun commentaire',
           action_url: buildCongeUrl(conge.id),
         }
@@ -1939,8 +1939,8 @@ async function updateConge(id, data, user, req = null) {
       });
 
       const demandeurNom = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || employe.nom || 'Employe';
-      const previousPeriod = `${previousDateDebut} au ${previousDateFin}`;
-      const nextPeriod = `${nextDateDebut} au ${nextDateFin}`;
+      const previousPeriod = `${formatDateFR(previousDateDebut)} au ${formatDateFR(previousDateFin)}`;
+      const nextPeriod = `${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)}`;
       const nextCommentaireEmploye = (updates.commentaire_employe ?? conge.commentaire_employe ?? '').toString().trim();
 
       const recipients = [...managers, admin].filter((recipient) => recipient?.email);
@@ -1974,8 +1974,8 @@ async function updateConge(id, data, user, req = null) {
           data: {
             destinataire_prenom: employe.prenom || 'Collaborateur',
             auteur_action: adminNom,
-            ancienne_periode: `${previousDateDebut} au ${previousDateFin}`,
-            nouvelle_periode: `${nextDateDebut} au ${nextDateFin}`,
+            ancienne_periode: `${formatDateFR(previousDateDebut)} au ${formatDateFR(previousDateFin)}`,
+            nouvelle_periode: `${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)}`,
             action_url: buildCongeUrl(conge.id),
           }
         });
@@ -1984,7 +1984,7 @@ async function updateConge(id, data, user, req = null) {
         entreprise_id: conge.entreprise_id,
         utilisateur_id: employe.id,
         type: 'conge_modifie_admin',
-        message: `Votre congé du ${previousDateDebut} au ${previousDateFin} a été modifié par ${adminNom} (nouvelle période : ${nextDateDebut} au ${nextDateFin})`,
+        message: `Votre congé du ${formatDateFR(previousDateDebut)} au ${formatDateFR(previousDateFin)} a été modifié par ${adminNom} (nouvelle période : ${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)})`,
         url: `/conges/${conge.id}`,
         transaction: t
       });
@@ -2136,8 +2136,8 @@ async function deleteConge(id, user, options = {}) {
             data: {
               destinataire_prenom: recipient.prenom || 'Responsable',
               demandeur_nom: employe_nom,
-              date_debut: conge.date_debut,
-              date_fin: conge.date_fin,
+              date_debut: formatDateFR(conge.date_debut),
+              date_fin: formatDateFR(conge.date_fin),
               action_url: buildCongeUrl(conge.id),
             }
           });
@@ -2163,8 +2163,8 @@ async function deleteConge(id, user, options = {}) {
           data: {
             destinataire_prenom: employe.prenom || 'Collaborateur',
             auteur_action: adminNom,
-            date_debut: conge.date_debut,
-            date_fin: conge.date_fin,
+            date_debut: formatDateFR(conge.date_debut),
+            date_fin: formatDateFR(conge.date_fin),
             commentaire: cancellationComment,
             action_url: buildCongeUrl(conge.id),
           }
@@ -2280,8 +2280,8 @@ async function activerReservation(congeId, reqUser) {
       data: {
         destinataire_prenom: employe?.prenom || 'Employé',
         type_conge: congeType?.libelle || 'Congé',
-        date_debut: conge.date_debut,
-        date_fin: conge.date_fin,
+        date_debut: formatDateFR(conge.date_debut),
+        date_fin: formatDateFR(conge.date_fin),
         action_url: buildCongeUrl(conge.id),
       }
     });
@@ -2360,8 +2360,8 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
           const solde_manquant = Number((jours - budget).toFixed(2));
           results.still_pending.push({
             conge_id: conge.id,
-            date_debut: conge.date_debut,
-            date_fin: conge.date_fin,
+            date_debut: formatDateFR(conge.date_debut),
+            date_fin: formatDateFR(conge.date_fin),
             jours,
             solde_manquant,
           });
@@ -2394,8 +2394,8 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
 
         results.activated.push({
           conge_id: conge.id,
-          date_debut: conge.date_debut,
-          date_fin: conge.date_fin,
+          date_debut: formatDateFR(conge.date_debut),
+          date_fin: formatDateFR(conge.date_fin),
           jours,
           new_statut: newStatut,
         });
@@ -2445,8 +2445,8 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
           data: {
             destinataire_prenom: employe?.prenom || 'Employé',
             type_conge: congeType?.libelle || 'Congé',
-            date_debut: conge.date_debut,
-            date_fin: conge.date_fin,
+            date_debut: formatDateFR(conge.date_debut),
+            date_fin: formatDateFR(conge.date_fin),
             statut_label: statutLabel,
             action_url: buildCongeUrl(conge.id),
           },
