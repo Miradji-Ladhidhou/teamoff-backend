@@ -1817,7 +1817,13 @@ async function updateConge(id, data, user, req = null) {
     });
 
     if (!oldCounter) {
-      throw new Error('Compteur de congés introuvable pour modification');
+      oldCounter = await ensureCounter({
+        entrepriseId: conge.entreprise_id,
+        utilisateurId: conge.utilisateur_id,
+        congeTypeId: conge.conge_type_id,
+        annee: oldYear,
+        transaction: t,
+      });
     }
 
     const nextCongeType = await CongeType.findOne({
@@ -2089,32 +2095,36 @@ async function deleteConge(id, user, options = {}) {
       lock: t.LOCK.UPDATE,
     });
 
-    // Évite les suppressions silencieuses sans rollback de solde.
     if (!compteur) {
-      throw new Error('Compteur introuvable pour annulation: aucune mise à jour de solde appliquée');
-    }
-
-    if (isReserved || isPending || isManagerValidated) {
-      compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
+      logger.warn('Annulation sans compteur — aucun rollback de solde appliqué', {
+        conge_id: id,
+        utilisateur_id: conge.utilisateur_id,
+        conge_type_id: conge.conge_type_id,
+        annee: dayjs(conge.date_debut).year(),
+      });
     } else {
-      compteur.jours_acquis = safeNumber(compteur.jours_acquis) + safeNumber(joursConge);
-      compteur.jours_pris = Math.max(0, safeNumber(compteur.jours_pris) - safeNumber(joursConge));
-      compteur.jours_annules = safeNumber(compteur.jours_annules) + safeNumber(joursConge);
-    }
-    await compteur.save({ transaction: t });
+      if (isReserved || isPending || isManagerValidated) {
+        compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
+      } else {
+        compteur.jours_acquis = safeNumber(compteur.jours_acquis) + safeNumber(joursConge);
+        compteur.jours_pris = Math.max(0, safeNumber(compteur.jours_pris) - safeNumber(joursConge));
+        compteur.jours_annules = safeNumber(compteur.jours_annules) + safeNumber(joursConge);
+      }
+      await compteur.save({ transaction: t });
 
-    await logMouvement({
-      entreprise_id: conge.entreprise_id,
-      utilisateur_id: conge.utilisateur_id,
-      conge_type_id: conge.conge_type_id,
-      annee: dayjs(conge.date_debut).year(),
-      type: 'annulation',
-      quantite: +joursConge,
-      solde_apres: safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves),
-      source_id: conge.id,
-      description: descriptionConge('Congé annulé', conge.date_debut, conge.date_fin),
-      transaction: t,
-    });
+      await logMouvement({
+        entreprise_id: conge.entreprise_id,
+        utilisateur_id: conge.utilisateur_id,
+        conge_type_id: conge.conge_type_id,
+        annee: dayjs(conge.date_debut).year(),
+        type: 'annulation',
+        quantite: +joursConge,
+        solde_apres: safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves),
+        source_id: conge.id,
+        description: descriptionConge('Congé annulé', conge.date_debut, conge.date_fin),
+        transaction: t,
+      });
+    }
 
     if (isPending && !isAdminLevel) {
       const employe_nom = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || 'Un employé';
