@@ -373,6 +373,7 @@ class ExportService {
     const where = entrepriseId ? { entreprise_id: entrepriseId } : {};
 
     if (filters.action) where.action = filters.action;
+    if (filters.utilisateur_id) where.utilisateur_id = filters.utilisateur_id;
 
     if (filters.dateDebut || filters.dateFin) {
       where.created_at = {};
