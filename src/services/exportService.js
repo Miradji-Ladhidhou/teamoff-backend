@@ -104,6 +104,7 @@ class ExportService {
     })();
 
     const lines = [
+      'sep=,', // indication séparateur pour Excel Windows (locale française)
       `"Export TeamOff - ${exportName}"${pad}`,
       `"Généré le : ${nowStr}"${pad}`,
     ];
@@ -113,7 +114,7 @@ class ExportService {
       lines.push(`"Période : du ${debut} au ${fin}"${pad}`);
     }
     lines.push(pad); // ligne vide séparatrice
-    return lines.join('\n') + '\n';
+    return lines.join('\r\n') + '\r\n';
   }
 
   // =========================
