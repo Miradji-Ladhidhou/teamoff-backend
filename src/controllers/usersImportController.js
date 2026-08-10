@@ -50,7 +50,19 @@ async function importUsersCSV(req, res, next) {
 
     let rows;
     try {
-      rows = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
+      // Convertit le buffer en texte en retirant le BOM UTF-8 si présent
+      let content = req.file.buffer.toString('utf8');
+      if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
+
+      // Ignore la ligne sep=X qu'Excel Windows ajoute parfois en tête
+      const allLines = content.split(/\r?\n/);
+      const fromLine = /^sep=/i.test((allLines[0] || '').trim()) ? 2 : 1;
+
+      // Auto-détecte le délimiteur : Excel FR sauvegarde avec ";" par défaut
+      const headerLine = allLines[fromLine - 1] || '';
+      const delimiter = headerLine.includes(';') && !headerLine.includes(',') ? ';' : ',';
+
+      rows = parse(content, { columns: true, skip_empty_lines: true, trim: true, delimiter, from_line: fromLine });
     } catch {
       return res.status(400).json({ message: 'Fichier CSV invalide ou mal formaté' });
     }
@@ -203,10 +215,11 @@ async function getImportTemplate(req, res, next) {
       }
     }
 
-    const csv = lines.join('\n') + '\n';
+    const csv = ['sep=,', ...lines].join('\r\n') + '\r\n';
     res.set('Content-Type', 'text/csv; charset=utf-8');
     res.set('Content-Disposition', 'attachment; filename="modele_import_employes.csv"');
-    res.send(csv);
+    // BOM UTF-8 + sep=, : Excel Windows détecte l'encodage et le séparateur
+    res.send(Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(csv, 'utf8')]));
   } catch (err) {
     logger.error('Template CSV employés', { error: err.message });
     next(err);
