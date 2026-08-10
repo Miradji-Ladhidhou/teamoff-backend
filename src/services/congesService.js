@@ -2030,14 +2030,7 @@ async function deleteConge(id, user, options = {}) {
 
     if (!isReserved && !isPending && !isManagerValidated && !isFinalValidated) throw new Error('Impossible de supprimer');
 
-    if (isManagerValidated && !isAdminLevel) {
-      throw new Error('Seul un administrateur peut annuler un congé validé par le manager');
-    }
-
-    // Fix #43 : vérifier la politique d'auto-annulation côté serveur.
-    // La politique allow_employee/manager_cancel_own_pending est stockée dans
-    // entreprise.politique_conges et vérifiée uniquement côté UI avant ce fix.
-    // Un appel API direct pouvait contourner la restriction.
+    // Vérifier la politique d'auto-annulation pour les demandes en attente
     if (isPending && !isAdminLevel && user?.id === conge.utilisateur_id) {
       const entreprise = await Entreprise.findByPk(conge.entreprise_id, {
         attributes: ['politique_conges'],
@@ -2066,7 +2059,8 @@ async function deleteConge(id, user, options = {}) {
       }
     }
 
-    if (isFinalValidated) {
+    // Vérifier la politique pour les congés validés (manager ou final)
+    if ((isManagerValidated || isFinalValidated) && !isAdminLevel) {
       const policyValidation = await LeavePolicyService.validateCancellation({
         entrepriseId: conge.entreprise_id,
         congeStatus: conge.statut,
@@ -2075,11 +2069,9 @@ async function deleteConge(id, user, options = {}) {
       });
 
       if (!policyValidation?.allowed) {
-        throw new Error(policyValidation.reason || 'Annulation non autorisée selon la politique de congés');
-      }
-
-      if (!isAdminLevel) {
-        throw new Error('Seul un administrateur peut annuler un congé validé');
+        const err = new Error(policyValidation.reason || 'Annulation non autorisée selon la politique de congés');
+        err.statusCode = 403;
+        throw err;
       }
     }
 

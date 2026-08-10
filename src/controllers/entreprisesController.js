@@ -1,7 +1,7 @@
 const bcrypt  = require('bcrypt');
 const crypto  = require('crypto');
 const jwt     = require('jsonwebtoken');
-const { Entreprise, Utilisateur, sequelize } = require('../models');
+const { Entreprise, Utilisateur, LeavePolicy, sequelize } = require('../models');
 const logger = require('../utils/logger');
 const { validationResult } = require('express-validator');
 const { auditEntreprise, auditUser } = require('../services/auditHelper');
@@ -310,12 +310,16 @@ async function getBlockedDays(req, res, next) {
     }
 
     const pol = entreprise.politique_conges || {};
+    const lp = await LeavePolicy.findOne({ where: { entreprise_id: req.params.id } });
     res.json({
       blocked_days: pol.blocked_days || {},
       allow_employee_cancel_own_pending: pol.allow_employee_cancel_own_pending !== undefined
         ? Boolean(pol.allow_employee_cancel_own_pending) : true,
       allow_manager_cancel_own_pending: pol.allow_manager_cancel_own_pending !== undefined
         ? Boolean(pol.allow_manager_cancel_own_pending) : true,
+      allow_modify_validated: lp ? Boolean(lp.allow_modify_validated) : false,
+      allow_cancel_validated: lp ? Boolean(lp.allow_cancel_validated) : false,
+      min_notice_days: lp ? Number(lp.min_notice_days || 0) : 0,
     });
   } catch (err) {
     logger.error('Erreur récupération blocked_days:', err);
