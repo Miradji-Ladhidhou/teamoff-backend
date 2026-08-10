@@ -20,6 +20,7 @@ router.get('/', authorizeRole(['super_admin']), async (req, res, next) => {
       dateDebut,
       dateFin,
       search,
+      utilisateur_id,
     } = req.query;
 
     const pageNum = Math.max(1, parseInt(page, 10));
@@ -30,6 +31,7 @@ router.get('/', authorizeRole(['super_admin']), async (req, res, next) => {
 
     if (action) where.action = action;
     if (entity) where.entity = entity;
+    if (utilisateur_id) where.utilisateur_id = utilisateur_id;
 
     if (dateDebut || dateFin) {
       where.created_at = {};
