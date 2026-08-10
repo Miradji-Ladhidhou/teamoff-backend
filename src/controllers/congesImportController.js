@@ -1,8 +1,9 @@
 'use strict';
 
 const { parse } = require('csv-parse/sync');
-const { Utilisateur, Entreprise, CongeType, Conge, sequelize } = require('../models');
+const { Utilisateur, Entreprise, CongeType, Conge, CompteurConges, sequelize } = require('../models');
 const { calcJoursConges } = require('../services/congesService');
+const safeNum = (v) => parseFloat(v || 0);
 const logger = require('../utils/logger');
 
 const ALLOWED_STATUTS = ['en_attente_manager', 'valide_manager', 'refuse_manager', 'valide_final', 'refuse_final'];
@@ -115,6 +116,23 @@ async function importCongesCSV(req, res, next) {
           commentaire_employe: row.commentaire,
           jours_calcules:     jours,
         }, { transaction: t });
+
+        // Mise à jour du CompteurConges selon le statut
+        const annee = new Date(row.date_debut).getFullYear();
+        const compteur = await CompteurConges.findOne({
+          where: { entreprise_id, utilisateur_id: user.id, conge_type_id: congeType.id, annee },
+          transaction: t,
+        });
+        if (compteur) {
+          if (row.statut === 'valide_final') {
+            compteur.jours_acquis = Math.max(0, safeNum(compteur.jours_acquis) - jours);
+            compteur.jours_pris   = safeNum(compteur.jours_pris) + jours;
+          } else if (['en_attente_manager', 'valide_manager'].includes(row.statut)) {
+            compteur.jours_reserves = safeNum(compteur.jours_reserves) + jours;
+          }
+          // refuse_final / refuse_manager → solde inchangé
+          await compteur.save({ transaction: t });
+        }
 
         created.push({
           id: conge.id, email: row.email, type_conge: row.type_conge,
