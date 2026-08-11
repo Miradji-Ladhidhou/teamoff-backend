@@ -386,6 +386,9 @@ async function updateUser(req, res, next) {
 
     if (role && role !== oldData.role) {
       await auditUser.roleChanged(utilisateur, oldData.role, role, req.user, req);
+      emailService.sendRoleChanged(utilisateur, oldData.role, role).catch((e) =>
+        logger.error('sendRoleChanged error', { error: e.message })
+      );
     }
 
     res.json(safeUser(utilisateur));
@@ -418,6 +421,9 @@ async function changeUserRole(req, res, next) {
 
     if (role !== oldRole) {
       await auditUser.roleChanged(utilisateur, oldRole, role, req.user, req);
+      emailService.sendRoleChanged(utilisateur, oldRole, role).catch((e) =>
+        logger.error('sendRoleChanged error', { error: e.message })
+      );
     }
 
     res.json(safeUser(utilisateur));

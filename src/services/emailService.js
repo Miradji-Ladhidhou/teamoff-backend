@@ -680,6 +680,29 @@ class EmailService {
   }
 
   // ---------------------------
+  // Changement de rôle utilisateur
+  // ---------------------------
+  async sendRoleChanged(utilisateur, ancienRole, nouveauRole) {
+    const labels = {
+      employe:           'Employé',
+      manager:           'Manager',
+      admin_entreprise:  'Administrateur d\'entreprise',
+      super_admin:       'Super administrateur',
+    };
+    return this.sendEmail(
+      utilisateur.email,
+      'Votre rôle a été modifié',
+      'role-changed',
+      {
+        destinataire_prenom: utilisateur.prenom || 'Utilisateur',
+        ancien_role:  labels[ancienRole]  || ancienRole,
+        nouveau_role: labels[nouveauRole] || nouveauRole,
+        login_url: `${getFrontendUrl()}/login`,
+      }
+    );
+  }
+
+  // ---------------------------
   // Suspension entreprise
   // ---------------------------
   async sendEnterpriseSuspended(admin, entreprise) {
