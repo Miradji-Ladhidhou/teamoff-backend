@@ -7,6 +7,7 @@ const authService = require('../services/authService');
 const logger = require('../utils/logger');
 const { encryptTotpSecret, decryptTotpSecret } = require('../utils/totpCrypto');
 const { auditAuth } = require('../services/auditHelper');
+const emailService = require('../services/emailService');
 
 // window:1 → ±1 step × 30 s = 90 s de validité maximale pour un code TOTP.
 const TOTP_WINDOW_MS = 90 * 1000;
@@ -74,6 +75,9 @@ async function enable2FA(req, res) {
     auditAuth.twoFactorEnabled(user, req).catch((e) =>
       logger.error('auditAuth.twoFactorEnabled error', { error: e.message })
     );
+    emailService.send2FAEnabled(user).catch((e) =>
+      logger.error('send2FAEnabled error', { error: e.message })
+    );
     res.json({ message: '2FA activé avec succès' });
   } catch (err) {
     logger.error('enable2FA error', { error: err.message });
@@ -95,6 +99,9 @@ async function disable2FA(req, res) {
     await user.update({ totp_secret: null, totp_enabled: false });
     auditAuth.twoFactorDisabled(user, req).catch((e) =>
       logger.error('auditAuth.twoFactorDisabled error', { error: e.message })
+    );
+    emailService.send2FADisabled(user).catch((e) =>
+      logger.error('send2FADisabled error', { error: e.message })
     );
     res.json({ message: '2FA désactivé' });
   } catch (err) {

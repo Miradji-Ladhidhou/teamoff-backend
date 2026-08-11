@@ -703,6 +703,30 @@ class EmailService {
   }
 
   // ---------------------------
+  // Sécurité — 2FA activé
+  // ---------------------------
+  async send2FAEnabled(utilisateur) {
+    return this.sendEmail(
+      utilisateur.email,
+      'Double authentification activée sur votre compte',
+      '2fa-enabled',
+      { destinataire_prenom: utilisateur.prenom || 'Utilisateur' }
+    );
+  }
+
+  // ---------------------------
+  // Sécurité — 2FA désactivé
+  // ---------------------------
+  async send2FADisabled(utilisateur) {
+    return this.sendEmail(
+      utilisateur.email,
+      'Double authentification désactivée sur votre compte',
+      '2fa-disabled',
+      { destinataire_prenom: utilisateur.prenom || 'Utilisateur' }
+    );
+  }
+
+  // ---------------------------
   // Désignation d'un délégué
   // ---------------------------
   async sendDelegateAssigned(delegue, manager) {
