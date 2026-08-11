@@ -2004,6 +2004,10 @@ async function updateConge(id, data, user, req = null) {
 
     if (isFinalValidated && (user?.role === 'admin_entreprise' || user?.role === 'super_admin')) {
       const adminNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Administrateur';
+      const demandeurNom = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || 'Employé';
+      const anciennePeriode = `${formatDateFR(previousDateDebut)} au ${formatDateFR(previousDateFin)}`;
+      const nouvellePeriode = `${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)}`;
+
       if (employe.email) {
         fireEmail({
           to: employe.email,
@@ -2013,8 +2017,8 @@ async function updateConge(id, data, user, req = null) {
             destinataire_prenom: employe.prenom || 'Collaborateur',
             auteur_action: adminNom,
             type_conge: nextCongeType.libelle || 'Congé',
-            ancienne_periode: `${formatDateFR(previousDateDebut)} au ${formatDateFR(previousDateFin)}`,
-            nouvelle_periode: `${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)}`,
+            ancienne_periode: anciennePeriode,
+            nouvelle_periode: nouvellePeriode,
             action_url: buildCongeUrl(conge.id),
           }
         });
@@ -2027,6 +2031,47 @@ async function updateConge(id, data, user, req = null) {
         url: `/conges/${conge.id}`,
         transaction: t
       });
+
+      // Notifier les managers selon le workflow
+      const baseLeaveRulesUpdate = await getEntrepriseLeaveRules(conge.entreprise_id, t);
+      const leaveRulesUpdate = getEffectiveLeaveRules(baseLeaveRulesUpdate, employe?.service || null);
+      const workflowNeedsManager = ['manager_only', 'manager', 'manager_admin'].includes(leaveRulesUpdate.approval_workflow);
+
+      if (workflowNeedsManager) {
+        const managers = await Utilisateur.findAll({
+          where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
+          transaction: t,
+        });
+        for (const manager of managers) {
+          if (manager.email) {
+            fireEmail({
+              to: manager.email,
+              subject: `Conge valide modifie par l'admin - ${demandeurNom}`,
+              templateName: 'leave-updated-before-approval',
+              data: {
+                destinataire_prenom: manager.prenom || 'Manager',
+                action_requise: 'Pour information',
+                contexte_modif: `son conge valide (modifie par ${adminNom})`,
+                demandeur_nom: demandeurNom,
+                ancienne_periode: anciennePeriode,
+                nouvelle_periode: nouvellePeriode,
+                type_conge: nextCongeType.libelle || 'Congé',
+                ancien_commentaire_employe: previousCommentaireEmploye || 'Aucun',
+                commentaire_employe: (updates.commentaire_employe ?? conge.commentaire_employe ?? '').toString().trim() || 'Aucun',
+                action_url: buildCongeUrl(conge.id),
+              }
+            });
+          }
+          await notificationService.creerNotification({
+            entreprise_id: conge.entreprise_id,
+            utilisateur_id: manager.id,
+            type: 'conge_modifie_admin',
+            message: `Le congé de ${demandeurNom} du ${formatDateFR(previousDateDebut)} au ${formatDateFR(previousDateFin)} a été modifié par ${adminNom} (nouvelle période : ${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)})`,
+            url: `/conges/${conge.id}`,
+            transaction: t
+          });
+        }
+      }
     }
 
     if (isFinalValidated && user?.id === employe.id) {
