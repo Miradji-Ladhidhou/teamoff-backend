@@ -239,13 +239,6 @@ class EmailService {
         <p>Votre mot de passe a été mis à jour avec succès.</p>
         <p><a href="${data.login_url || '#'}">Se connecter</a></p>
       `,
-      'user-invitation': `
-        <p>Bonjour,</p>
-        <p>${data.inviter_nom || 'Un administrateur'} vous a invité à rejoindre ${process.env.EMAIL_NAME || 'TeamOff'}.</p>
-        <p><strong>Email :</strong> ${data.email || 'Non renseigné'}</p>
-        <p><strong>Mot de passe temporaire :</strong> ${data.password_temporaire || 'Non renseigné'}</p>
-        <p><a href="${data.login_url || '#'}">Se connecter</a></p>
-      `,
       'registration-confirmation': `
         <p>Bonjour ${data.admin_prenom || ''} ${data.admin_nom || ''},</p>
         <p>Votre entreprise <strong>${data.entreprise_nom || 'Non renseignée'}</strong> a bien été inscrite sur ${process.env.EMAIL_NAME || 'TeamOff'}.</p>
@@ -515,20 +508,6 @@ class EmailService {
       'Mot de passe mis à jour',
       'password-reset-confirmation',
       { login_url: `${getFrontendUrl()}/login` }
-    );
-  }
-
-  async sendNewUserInvitation(email, temporaryPassword, inviterName) {
-    return this.sendEmail(
-      email,
-      'Vous avez été invité à rejoindre TeamOff',
-      'user-invitation',
-      {
-        inviter_nom: inviterName,
-        email,
-        password_temporaire: temporaryPassword,
-        login_url: `${getFrontendUrl()}/login`,
-      }
     );
   }
 
