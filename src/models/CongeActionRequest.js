@@ -16,6 +16,8 @@ module.exports = (sequelize, DataTypes) => {
     date_fin_demandee:           { type: DataTypes.DATEONLY, allowNull: true },
     debut_demi_journee_demandee: { type: DataTypes.ENUM('matin', 'apres_midi'), allowNull: true },
     fin_demi_journee_demandee:   { type: DataTypes.ENUM('matin', 'apres_midi'), allowNull: true },
+    conge_date_debut_origine: { type: DataTypes.DATEONLY, allowNull: true },
+    conge_date_fin_origine:   { type: DataTypes.DATEONLY, allowNull: true },
     commentaire_employe: { type: DataTypes.TEXT, allowNull: false },
     commentaire_admin:   { type: DataTypes.TEXT, allowNull: true },
   }, {
