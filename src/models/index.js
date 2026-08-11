@@ -125,7 +125,7 @@ Entreprise.hasMany(MouvementSolde, { foreignKey: 'entreprise_id', as: 'mouvement
 CongeActionRequest.belongsTo(Conge,        { foreignKey: 'conge_id',       as: 'conge' });
 CongeActionRequest.belongsTo(Utilisateur,  { foreignKey: 'utilisateur_id', as: 'utilisateur' });
 CongeActionRequest.belongsTo(Entreprise,   { foreignKey: 'entreprise_id',  as: 'entreprise' });
-Conge.hasMany(CongeActionRequest,          { foreignKey: 'conge_id',       as: 'action_requests', onDelete: 'CASCADE' });
+Conge.hasMany(CongeActionRequest,          { foreignKey: 'conge_id',       as: 'action_requests', onDelete: 'SET NULL' });
 Entreprise.hasMany(CongeActionRequest,     { foreignKey: 'entreprise_id',  as: 'conge_action_requests', onDelete: 'CASCADE' });
 
 // ======================

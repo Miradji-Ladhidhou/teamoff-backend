@@ -7,7 +7,7 @@ module.exports = (sequelize, DataTypes) => {
       primaryKey: true,
       defaultValue: DataTypes.UUIDV4,
     },
-    conge_id:      { type: DataTypes.UUID, allowNull: false },
+    conge_id:      { type: DataTypes.UUID, allowNull: true },
     entreprise_id: { type: DataTypes.UUID, allowNull: false },
     utilisateur_id:{ type: DataTypes.UUID, allowNull: false },
     type:   { type: DataTypes.ENUM('cancel', 'modify'), allowNull: false },
