@@ -1003,6 +1003,8 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
       const admin = await Utilisateur.findOne({
         where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise' }
       });
+      const managerNom = `${reqUser?.prenom || ''} ${reqUser?.nom || ''}`.trim() || 'Votre manager';
+
       if (admin) {
         emailQueue.push({
           to: admin.email,
@@ -1012,6 +1014,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
           templateName: 'leave-manager-approved-admin',
           data: {
             destinataire_prenom: admin.prenom || 'Administrateur',
+            manager_nom: managerNom,
             demandeur_nom: `${utilisateur.prenom || ''} ${utilisateur.nom || ''}`.trim() || utilisateur.nom,
             date_debut: formatDateFR(conge.date_debut),
             date_fin: formatDateFR(conge.date_fin),
@@ -1032,6 +1035,24 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
             : `Congé de ${utilisateur.nom} validé par manager (${formatDateFR(conge.date_debut)} - ${formatDateFR(conge.date_fin)})`,
           url: `/conges/${conge.id}`,
           transaction: t
+        });
+      }
+
+      // Notifier l'employé que sa demande est en attente de validation admin (workflow manager_admin)
+      if (leaveRules.approval_workflow === 'manager_admin' && leaveRules.notification_settings.on_validate) {
+        emailQueue.push({
+          to: utilisateur.email,
+          subject: 'Votre demande a ete validee par votre manager - validation admin en cours',
+          templateName: 'leave-manager-validated-employee',
+          data: {
+            destinataire_prenom: utilisateur.prenom || 'Collaborateur',
+            manager_nom: managerNom,
+            type_conge: conge.conge_type?.libelle || 'Congé',
+            jours_calcules: conge.jours_calcules || '?',
+            date_debut: formatDateFR(conge.date_debut),
+            date_fin: formatDateFR(conge.date_fin),
+            action_url: buildCongeUrl(conge.id),
+          }
         });
       }
 
@@ -1091,6 +1112,9 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
             templateName: 'leave-approved-employee',
             data: {
               destinataire_prenom: utilisateur.prenom || 'Collaborateur',
+              auteur_action: managerNom,
+              type_conge: conge.conge_type?.libelle || 'Congé',
+              jours_calcules: conge.jours_calcules || '?',
               date_debut: formatDateFR(conge.date_debut),
               date_fin: formatDateFR(conge.date_fin),
               commentaire: conge.commentaire_manager || conge.commentaire_admin || 'Aucun commentaire',
@@ -1101,7 +1125,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
             entreprise_id: conge.entreprise_id,
             utilisateur_id: utilisateur.id,
             type: 'conge_valide_final',
-            message: `Votre congé du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)} a été approuvé`,
+            message: `Votre congé du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)} a été approuvé par ${managerNom}`,
             url: `/conges/${conge.id}`,
             transaction: t
           });
@@ -1242,12 +1266,16 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
 
       // Notification à l'employé
       if (leaveRules.notification_settings.on_validate) {
+        const adminNomValidation = `${reqUser?.prenom || ''} ${reqUser?.nom || ''}`.trim() || 'votre administrateur';
         emailQueue.push({
           to: utilisateur.email,
           subject: 'Votre demande de conge est approuvee',
           templateName: 'leave-approved-employee',
           data: {
             destinataire_prenom: utilisateur.prenom || 'Collaborateur',
+            auteur_action: adminNomValidation,
+            type_conge: conge.conge_type?.libelle || 'Congé',
+            jours_calcules: conge.jours_calcules || '?',
             date_debut: formatDateFR(conge.date_debut),
             date_fin: formatDateFR(conge.date_fin),
             commentaire: conge.commentaire_admin || conge.commentaire_manager || 'Aucun commentaire',
@@ -1258,7 +1286,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
           entreprise_id: conge.entreprise_id,
           utilisateur_id: utilisateur.id,
           type: 'conge_valide_final',
-          message: `Votre congé du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)} a été approuvé`,
+          message: `Votre congé du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)} a été approuvé par ${adminNomValidation}`,
           url: `/conges/${conge.id}`,
           transaction: t
         });
@@ -1355,12 +1383,16 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
 
     // Notification à l'employé
     if (leaveRules.notification_settings.on_reject) {
+      const auteurRefus = `${reqUser?.prenom || ''} ${reqUser?.nom || ''}`.trim() ||
+        (reqUser?.role === 'manager' ? 'votre manager' : 'votre administrateur');
       emailQueue.push({
         to: utilisateur.email,
         subject: 'Votre demande de conge a ete refusee',
         templateName: 'leave-rejected-employee',
         data: {
           destinataire_prenom: utilisateur.prenom || 'Collaborateur',
+          auteur_action: auteurRefus,
+          type_conge: conge.conge_type?.libelle || 'Congé',
           date_debut: formatDateFR(conge.date_debut),
           date_fin: formatDateFR(conge.date_fin),
           commentaire: commentaire || conge.commentaire_admin || conge.commentaire_manager || 'Aucun commentaire',
@@ -1646,11 +1678,9 @@ async function updateConge(id, data, user, req = null) {
       });
 
       if (!policyValidation?.allowed) {
-        throw new Error(policyValidation.reason || 'Modification non autorisée selon la politique de congés');
-      }
-
-      if (user?.role !== 'admin_entreprise' && user?.role !== 'super_admin') {
-        throw new Error('Seul un administrateur peut modifier un congé validé');
+        const err = new Error(policyValidation.reason || 'Modification non autorisée selon la politique de congés');
+        err.statusCode = 403;
+        throw err;
       }
     }
 
@@ -1934,7 +1964,7 @@ async function updateConge(id, data, user, req = null) {
       jours_calcules: newDays
     }, { transaction: t });
 
-    if (isPending && user?.role === 'employe' && user?.id === conge.utilisateur_id) {
+    if (isPending && user?.id === employe.id) {
       const managers = await Utilisateur.findAll({
         where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
         transaction: t,
@@ -1958,6 +1988,8 @@ async function updateConge(id, data, user, req = null) {
           templateName: 'leave-updated-before-approval',
           data: {
             destinataire_prenom: recipient.prenom || 'Validateur',
+            action_requise: 'Action requise',
+            contexte_modif: 'sa demande de conge avant validation',
             demandeur_nom: demandeurNom,
             ancienne_periode: previousPeriod,
             nouvelle_periode: nextPeriod,
@@ -1980,6 +2012,7 @@ async function updateConge(id, data, user, req = null) {
           data: {
             destinataire_prenom: employe.prenom || 'Collaborateur',
             auteur_action: adminNom,
+            type_conge: nextCongeType.libelle || 'Congé',
             ancienne_periode: `${formatDateFR(previousDateDebut)} au ${formatDateFR(previousDateFin)}`,
             nouvelle_periode: `${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)}`,
             action_url: buildCongeUrl(conge.id),
@@ -1991,6 +2024,51 @@ async function updateConge(id, data, user, req = null) {
         utilisateur_id: employe.id,
         type: 'conge_modifie_admin',
         message: `Votre congé du ${formatDateFR(previousDateDebut)} au ${formatDateFR(previousDateFin)} a été modifié par ${adminNom} (nouvelle période : ${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)})`,
+        url: `/conges/${conge.id}`,
+        transaction: t
+      });
+    }
+
+    if (isFinalValidated && user?.id === employe.id) {
+      const demandeurNom = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || employe.nom || 'Employe';
+      const previousPeriod = `${formatDateFR(previousDateDebut)} au ${formatDateFR(previousDateFin)}`;
+      const nextPeriod = `${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)}`;
+      const nextCommentaireEmploye = (updates.commentaire_employe ?? conge.commentaire_employe ?? '').toString().trim();
+
+      const managers = await Utilisateur.findAll({
+        where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
+        transaction: t,
+      });
+      const admin = await Utilisateur.findOne({
+        where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise' },
+        transaction: t,
+      });
+      const recipients = [...managers, admin].filter((recipient) => recipient?.email);
+
+      for (const recipient of recipients) {
+        fireEmail({
+          to: recipient.email,
+          subject: `Conge valide modifie - ${demandeurNom}`,
+          templateName: 'leave-updated-before-approval',
+          data: {
+            destinataire_prenom: recipient.prenom || 'Responsable',
+            action_requise: 'Pour information',
+            contexte_modif: 'son conge valide',
+            demandeur_nom: demandeurNom,
+            ancienne_periode: previousPeriod,
+            nouvelle_periode: nextPeriod,
+            type_conge: nextCongeType.libelle || 'Type non renseigne',
+            ancien_commentaire_employe: previousCommentaireEmploye || 'Aucun',
+            commentaire_employe: nextCommentaireEmploye || 'Aucun',
+            action_url: buildCongeUrl(conge.id),
+          }
+        });
+      }
+      await notificationService.creerNotification({
+        entreprise_id: conge.entreprise_id,
+        utilisateur_id: employe.id,
+        type: 'conge_modifie_employe',
+        message: `Votre congé du ${formatDateFR(previousDateDebut)} au ${formatDateFR(previousDateFin)} a été modifié (nouvelle période : ${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)})`,
         url: `/conges/${conge.id}`,
         transaction: t
       });
@@ -2138,6 +2216,8 @@ async function deleteConge(id, user, options = {}) {
             data: {
               destinataire_prenom: recipient.prenom || 'Responsable',
               demandeur_nom: employe_nom,
+              statut_conge_label: 'demande de congé en attente',
+              commentaire: 'Aucun',
               date_debut: formatDateFR(conge.date_debut),
               date_fin: formatDateFR(conge.date_fin),
               action_url: buildCongeUrl(conge.id),
@@ -2155,6 +2235,46 @@ async function deleteConge(id, user, options = {}) {
       }
     }
 
+    if ((isManagerValidated || isFinalValidated) && !isAdminLevel) {
+      const employe_nom = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || 'Un employé';
+      const statutLabel = isFinalValidated ? 'congé validé définitivement' : 'congé validé par le manager';
+      const managers = await Utilisateur.findAll({
+        where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
+        attributes: ['id', 'prenom', 'nom', 'email'],
+      });
+      const admin = await Utilisateur.findOne({
+        where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise', statut: 'actif' },
+        attributes: ['id', 'prenom', 'nom', 'email'],
+      });
+      const recipients = [...managers, ...(admin ? [admin] : [])];
+      for (const recipient of recipients) {
+        if (recipient.email) {
+          fireEmail({
+            to: recipient.email,
+            subject: `Annulation de congé validé - ${employe_nom}`,
+            templateName: 'leave-cancelled-by-employee',
+            data: {
+              destinataire_prenom: recipient.prenom || 'Responsable',
+              demandeur_nom: employe_nom,
+              statut_conge_label: statutLabel,
+              commentaire: cancellationComment || 'Aucun',
+              date_debut: formatDateFR(conge.date_debut),
+              date_fin: formatDateFR(conge.date_fin),
+              action_url: buildCongeUrl(conge.id),
+            }
+          });
+        }
+        await notificationService.creerNotification({
+          entreprise_id: conge.entreprise_id,
+          utilisateur_id: recipient.id,
+          type: 'conge_annule_employe',
+          message: `${employe_nom} a annulé son ${statutLabel} du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)}. Motif : ${cancellationComment || 'non précisé'}`,
+          url: `/conges`,
+          transaction: t,
+        });
+      }
+    }
+
     if ((isManagerValidated || isFinalValidated) && isAdminLevel) {
       const adminNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Administrateur';
       if (employe.email) {
@@ -2165,6 +2285,7 @@ async function deleteConge(id, user, options = {}) {
           data: {
             destinataire_prenom: employe.prenom || 'Collaborateur',
             auteur_action: adminNom,
+            type_conge: conge.conge_type?.libelle || 'Congé',
             date_debut: formatDateFR(conge.date_debut),
             date_fin: formatDateFR(conge.date_fin),
             commentaire: cancellationComment,
