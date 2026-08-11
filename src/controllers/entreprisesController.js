@@ -271,7 +271,7 @@ async function patchStatutEntreprise(req, res, next) {
     const oldStatut = entreprise.statut;
     await entreprise.update({ statut }, { userId: req.user.id });
 
-    // Email de suspension aux admins de l'entreprise
+    // Emails aux admins de l'entreprise selon la transition de statut
     if (statut === 'suspendue' && oldStatut !== 'suspendue') {
       const admins = await Utilisateur.findAll({
         where: { entreprise_id: entreprise.id, role: 'admin_entreprise', statut: 'actif' },
@@ -280,6 +280,18 @@ async function patchStatutEntreprise(req, res, next) {
       for (const admin of admins) {
         emailService.sendEnterpriseSuspended(admin, entreprise).catch((e) =>
           logger.error('sendEnterpriseSuspended error', { error: e.message })
+        );
+      }
+    }
+
+    if (statut === 'active' && oldStatut === 'suspendue') {
+      const admins = await Utilisateur.findAll({
+        where: { entreprise_id: entreprise.id, role: 'admin_entreprise', statut: 'actif' },
+        attributes: ['email', 'prenom', 'nom'],
+      });
+      for (const admin of admins) {
+        emailService.sendEnterpriseReactivated(admin, entreprise).catch((e) =>
+          logger.error('sendEnterpriseReactivated error', { error: e.message })
         );
       }
     }

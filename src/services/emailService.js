@@ -760,6 +760,21 @@ class EmailService {
   }
 
   // ---------------------------
+  // Réactivation entreprise
+  // ---------------------------
+  async sendEnterpriseReactivated(admin, entreprise) {
+    return this.sendEmail(
+      admin.email,
+      `Compte entreprise réactivé : ${entreprise.nom}`,
+      'enterprise-reactivated',
+      {
+        destinataire_prenom: admin.prenom || 'Administrateur',
+        entreprise_nom: entreprise.nom,
+      }
+    );
+  }
+
+  // ---------------------------
   // Relance invitation non acceptée (cron)
   // ---------------------------
   async sendInvitationReminder(utilisateur, entreprise, joursSince) {
