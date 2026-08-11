@@ -381,6 +381,12 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
   const conge = request.conge;
   const employe = request.utilisateur;
   const action = typeLabel(request.type);
+  const employe_nom = `${employe?.prenom || ''} ${employe?.nom || ''}`.trim() || 'Un employé';
+  const adminNom = `${adminUser.prenom || ''} ${adminUser.nom || ''}`.trim() || "L'administrateur";
+
+  const employeMessage = request.type === 'cancel'
+    ? `Votre demande d'annulation a ete refusee par <strong>${adminNom}</strong>. Votre conge reste inchange.`
+    : `Votre demande de modification a ete refusee par <strong>${adminNom}</strong>. Votre conge reste inchange.`;
 
   if (employe?.email) {
     fireEmail({
@@ -391,6 +397,8 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
         destinataire_prenom: employe.prenom || 'Collaborateur',
         type_action: action,
         type_conge: conge.conge_type?.libelle || 'Congé',
+        employe_nom,
+        message_principal: employeMessage,
         date_debut: formatDateFR(conge.date_debut),
         date_fin: formatDateFR(conge.date_fin),
         commentaire_admin: commentaire.trim(),
@@ -404,6 +412,44 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
       message: `Votre demande d'${action} a été refusée`,
       url: `/conges/${conge.id}`,
     });
+  }
+
+  // Email aux managers — pour information
+  const baseRules = await getEntrepriseLeaveRules(conge.entreprise_id);
+  const leaveRules = getEffectiveLeaveRules(baseRules, employe?.service || null);
+  const workflowNeedsManager = ['manager_only', 'manager', 'manager_admin'].includes(leaveRules.approval_workflow);
+  if (workflowNeedsManager) {
+    const managers = await Utilisateur.findAll({ where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' } });
+    for (const mgr of managers) {
+      if (mgr.email) {
+        const managerMessage = request.type === 'cancel'
+          ? `La demande d'annulation de <strong>${employe_nom}</strong> a ete refusee par ${adminNom}. Le conge reste inchange.`
+          : `La demande de modification de <strong>${employe_nom}</strong> a ete refusee par ${adminNom}. Le conge reste inchange.`;
+        fireEmail({
+          to: mgr.email,
+          subject: `Pour information - demande d'${action} refusee`,
+          templateName: 'leave-action-rejected',
+          data: {
+            destinataire_prenom: mgr.prenom || 'Manager',
+            type_action: action,
+            type_conge: conge.conge_type?.libelle || 'Congé',
+            employe_nom,
+            message_principal: managerMessage,
+            date_debut: formatDateFR(conge.date_debut),
+            date_fin: formatDateFR(conge.date_fin),
+            commentaire_admin: commentaire.trim(),
+            action_url: buildCongeUrl(conge.id),
+          }
+        });
+        await notificationService.creerNotification({
+          entreprise_id: conge.entreprise_id,
+          utilisateur_id: mgr.id,
+          type: 'conge_action_rejected',
+          message: `Demande d'${action} de ${employe_nom} refusée par ${adminNom}`,
+          url: `/conges/${conge.id}`,
+        });
+      }
+    }
   }
 
   return request;

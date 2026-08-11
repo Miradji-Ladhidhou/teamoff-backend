@@ -391,6 +391,19 @@ async function updateUser(req, res, next) {
       );
     }
 
+    if (email && email !== oldData.email) {
+      emailService.sendEmailChanged(
+        { email: oldData.email, prenom: oldData.prenom },
+        { oldEmail: oldData.email, newEmail: email }
+      ).catch((e) => logger.error('sendEmailChanged error', { error: e.message }));
+    }
+
+    if (typeof service !== 'undefined' && (normalizedNextService || null) !== (oldData.service || null) && utilisateur.email) {
+      emailService.sendServiceChanged(utilisateur, oldData.service, normalizedNextService).catch((e) =>
+        logger.error('sendServiceChanged error', { error: e.message })
+      );
+    }
+
     res.json(safeUser(utilisateur));
   } catch (err) {
     logger.error('Erreur mise à jour utilisateur', { error: err.message });
@@ -470,8 +483,39 @@ async function deleteUser(req, res, next) {
       }
     }
 
+    // Capturer les données avant suppression (la ligne est effacée après destroy)
+    const employeEmail  = utilisateur.email;
+    const employePrenom = utilisateur.prenom;
+    const employe_nom   = `${utilisateur.prenom || ''} ${utilisateur.nom || ''}`.trim() || 'Un utilisateur';
+    const date_suppression = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+    // Le JWT ne contient pas email/prenom — on charge les données de l'admin pour l'email de confirmation
+    const adminUser = await Utilisateur.findByPk(req.user.id, { attributes: ['id', 'email', 'prenom', 'nom'] });
+    const adminNom  = `${adminUser?.prenom || ''} ${adminUser?.nom || ''}`.trim() || "L'administrateur";
+
     await utilisateur.destroy();
     await auditUser.deleted(utilisateur, req.user, req);
+
+    if (employeEmail) {
+      emailService.sendAccountDeleted(
+        { email: employeEmail, prenom: employePrenom },
+        {
+          employe_nom,
+          message_principal: `Votre compte TeamOff a été supprimé le <strong>${date_suppression}</strong> par <strong>${adminNom}</strong>. Toutes vos données ont été effacées de notre système.`,
+          date_suppression,
+        }
+      ).catch((e) => logger.error('sendAccountDeleted (employee) error', { error: e.message }));
+    }
+
+    if (adminUser?.email) {
+      emailService.sendAccountDeleted(
+        { email: adminUser.email, prenom: adminUser.prenom },
+        {
+          employe_nom,
+          message_principal: `Le compte de <strong>${employe_nom}</strong> a été supprimé le <strong>${date_suppression}</strong>. Toutes les données associées ont été effacées de notre système.`,
+          date_suppression,
+        }
+      ).catch((e) => logger.error('sendAccountDeleted (admin) error', { error: e.message }));
+    }
 
     res.json({ message: 'Utilisateur supprimé avec succès' });
   } catch (err) {
@@ -489,11 +533,19 @@ async function updateOwnProfile(req, res, next) {
     if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
     const { nom, prenom, email, currentPassword, newPassword } = req.body;
+    const oldEmail = utilisateur.email;
 
     await updateOwnPasswordIfRequested(utilisateur, { currentPassword, newPassword, email });
     await applyOwnProfileFields(utilisateur, { nom, prenom, email });
     await utilisateur.save();
     await auditUser.updated(utilisateur, req.user, req);
+
+    if (email && utilisateur.email !== oldEmail) {
+      emailService.sendEmailChanged(
+        { email: oldEmail, prenom: utilisateur.prenom },
+        { oldEmail, newEmail: utilisateur.email }
+      ).catch((e) => logger.error('sendEmailChanged error', { error: e.message }));
+    }
 
     res.json({
       id:      utilisateur.id,

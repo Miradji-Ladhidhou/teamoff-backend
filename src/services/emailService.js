@@ -811,6 +811,133 @@ class EmailService {
     );
   }
 
+  async sendLeaveUpdatedSelfConfirm(employe, typeConge, anciennePeriode, nouvellePeriode, ancienCommentaire, nouveauCommentaire) {
+    return this.sendEmail(
+      employe.email,
+      'Votre demande de congé a été modifiée',
+      'leave-updated-self-confirm',
+      {
+        destinataire_prenom: employe.prenom || 'Collaborateur',
+        type_conge: typeConge,
+        ancienne_periode: anciennePeriode,
+        nouvelle_periode: nouvellePeriode,
+        ancien_commentaire_employe: ancienCommentaire || 'Aucun',
+        commentaire_employe: nouveauCommentaire || 'Aucun',
+        action_url: `${getFrontendUrl()}/conges`,
+      }
+    );
+  }
+
+  async sendLeaveCancelledByAdmin(manager, employeNom, adminNom, dateDebut, dateFin, commentaire) {
+    return this.sendEmail(
+      manager.email,
+      `Congé de ${employeNom} annulé par l'administration`,
+      'leave-cancelled-by-admin',
+      {
+        destinataire_prenom: manager.prenom || 'Responsable',
+        employe_nom: employeNom,
+        admin_nom: adminNom,
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        commentaire: commentaire || 'Aucun',
+        action_url: `${getFrontendUrl()}/conges`,
+      }
+    );
+  }
+
+  async sendLeaveCancelledSelfConfirm(employe, dateDebut, dateFin, statutLabel, commentaire) {
+    return this.sendEmail(
+      employe.email,
+      'Confirmation d\'annulation de votre congé',
+      'leave-cancelled-self-confirm',
+      {
+        destinataire_prenom: employe.prenom || 'Collaborateur',
+        statut_conge_label: statutLabel,
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        commentaire: commentaire || 'Aucun',
+        action_url: `${getFrontendUrl()}/conges`,
+      }
+    );
+  }
+
+  async sendBalanceAdjusted(utilisateur, congeTypeLibelle, ancienSolde, nouveauSolde) {
+    const delta = Number((nouveauSolde - ancienSolde).toFixed(2));
+    const signe = delta >= 0 ? `+${delta}` : `${delta}`;
+    return this.sendEmail(
+      utilisateur.email,
+      `Votre solde de ${congeTypeLibelle} a été ajusté`,
+      'balance-adjusted',
+      {
+        destinataire_prenom: utilisateur.prenom || 'Collaborateur',
+        type_conge: congeTypeLibelle,
+        ancien_solde: String(ancienSolde),
+        nouveau_solde: String(nouveauSolde),
+        delta: signe,
+        action_url: `${getFrontendUrl()}/dashboard`,
+      }
+    );
+  }
+
+  async sendLeaveRejectedManagerInfo(manager, { employe_nom, admin_nom, type_conge, date_debut, date_fin, commentaire }) {
+    return this.sendEmail(
+      manager.email,
+      `Pour information — congé de ${employe_nom} refusé par l'administrateur`,
+      'leave-rejected-manager-info',
+      {
+        destinataire_prenom: manager.prenom || 'Manager',
+        employe_nom,
+        admin_nom,
+        type_conge,
+        date_debut,
+        date_fin,
+        commentaire: commentaire || 'Aucun',
+        action_url: `${getFrontendUrl()}/conges`,
+      }
+    );
+  }
+
+  async sendEmailChanged(recipient, { oldEmail, newEmail }) {
+    return this.sendEmail(
+      recipient.email,
+      'Votre adresse email TeamOff a été modifiée',
+      'email-changed',
+      {
+        destinataire_prenom: recipient.prenom || 'Collaborateur',
+        ancienne_adresse: oldEmail,
+        nouvelle_adresse: newEmail,
+      }
+    );
+  }
+
+  async sendServiceChanged(utilisateur, ancienService, nouveauService) {
+    return this.sendEmail(
+      utilisateur.email,
+      'Votre service a été modifié',
+      'service-changed',
+      {
+        destinataire_prenom: utilisateur.prenom || 'Collaborateur',
+        ancien_service: ancienService || 'Non défini',
+        nouveau_service: nouveauService || 'Non défini',
+        action_url: `${getFrontendUrl()}/conges`,
+      }
+    );
+  }
+
+  async sendAccountDeleted(recipient, { employe_nom, message_principal, date_suppression }) {
+    return this.sendEmail(
+      recipient.email,
+      'Suppression de compte TeamOff',
+      'account-deleted',
+      {
+        destinataire_prenom: recipient.prenom || 'Collaborateur',
+        employe_nom,
+        message_principal,
+        date_suppression,
+      }
+    );
+  }
+
   async sendWeeklyManagerSummary(manager, conges, startOfWeek, endOfWeek) {
     const dayjs = require('dayjs');
     const rows = conges.map((c) => {

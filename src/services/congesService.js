@@ -1420,6 +1420,31 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
       });
     }
 
+    // Notification aux managers si l'admin refuse un congé déjà validé par le manager
+    if (
+      (reqUser.role === 'admin_entreprise' || reqUser.role === 'super_admin') &&
+      ancienStatut === 'valide_manager'
+    ) {
+      const adminNomRefus = `${reqUser?.prenom || ''} ${reqUser?.nom || ''}`.trim() || "L'administrateur";
+      const employeNomRefus = `${utilisateur?.prenom || ''} ${utilisateur?.nom || ''}`.trim() || 'Un employé';
+      const managersToNotify = await Utilisateur.findAll({
+        where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
+        attributes: ['id', 'prenom', 'nom', 'email'],
+      });
+      for (const mgr of managersToNotify) {
+        if (mgr.email) {
+          emailService.sendLeaveRejectedManagerInfo(mgr, {
+            employe_nom: employeNomRefus,
+            admin_nom: adminNomRefus,
+            type_conge: conge.conge_type?.libelle || 'Congé',
+            date_debut: formatDateFR(conge.date_debut),
+            date_fin: formatDateFR(conge.date_fin),
+            commentaire: commentaire || null,
+          }).catch((e) => logger.error('sendLeaveRejectedManagerInfo error', { error: e.message }));
+        }
+      }
+    }
+
     // Audit
     await auditConge.rejected(conge, reqUser, req);
 
@@ -2011,6 +2036,16 @@ async function updateConge(id, data, user, req = null) {
           }
         });
       }
+      if (employe.email) {
+        emailService.sendLeaveUpdatedSelfConfirm(
+          employe,
+          nextCongeType.libelle || 'Congé',
+          previousPeriod,
+          nextPeriod,
+          previousCommentaireEmploye || null,
+          nextCommentaireEmploye || null
+        ).catch((e) => logger.error('sendLeaveUpdatedSelfConfirm error', { error: e.message }));
+      }
     }
 
     if (isFinalValidated && (user?.role === 'admin_entreprise' || user?.role === 'super_admin')) {
@@ -2289,6 +2324,15 @@ async function deleteConge(id, user, options = {}) {
           transaction: t,
         });
       }
+      if (employe.email) {
+        emailService.sendLeaveCancelledSelfConfirm(
+          employe,
+          formatDateFR(conge.date_debut),
+          formatDateFR(conge.date_fin),
+          'demande de congé en attente',
+          null
+        ).catch((e) => logger.error('sendLeaveCancelledSelfConfirm error', { error: e.message }));
+      }
     }
 
     if ((isManagerValidated || isFinalValidated) && !isAdminLevel) {
@@ -2329,10 +2373,20 @@ async function deleteConge(id, user, options = {}) {
           transaction: t,
         });
       }
+      if (employe.email) {
+        emailService.sendLeaveCancelledSelfConfirm(
+          employe,
+          formatDateFR(conge.date_debut),
+          formatDateFR(conge.date_fin),
+          statutLabel,
+          cancellationComment || null
+        ).catch((e) => logger.error('sendLeaveCancelledSelfConfirm error', { error: e.message }));
+      }
     }
 
     if ((isManagerValidated || isFinalValidated) && isAdminLevel) {
       const adminNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Administrateur';
+      const employe_nom = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || 'Un employé';
       if (employe.email) {
         fireEmail({
           to: employe.email,
@@ -2357,6 +2411,22 @@ async function deleteConge(id, user, options = {}) {
         url: `/conges/${conge.id}`,
         transaction: t
       });
+      const managers = await Utilisateur.findAll({
+        where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
+        attributes: ['id', 'prenom', 'nom', 'email'],
+      });
+      for (const manager of managers) {
+        if (manager.email) {
+          emailService.sendLeaveCancelledByAdmin(
+            manager,
+            employe_nom,
+            adminNom,
+            formatDateFR(conge.date_debut),
+            formatDateFR(conge.date_fin),
+            cancellationComment || null
+          ).catch((e) => logger.error('sendLeaveCancelledByAdmin error', { error: e.message }));
+        }
+      }
     }
 
     await conge.destroy({ transaction: t });

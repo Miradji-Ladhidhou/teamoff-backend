@@ -3,6 +3,7 @@ const quotasService = require('../services/quotasService');
 const { tryActivateReservations } = require('../services/congesService');
 const logger = require('../utils/logger');
 const UsageService = require('../services/usageService');
+const emailService = require('../services/emailService');
 const { Utilisateur, MouvementSolde, CongeType } = require('../models');
 const { Op } = require('sequelize');
 
@@ -108,7 +109,7 @@ async function upsertUserCounter(req, res, next) {
     }
 
     const entrepriseId = req.user.role === 'super_admin' ? utilisateur.entreprise_id : req.user.entreprise_id;
-    const compteur = await quotasService.createOrUpdateCounter({
+    const { compteur, before, after } = await quotasService.createOrUpdateCounter({
       entrepriseId,
       utilisateurId: utilisateur_id,
       congeTypeId,
@@ -117,6 +118,19 @@ async function upsertUserCounter(req, res, next) {
       performedBy: req.user,
       req,
     });
+
+    if (before.jours_acquis !== after.jours_acquis) {
+      const [congeType, utilisateurFull] = await Promise.all([
+        CongeType.findByPk(congeTypeId, { attributes: ['libelle'] }),
+        Utilisateur.findByPk(utilisateur_id, { attributes: ['id', 'email', 'prenom', 'nom'] }),
+      ]);
+      emailService.sendBalanceAdjusted(
+        utilisateurFull,
+        congeType?.libelle || 'Congé',
+        before.jours_acquis,
+        after.jours_acquis
+      ).catch((e) => logger.error('sendBalanceAdjusted error', { error: e.message }));
+    }
 
     const activationResult = await tryActivateReservations(utilisateur_id, congeTypeId, annee);
 

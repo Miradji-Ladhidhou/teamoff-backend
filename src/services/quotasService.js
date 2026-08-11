@@ -555,7 +555,7 @@ async function createOrUpdateCounter({ entrepriseId, utilisateurId, congeTypeId,
       transaction: t,
     });
 
-    return compteur;
+    return { compteur, before, after };
   });
 }
 
