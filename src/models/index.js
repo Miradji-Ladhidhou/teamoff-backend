@@ -25,6 +25,7 @@ const HolidayTemplate = require('./HolidayTemplate')(sequelize, DataTypes);
 const HolidayTemplateItem = require('./HolidayTemplateItem')(sequelize, DataTypes);
 const Absence = require('./Absence')(sequelize, DataTypes);
 const MouvementSolde = require('./MouvementSolde')(sequelize, DataTypes);
+const CongeActionRequest = require('./CongeActionRequest')(sequelize, DataTypes);
 
 // ======================
 // Associations
@@ -118,6 +119,15 @@ MouvementSolde.belongsTo(CongeType, { foreignKey: 'conge_type_id', as: 'conge_ty
 Utilisateur.hasMany(MouvementSolde, { foreignKey: 'utilisateur_id', as: 'mouvements_solde' });
 Entreprise.hasMany(MouvementSolde, { foreignKey: 'entreprise_id', as: 'mouvements_solde', onDelete: 'CASCADE' });
 
+// ----------------------
+// CongeActionRequest relations
+// ----------------------
+CongeActionRequest.belongsTo(Conge,        { foreignKey: 'conge_id',       as: 'conge' });
+CongeActionRequest.belongsTo(Utilisateur,  { foreignKey: 'utilisateur_id', as: 'utilisateur' });
+CongeActionRequest.belongsTo(Entreprise,   { foreignKey: 'entreprise_id',  as: 'entreprise' });
+Conge.hasMany(CongeActionRequest,          { foreignKey: 'conge_id',       as: 'action_requests', onDelete: 'CASCADE' });
+Entreprise.hasMany(CongeActionRequest,     { foreignKey: 'entreprise_id',  as: 'conge_action_requests', onDelete: 'CASCADE' });
+
 // ======================
 // Export
 // ======================
@@ -137,4 +147,5 @@ module.exports = {
   HolidayTemplateItem,
   Absence,
   MouvementSolde,
+  CongeActionRequest,
 };
