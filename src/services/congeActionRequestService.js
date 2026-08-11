@@ -1,7 +1,12 @@
 'use strict';
 
 const { CongeActionRequest, Conge, Utilisateur, CongeType, Entreprise, sequelize } = require('../models');
-const { getEntrepriseLeaveRules, getEffectiveLeaveRules } = require('./politiqueConges');
+const { getLeaveRules, getEffectiveLeaveRules } = require('./politiqueConges');
+
+async function getEntrepriseLeaveRules(entrepriseId) {
+  const entreprise = await Entreprise.findByPk(entrepriseId, { attributes: ['id', 'politique_conges'] });
+  return getLeaveRules(entreprise || {});
+}
 const LeavePolicyService = require('./leavePolicyService');
 const congesService = require('./congesService');
 const notificationService = require('./notificationService');
@@ -56,7 +61,7 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
     const err = new Error('Accès interdit'); err.statusCode = 403; throw err;
   }
   if (!['valide_final', 'valide_manager'].includes(conge.statut)) {
-    const err = new Error('Seuls les congés validés peuvent faire l'objet d'une demande'); err.statusCode = 400; throw err;
+    const err = new Error('Seuls les conges valides peuvent faire l\'objet d\'une demande'); err.statusCode = 400; throw err;
   }
 
   // Vérifier la politique
@@ -268,7 +273,7 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
   // Marquer la demande comme approuvée
   await request.update({ statut: 'approved', commentaire_admin: commentaire || null });
 
-  const adminNom = `${adminUser.prenom || ''} ${adminUser.nom || ''}`.trim() || 'L'administrateur';
+  const adminNom = `${adminUser.prenom || ''} ${adminUser.nom || ''}`.trim() || "L'administrateur";
   const npRow = nouvellePeriodeRow(request);
 
   const baseRules = await getEntrepriseLeaveRules(conge.entreprise_id);
