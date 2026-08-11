@@ -703,6 +703,23 @@ class EmailService {
   }
 
   // ---------------------------
+  // Désignation d'un délégué
+  // ---------------------------
+  async sendDelegateAssigned(delegue, manager) {
+    const managerNom = `${manager.prenom || ''} ${manager.nom || ''}`.trim() || 'Votre manager';
+    return this.sendEmail(
+      delegue.email,
+      'Vous avez été désigné délégué',
+      'delegate-assigned',
+      {
+        destinataire_prenom: delegue.prenom || 'Utilisateur',
+        manager_nom: managerNom,
+        dashboard_url: `${getFrontendUrl()}/conges`,
+      }
+    );
+  }
+
+  // ---------------------------
   // Suspension entreprise
   // ---------------------------
   async sendEnterpriseSuspended(admin, entreprise) {

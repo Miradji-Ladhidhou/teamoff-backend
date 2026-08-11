@@ -553,8 +553,9 @@ async function setDelegate(req, res, next) {
 
     const { delegue_id } = req.body;
 
+    let delegue = null;
     if (delegue_id) {
-      const delegue = await Utilisateur.findByPk(delegue_id);
+      delegue = await Utilisateur.findByPk(delegue_id);
       if (!delegue || delegue.entreprise_id !== utilisateur.entreprise_id) {
         return res.status(400).json({ message: 'Délégué introuvable ou hors entreprise' });
       }
@@ -564,6 +565,12 @@ async function setDelegate(req, res, next) {
     }
 
     await utilisateur.update({ delegue_id: delegue_id || null });
+
+    if (delegue) {
+      emailService.sendDelegateAssigned(delegue, utilisateur).catch((e) =>
+        logger.error('sendDelegateAssigned error', { error: e.message })
+      );
+    }
     res.json({ message: 'Délégation mise à jour', delegue_id: utilisateur.delegue_id });
   } catch (err) {
     logger.error('Erreur setDelegate', { error: err.message });
