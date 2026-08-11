@@ -21,7 +21,7 @@ function buildCongeUrl(congeId) {
 }
 
 function buildRequestsUrl() {
-  return `${FRONTEND_URL}/conges/demandes-modification`;
+  return `${FRONTEND_URL}/conges/demandes`;
 }
 
 function typeLabel(type) {
@@ -147,7 +147,7 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
       utilisateur_id: adminUser.id,
       type: 'conge_action_request',
       message: `${employe_nom} demande l'${action} de son congé du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)}`,
-      url: '/conges/demandes-modification',
+      url: '/conges/demandes',
     });
   }
 
@@ -213,7 +213,7 @@ async function listRequests({ entrepriseId, statut, page = 1, limit = 20 }) {
     offset,
   });
 
-  return { items: rows, total: count };
+  return { requests: rows, total: count, totalPages: Math.ceil(count / limit) };
 }
 
 // ---------------------------------------------------------------------------
