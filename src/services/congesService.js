@@ -1264,6 +1264,17 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         transaction: t,
       });
 
+      // Alerte solde faible (≤ 3 jours restants) — symétrique avec la branche manager
+      const adminSoldeRestant = safeNumber(compteur.jours_acquis);
+      if (adminSoldeRestant <= 3 && adminSoldeRestant >= 0) {
+        emailService.sendLowBalance(
+          utilisateur,
+          conge.conge_type?.libelle || 'Congé',
+          adminSoldeRestant,
+          dayjs(conge.date_debut).year()
+        ).catch((e) => logger.error('sendLowBalance error', { error: e.message }));
+      }
+
       // Notification à l'employé
       if (leaveRules.notification_settings.on_validate) {
         const adminNomValidation = `${reqUser?.prenom || ''} ${reqUser?.nom || ''}`.trim() || 'votre administrateur';
