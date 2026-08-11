@@ -262,12 +262,7 @@ async function setPassword(req, res) {
     const { token, password, confirmPassword } = req.body;
     const user = await authService.setPassword(token, password, confirmPassword);
 
-    try {
-      await emailService.sendPasswordResetConfirmation(user.email);
-    } catch (mailErr) {
-      logger.error('setPassword: erreur email confirmation', { error: mailErr.message });
-    }
-
+    // welcome-activated est déjà envoyé dans authService.setPassword
     await auditAuth.passwordResetSuccess(user, req);
 
     res.json({ message: 'Mot de passe défini avec succès. Vous pouvez vous connecter.' });
