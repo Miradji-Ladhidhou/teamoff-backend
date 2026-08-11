@@ -194,12 +194,13 @@ async function forgotPassword(req, res) {
 
   try {
     await authService.forgotPassword(req.body?.email);
-
-    // === Audit demande reset ===
-    await auditAuth.passwordResetRequest(req.body?.email, req);
   } catch (_) {
-    // Reponse volontairement identique pour eviter la fuite d'information.
+    // Reponse volontairement identique pour eviter la fuite d'information (anti-enumeration).
   }
+
+  // Audit toujours écrit — que l'email existe ou non, que l'envoi ait réussi ou non.
+  // L'audit ne doit pas dépendre du succès du service email.
+  auditAuth.passwordResetRequest(req.body?.email, req).catch(() => {});
 
   return res.status(200).json(genericResponse);
 }

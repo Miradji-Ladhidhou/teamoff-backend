@@ -60,10 +60,6 @@ function getUserKey(req) {
 function isWhitelisted(req) {
   // Rôle super_admin — vérifié en DB à chaque requête via authJwt
   if (req.user && rateLimitConfig.whitelistRoles.includes(req.user.role)) return true;
-  // Script interne — le secret doit correspondre exactement à INTERNAL_API_SECRET.
-  // Si la variable d'environnement est absente ou vide, aucun header ne bypasse.
-  const internalSecret = process.env.INTERNAL_API_SECRET;
-  if (internalSecret && req.headers[rateLimitConfig.internalSecretHeader] === internalSecret) return true;
   return false;
 }
 

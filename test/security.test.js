@@ -333,26 +333,15 @@ describe('Rate limiting — bypass header sécurisé', () => {
     expect(isWhitelisted(makeReq({ 'x-internal-script': '1' }))).toBe(false);
   });
 
-  it('x-internal-secret avec mauvaise valeur ne bypasse pas', () => {
-    process.env.INTERNAL_API_SECRET = 'correct-secret-test';
-    const result = isWhitelisted(makeReq({ 'x-internal-secret': 'wrong-value' }));
-    delete process.env.INTERNAL_API_SECRET;
-    expect(result).toBe(false);
+  it('x-internal-secret avec n\'importe quelle valeur ne bypasse pas (mécanisme supprimé)', () => {
+    expect(isWhitelisted(makeReq({ 'x-internal-secret': 'any-value' }))).toBe(false);
   });
 
-  it('x-internal-secret sans INTERNAL_API_SECRET défini ne bypasse pas (sécurité par défaut)', () => {
-    const saved = process.env.INTERNAL_API_SECRET;
-    delete process.env.INTERNAL_API_SECRET;
-    const result = isWhitelisted(makeReq({ 'x-internal-secret': 'any-value' }));
-    if (saved !== undefined) process.env.INTERNAL_API_SECRET = saved;
-    expect(result).toBe(false);
-  });
-
-  it('x-internal-secret avec la bonne valeur bypasse (script interne légitime)', () => {
+  it('x-internal-secret avec valeur "correct" ne bypasse pas même si INTERNAL_API_SECRET est défini', () => {
     process.env.INTERNAL_API_SECRET = 'correct-secret-test';
     const result = isWhitelisted(makeReq({ 'x-internal-secret': 'correct-secret-test' }));
     delete process.env.INTERNAL_API_SECRET;
-    expect(result).toBe(true);
+    expect(result).toBe(false);
   });
 
   it('super_admin est toujours whitelisté (rôle vérifié en DB via authJwt)', () => {

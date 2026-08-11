@@ -122,15 +122,15 @@ describe('updateUser — garde self-disable / last-admin', () => {
     expect(fresh.statut).toBe('inactif');
   });
 
-  it('avec deux admins actifs, désactiver l\'un d\'eux est possible', async () => {
+  it('avec deux admins actifs, un super_admin peut en désactiver un', async () => {
     // admin et admin2 sont tous deux actifs (resetStatuts dans beforeEach)
-    const token = generateToken(admin);
+    const token = generateToken(superAdmin);
     const res = await request(app)
       .put(`/api/users/${admin2.id}`)
       .set('Authorization', `Bearer ${token}`)
       .send({ statut: 'inactif' });
 
-    // admin reste actif → admin2 peut être désactivé
+    // admin reste actif → admin2 peut être désactivé (pas le dernier admin)
     expect(res.status).toBe(200);
 
     const fresh = await Utilisateur.findByPk(admin2.id, { attributes: ['statut'] });

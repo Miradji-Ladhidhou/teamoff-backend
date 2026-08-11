@@ -60,7 +60,4 @@ module.exports = {
     },
   },
   whitelistRoles: ['super_admin'],
-  // Le bypass par header utilise process.env.INTERNAL_API_SECRET (comparaison stricte).
-  // Si la variable d'environnement est absente, aucun header ne peut bypasser le rate limiter.
-  internalSecretHeader: 'x-internal-secret',
 };
