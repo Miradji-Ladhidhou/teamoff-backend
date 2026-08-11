@@ -33,9 +33,17 @@ function typeLabel(type) {
   return type === 'cancel' ? 'annulation' : 'modification';
 }
 
+function deAction(action) {
+  return /^[aeiouàâéèêëîïôùûüœ]/i.test(action) ? `d'${action}` : `de ${action}`;
+}
+
+function laAction(action) {
+  return /^[aeiouàâéèêëîïôùûüœ]/i.test(action) ? `l'${action}` : `la ${action}`;
+}
+
 function nouvellePeriodeRow(req) {
   if (req.type !== 'modify' || !req.date_debut_demandee) return '';
-  return `<tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280;font-size:14px;">Nouvelle periode demandee</td>
+  return `<tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280;font-size:14px;">Nouvelle période demandée</td>
       <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:600;">${formatDateFR(req.date_debut_demandee)} au ${formatDateFR(req.date_fin_demandee)}</td></tr>`;
 }
 
@@ -113,7 +121,7 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
   if (employe?.email) {
     fireEmail({
       to: employe.email,
-      subject: `Demande d'${action} soumise - en attente de validation`,
+      subject: `Demande ${deAction(action)} soumise — en attente de validation`,
       templateName: 'leave-action-request-employee',
       data: {
         destinataire_prenom: employe.prenom || 'Collaborateur',
@@ -132,11 +140,11 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
   if (adminUser?.email) {
     fireEmail({
       to: adminUser.email,
-      subject: `Action requise - demande d'${action} de congé validé`,
+      subject: `Action requise — demande ${deAction(action)} de congé validé`,
       templateName: 'leave-action-request-admin',
       data: {
         destinataire_prenom: adminUser.prenom || 'Administrateur',
-        titre_email: `Demande d'${action} - action requise`,
+        titre_email: `Demande ${deAction(action)} — action requise`,
         sous_titre: 'Vous devez approuver ou refuser cette demande',
         message_role: 'Veuillez examiner et traiter cette demande depuis votre espace administrateur.',
         demandeur_nom: employe_nom,
@@ -153,7 +161,7 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
       entreprise_id: conge.entreprise_id,
       utilisateur_id: adminUser.id,
       type: 'conge_action_request',
-      message: `${employe_nom} demande l'${action} de son congé du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)}`,
+      message: `${employe_nom} demande ${laAction(action)} de son congé du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)}`,
       url: '/conges/demandes',
     });
   }
@@ -166,13 +174,13 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
       if (mgr.email) {
         fireEmail({
           to: mgr.email,
-          subject: `Pour information - demande d'${action} de congé`,
+          subject: `Pour information — demande ${deAction(action)} de congé`,
           templateName: 'leave-action-request-admin',
           data: {
             destinataire_prenom: mgr.prenom || 'Manager',
-            titre_email: `Demande d'${action} - pour information`,
+            titre_email: `Demande ${deAction(action)} — pour information`,
             sous_titre: 'Aucune action requise de votre part',
-            message_role: 'Cette demande sera traitee par l\'administrateur.',
+            message_role: 'Cette demande sera traitée par l\'administrateur.',
             demandeur_nom: employe_nom,
             type_action: action,
             type_conge: conge.conge_type?.libelle || 'Congé',
@@ -180,7 +188,7 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
             date_fin: formatDateFR(conge.date_fin),
             nouvelle_periode_row: npRow,
             commentaire_employe: request.commentaire_employe,
-            bouton_action: `<p><a href="${buildCongeUrl(congeId)}" style="display:inline-block;background:#6b7280;color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:bold;">Voir le conge</a></p>`,
+            bouton_action: `<p><a href="${buildCongeUrl(congeId)}" style="display:inline-block;background:#6b7280;color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:bold;">Voir le congé</a></p>`,
           }
         });
       }
@@ -188,7 +196,7 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
         entreprise_id: conge.entreprise_id,
         utilisateur_id: mgr.id,
         type: 'conge_action_request',
-        message: `${employe_nom} demande l'${action} de son congé du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)}`,
+        message: `${employe_nom} demande ${laAction(action)} de son congé du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)}`,
         url: `/conges/${congeId}`,
       });
     }
@@ -284,24 +292,24 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
   // Construire les lignes de détail selon le type d'action
   let detailRows = '';
   if (request.type === 'cancel') {
-    detailRows = `<tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280;font-size:14px;">Periode annulee</td>
+    detailRows = `<tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280;font-size:14px;">Période annulée</td>
       <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:600;">${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)}</td></tr>`;
   } else {
-    detailRows = `<tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280;font-size:14px;">Ancienne periode</td>
+    detailRows = `<tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280;font-size:14px;">Ancienne période</td>
       <td style="padding:8px 12px;border:1px solid #e5e7eb;font-style:italic;color:#6b7280;">${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)}</td></tr>
-      <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280;font-size:14px;">Nouvelle periode</td>
+      <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280;font-size:14px;">Nouvelle période</td>
       <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:600;">${formatDateFR(request.date_debut_demandee)} au ${formatDateFR(request.date_fin_demandee)}</td></tr>`;
   }
 
   const employeMessage = request.type === 'cancel'
-    ? `Votre demande d'annulation a ete approuvee par <strong>${adminNom}</strong>. Votre conge a ete annule et votre solde recalcule.`
-    : `Votre demande de modification a ete approuvee par <strong>${adminNom}</strong>.`;
+    ? `Votre demande d'annulation a été approuvée par <strong>${adminNom}</strong>. Votre congé a été annulé et votre solde recalculé.`
+    : `Votre demande de modification a été approuvée par <strong>${adminNom}</strong>.`;
 
   // Email à l'employé
   if (employe?.email) {
     fireEmail({
       to: employe.email,
-      subject: `Demande d'${action} approuvee`,
+      subject: `Demande ${deAction(action)} approuvée`,
       templateName: 'leave-action-approved',
       data: {
         destinataire_prenom: employe.prenom || 'Collaborateur',
@@ -318,7 +326,7 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
       entreprise_id: conge.entreprise_id,
       utilisateur_id: employe.id,
       type: 'conge_action_approved',
-      message: `Votre demande d'${action} a été approuvée par ${adminNom}`,
+      message: `Votre demande ${deAction(action)} a été approuvée par ${adminNom}`,
       url: `/conges/${conge.id}`,
     });
   }
@@ -330,11 +338,11 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
     for (const mgr of managers) {
       if (mgr.email) {
         const managerMessage = request.type === 'cancel'
-          ? `La demande d'annulation de <strong>${employe_nom}</strong> a ete approuvee par ${adminNom}. Le conge a ete supprime.`
-          : `La demande de modification de <strong>${employe_nom}</strong> a ete approuvee par ${adminNom}.`;
+          ? `La demande d'annulation de <strong>${employe_nom}</strong> a été approuvée par ${adminNom}. Le congé a été supprimé.`
+          : `La demande de modification de <strong>${employe_nom}</strong> a été approuvée par ${adminNom}.`;
         fireEmail({
           to: mgr.email,
-          subject: `Pour information - demande d'${action} approuvee`,
+          subject: `Pour information — demande ${deAction(action)} approuvée`,
           templateName: 'leave-action-approved',
           data: {
             destinataire_prenom: mgr.prenom || 'Manager',
@@ -351,7 +359,7 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
           entreprise_id: conge.entreprise_id,
           utilisateur_id: mgr.id,
           type: 'conge_action_approved',
-          message: `Demande d'${action} de ${employe_nom} approuvée par ${adminNom}`,
+          message: `Demande ${deAction(action)} de ${employe_nom} approuvée par ${adminNom}`,
           url: `/conges/${conge.id}`,
         });
       }
@@ -387,13 +395,13 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
   const adminNom = `${adminUser.prenom || ''} ${adminUser.nom || ''}`.trim() || "L'administrateur";
 
   const employeMessage = request.type === 'cancel'
-    ? `Votre demande d'annulation a ete refusee par <strong>${adminNom}</strong>. Votre conge reste inchange.`
-    : `Votre demande de modification a ete refusee par <strong>${adminNom}</strong>. Votre conge reste inchange.`;
+    ? `Votre demande d'annulation a été refusée par <strong>${adminNom}</strong>. Votre congé reste inchangé.`
+    : `Votre demande de modification a été refusée par <strong>${adminNom}</strong>. Votre congé reste inchangé.`;
 
   if (employe?.email) {
     fireEmail({
       to: employe.email,
-      subject: `Demande d'${action} refusee`,
+      subject: `Demande ${deAction(action)} refusée`,
       templateName: 'leave-action-rejected',
       data: {
         destinataire_prenom: employe.prenom || 'Collaborateur',
@@ -411,7 +419,7 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
       entreprise_id: conge.entreprise_id,
       utilisateur_id: employe.id,
       type: 'conge_action_rejected',
-      message: `Votre demande d'${action} a été refusée`,
+      message: `Votre demande ${deAction(action)} a été refusée`,
       url: `/conges/${conge.id}`,
     });
   }
@@ -425,11 +433,11 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
     for (const mgr of managers) {
       if (mgr.email) {
         const managerMessage = request.type === 'cancel'
-          ? `La demande d'annulation de <strong>${employe_nom}</strong> a ete refusee par ${adminNom}. Le conge reste inchange.`
-          : `La demande de modification de <strong>${employe_nom}</strong> a ete refusee par ${adminNom}. Le conge reste inchange.`;
+          ? `La demande d'annulation de <strong>${employe_nom}</strong> a été refusée par ${adminNom}. Le congé reste inchangé.`
+          : `La demande de modification de <strong>${employe_nom}</strong> a été refusée par ${adminNom}. Le congé reste inchangé.`;
         fireEmail({
           to: mgr.email,
-          subject: `Pour information - demande d'${action} refusee`,
+          subject: `Pour information — demande ${deAction(action)} refusée`,
           templateName: 'leave-action-rejected',
           data: {
             destinataire_prenom: mgr.prenom || 'Manager',
