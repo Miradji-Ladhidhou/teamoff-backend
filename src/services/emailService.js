@@ -666,6 +666,20 @@ class EmailService {
   }
 
   // ---------------------------
+  // Désactivation compte utilisateur
+  // ---------------------------
+  async sendAccountDeactivated(utilisateur) {
+    return this.sendEmail(
+      utilisateur.email,
+      'Votre compte a été suspendu',
+      'account-deactivated',
+      {
+        destinataire_prenom: utilisateur.prenom || 'Utilisateur',
+      }
+    );
+  }
+
+  // ---------------------------
   // Suspension entreprise
   // ---------------------------
   async sendEnterpriseSuspended(admin, entreprise) {

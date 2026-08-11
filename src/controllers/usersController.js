@@ -369,6 +369,13 @@ async function updateUser(req, res, next) {
       );
     }
 
+    // Email de désactivation si le compte passe à inactif
+    if (statut === 'inactif' && utilisateur.statut !== 'inactif') {
+      emailService.sendAccountDeactivated(utilisateur).catch((e) =>
+        logger.error('sendAccountDeactivated error', { error: e.message })
+      );
+    }
+
     const updatePayload = { nom, prenom, email, role, service: normalizedNextService || null, statut };
     if (typeof date_embauche !== 'undefined') {
       updatePayload.date_embauche = normalizedHiringDate;
