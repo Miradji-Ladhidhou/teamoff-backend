@@ -16,10 +16,13 @@ function handleExportError(next, err) {
 }
 
 function sendCSV(res, data, filename) {
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-16le');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  // Préfixe BOM UTF-8 (0xEF 0xBB 0xBF) : Excel/Windows détecte l'encodage correctement
-  res.send(Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(data, 'utf8')]));
+  // UTF-16 LE BOM (FF FE) : encodage natif Excel Windows, reconnu par toutes les versions
+  // sans ambiguïté, contrairement à l'UTF-8 BOM que certains Excel ignorent.
+  const bom = Buffer.from([0xFF, 0xFE]);
+  const content = Buffer.from(data, 'utf16le');
+  res.send(Buffer.concat([bom, content]));
 }
 
 function sendPDF(res, data, filename) {
