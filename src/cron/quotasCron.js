@@ -40,7 +40,12 @@ async function processAllEnterprises(handler) {
   });
 
   for (const entreprise of entreprises) {
-    await handler(entreprise);
+    try {
+      await handler(entreprise);
+    } catch (err) {
+      logger.error(`[quotas-cron] Erreur pour entreprise ${entreprise.nom} (${entreprise.id}):`, err);
+      // Continue avec les autres entreprises
+    }
   }
 }
 

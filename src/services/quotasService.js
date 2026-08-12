@@ -190,7 +190,7 @@ async function initializeUserCounters({ entrepriseId, utilisateurId, annee = get
 async function initQuotaAnnuel(entrepriseId, annee) {
   return await sequelize.transaction(async (t) => {
     const [utilisateurs, congeTypes, leaveRules] = await Promise.all([
-      Utilisateur.findAll({ where: { entreprise_id: entrepriseId }, attributes: ['id'], transaction: t }),
+      Utilisateur.findAll({ where: { entreprise_id: entrepriseId, statut: 'actif' }, attributes: ['id'], transaction: t }),
       CongeType.findAll({ where: { entreprise_id: entrepriseId }, transaction: t }),
       getEntrepriseLeaveRules(entrepriseId),
     ]);
@@ -279,7 +279,7 @@ async function ajouterAcquisitionMensuelle(entrepriseId, annee, mois, options = 
   return sequelize.transaction(async (t) => {
     const [leaveRules, utilisateurs, congeTypes, existingCounters] = await Promise.all([
       getEntrepriseLeaveRules(entrepriseId, t),
-      Utilisateur.findAll({ where: { entreprise_id: entrepriseId }, attributes: ['id', 'prenom', 'nom'], transaction: t }),
+      Utilisateur.findAll({ where: { entreprise_id: entrepriseId, statut: 'actif' }, attributes: ['id', 'prenom', 'nom'], transaction: t }),
       CongeType.findAll({ where: { entreprise_id: entrepriseId }, transaction: t }),
       CompteurConges.findAll({
         where: { entreprise_id: entrepriseId, annee: targetYear },

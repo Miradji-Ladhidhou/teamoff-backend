@@ -42,7 +42,15 @@ async function ensureUserAccess(req, utilisateurId) {
 
 async function initQuota(req, res, next) {
   try {
-    await quotasService.initQuotaAnnuel(req.user.entreprise_id, new Date().getFullYear());
+    const entrepriseId = req.user.role === 'super_admin'
+      ? (req.body?.entreprise_id || req.query?.entreprise_id || null)
+      : req.user.entreprise_id;
+
+    if (!entrepriseId) {
+      return res.status(400).json({ message: 'entreprise_id est requis' });
+    }
+
+    await quotasService.initQuotaAnnuel(entrepriseId, new Date().getFullYear());
     res.json({ message: 'Quotas annuels initialisés avec succès' });
   } catch (err) {
     next(err);
