@@ -27,6 +27,10 @@ async function setup2FA(req, res) {
     const user = await Utilisateur.findByPk(req.user.id);
     if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
+    if (user.totp_enabled) {
+      return res.status(409).json({ message: 'Le 2FA est déjà activé. Désactivez-le d\'abord avant de le reconfigurer.' });
+    }
+
     const secret = speakeasy.generateSecret({
       name: `TeamOff (${user.email})`,
       issuer: 'TeamOff',
@@ -178,6 +182,7 @@ async function verify2FA(req, res) {
         email: user.email, role: user.role,
         entreprise_id: user.entreprise_id,
         entreprise_nom: entreprise?.nom,
+        totp_enabled: user.totp_enabled ?? false,
       },
     });
   } catch (err) {
@@ -186,4 +191,33 @@ async function verify2FA(req, res) {
   }
 }
 
-module.exports = { setup2FA, enable2FA, disable2FA, verify2FA };
+async function adminDisable2FA(req, res) {
+  try {
+    const targetUser = await Utilisateur.findByPk(req.params.userId);
+    if (!targetUser) return res.status(404).json({ message: 'Utilisateur introuvable' });
+
+    if (!targetUser.totp_enabled) {
+      return res.status(400).json({ message: 'Le 2FA n\'est pas activé pour cet utilisateur' });
+    }
+
+    await targetUser.update({
+      totp_secret: null,
+      totp_enabled: false,
+      totp_used_token: null,
+      totp_used_at: null,
+    });
+
+    auditAuth.twoFactorDisabled(targetUser, req).catch((e) =>
+      logger.error('auditAuth.twoFactorDisabled (admin) error', { error: e.message })
+    );
+
+    logger.info(`[admin-2fa] Super admin ${req.user.id} a désactivé le 2FA de ${targetUser.email} (${targetUser.id})`);
+
+    res.json({ message: `2FA désactivé pour ${targetUser.prenom} ${targetUser.nom}` });
+  } catch (err) {
+    logger.error('adminDisable2FA error', { error: err.message });
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+}
+
+module.exports = { setup2FA, enable2FA, disable2FA, verify2FA, adminDisable2FA };

@@ -154,7 +154,8 @@ async function loginUtilisateur({ email, password, entreprise_id }, reqContext =
       email: user.email,
       role: user.role,
       entreprise_id: user.entreprise_id,
-      entreprise_nom: entreprise.nom
+      entreprise_nom: entreprise.nom,
+      totp_enabled: user.totp_enabled ?? false,
     }
   };
 }

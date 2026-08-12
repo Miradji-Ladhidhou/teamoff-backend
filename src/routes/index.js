@@ -85,7 +85,7 @@ router.get('/me', authJwt, async (req, res) => {
   try {
     const { Utilisateur, Entreprise } = require('../models');
     const user = await Utilisateur.findByPk(req.user.id, {
-      attributes: ['id', 'nom', 'prenom', 'email', 'role', 'entreprise_id', 'statut', 'service', 'date_embauche'],
+      attributes: ['id', 'nom', 'prenom', 'email', 'role', 'entreprise_id', 'statut', 'service', 'date_embauche', 'totp_enabled'],
     });
     if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
     const entreprise = await Entreprise.findByPk(user.entreprise_id, { attributes: ['id', 'nom'] });
@@ -100,6 +100,7 @@ router.get('/me', authJwt, async (req, res) => {
       statut: user.statut,
       service: user.service,
       date_embauche: user.date_embauche,
+      totp_enabled: user.totp_enabled ?? false,
     });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur' });
