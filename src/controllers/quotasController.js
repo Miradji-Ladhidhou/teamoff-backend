@@ -25,7 +25,7 @@ async function ensureUserAccess(req, utilisateurId) {
   const isSelf = req.user.id === utilisateur.id;
   const sameEntreprise = req.user.entreprise_id === utilisateur.entreprise_id;
 
-  if (req.user.role === 'employe' && !isSelf) {
+  if (['employe', 'apprenti'].includes(req.user.role) && !isSelf) {
     const err = new Error('Accès interdit');
     err.status = 403;
     throw err;

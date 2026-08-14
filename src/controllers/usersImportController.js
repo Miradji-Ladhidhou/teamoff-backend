@@ -7,7 +7,7 @@ const quotasService = require('../services/quotasService');
 const logger = require('../utils/logger');
 const { BCRYPT_COST } = require('../services/authService');
 
-const ALLOWED_ROLES = ['employe', 'manager', 'admin_entreprise'];
+const ALLOWED_ROLES = ['employe', 'apprenti', 'manager', 'admin_entreprise'];
 const MAX_ROWS = 300;
 
 function normalizeRow(raw) {

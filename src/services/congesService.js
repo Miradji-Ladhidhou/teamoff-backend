@@ -358,7 +358,7 @@ async function checkOverlapConge({ utilisateur_id, conge_type_id, date_debut, da
   const utilisateur = await Utilisateur.findByPk(utilisateurId);
   if (!utilisateur) throw new Error('Utilisateur introuvable');
 
-  if (!['employe', 'manager'].includes(reqUser?.role)) {
+  if (!['employe', 'apprenti', 'manager'].includes(reqUser?.role)) {
     throw new Error('Seuls les employés et managers peuvent poser un congé');
   }
 
@@ -548,7 +548,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     const utilisateur = await Utilisateur.findByPk(utilisateurId, { transaction: t });
     if (!utilisateur) throw new Error('Utilisateur introuvable');
 
-    if (!['employe', 'manager'].includes(reqUser?.role)) {
+    if (!['employe', 'apprenti', 'manager'].includes(reqUser?.role)) {
       throw new Error('Seuls les employés et managers peuvent poser un congé');
     }
 

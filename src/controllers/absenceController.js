@@ -6,7 +6,7 @@ const logger = require('../utils/logger');
 exports.createAbsence = async (req, res, next) => {
   try {
     const { type_absence, date_debut, date_fin, commentaire } = req.body;
-    const utilisateur_id = req.user.role === 'employe' ? req.user.id : (req.body.utilisateur_id || req.user.id);
+    const utilisateur_id = ['employe', 'apprenti'].includes(req.user.role) ? req.user.id : (req.body.utilisateur_id || req.user.id);
     const entreprise_id = req.user.entreprise_id;
 
     // Vérification IDOR : l'utilisateur cible doit appartenir à la même entreprise
@@ -47,7 +47,7 @@ exports.updateAbsence = async (req, res, next) => {
       return res.status(403).json({ message: 'Accès interdit' });
     }
     const canEdit = ['manager', 'admin_entreprise', 'super_admin'].includes(req.user.role)
-      || (req.user.role === 'employe' && absence.utilisateur_id === req.user.id);
+      || (['employe', 'apprenti'].includes(req.user.role) && absence.utilisateur_id === req.user.id);
     if (!canEdit) return res.status(403).json({ message: 'Accès interdit' });
 
     if (req.body.commentaire) absence.commentaire = req.body.commentaire;

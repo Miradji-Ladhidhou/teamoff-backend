@@ -48,7 +48,7 @@ async function getCalendrier(req, res, next) {
     }
 
     // Employé : ses propres congés (tous statuts) + congés des collègues non refusés
-    if (req.user.role === 'employe') {
+    if (['employe', 'apprenti'].includes(req.user.role)) {
       where[Op.or] = [
         { utilisateur_id: req.user.id },
         { statut: { [Op.notIn]: ['refuse_manager', 'refuse_final'] } },
@@ -89,7 +89,7 @@ async function getCalendrier(req, res, next) {
     });
 
     // Masquer les commentaires des collègues pour les employés
-    if (req.user.role === 'employe') {
+    if (['employe', 'apprenti'].includes(req.user.role)) {
       const result = conges.map(c => {
         if (c.utilisateur_id === req.user.id) return c;
         const plain = c.toJSON();

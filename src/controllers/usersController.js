@@ -117,12 +117,12 @@ async function createUser(req, res, next) {
   const user = req.user;
   const normalizedService = normalizeServiceName(service);
 
-  if (role === 'employe' && !normalizedService) {
+  if (['employe', 'apprenti'].includes(role) && !normalizedService) {
     return res.status(400).json({ message: 'Le service est obligatoire pour un employé' });
   }
 
-  if (user.role === 'admin_entreprise' && !['manager', 'employe'].includes(role)) {
-    return res.status(403).json({ message: 'Vous ne pouvez créer que manager ou employe' });
+  if (user.role === 'admin_entreprise' && !['manager', 'employe', 'apprenti'].includes(role)) {
+    return res.status(403).json({ message: 'Vous ne pouvez créer que manager, employe ou apprenti' });
   }
   if (user.role === 'admin_entreprise' && entreprise_id !== user.entreprise_id) {
     return res.status(403).json({ message: 'Vous ne pouvez créer des utilisateurs que dans votre entreprise' });
@@ -257,7 +257,7 @@ async function getUserById(req, res, next) {
     if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
     if (
-      ['admin_entreprise', 'manager', 'employe'].includes(req.user.role) &&
+      ['admin_entreprise', 'manager', 'employe', 'apprenti'].includes(req.user.role) &&
       req.user.role !== 'super_admin' &&
       utilisateur.entreprise_id !== req.user.entreprise_id
     ) {
@@ -303,7 +303,7 @@ async function updateUser(req, res, next) {
     const nextService          = typeof service !== 'undefined' ? service : utilisateur.service;
     const normalizedNextService = normalizeServiceName(nextService);
 
-    if (nextRole === 'employe' && !normalizedNextService) {
+    if (['employe', 'apprenti'].includes(nextRole) && !normalizedNextService) {
       return res.status(400).json({ message: 'Le service est obligatoire pour un employé' });
     }
 
@@ -427,8 +427,8 @@ async function changeUserRole(req, res, next) {
 
     const { role } = req.body;
 
-    if (req.user.role === 'admin_entreprise' && role && !['admin_entreprise', 'manager', 'employe'].includes(role)) {
-      return res.status(403).json({ message: "Vous ne pouvez attribuer que les rôles admin_entreprise, manager ou employe" });
+    if (req.user.role === 'admin_entreprise' && role && !['admin_entreprise', 'manager', 'employe', 'apprenti'].includes(role)) {
+      return res.status(403).json({ message: "Vous ne pouvez attribuer que les rôles admin_entreprise, manager, employe ou apprenti" });
     }
 
     const oldRole = utilisateur.role;

@@ -30,7 +30,7 @@ router.get(
 
 router.get(
   '/:id',
-  authorizeRole(['super_admin', 'admin_entreprise', 'manager', 'employe']),
+  authorizeRole(['super_admin', 'admin_entreprise', 'manager', 'employe', 'apprenti']),
   validateUUIDParam('id'),
   advancedRateLimiter('getData'),
   usersController.getUserById

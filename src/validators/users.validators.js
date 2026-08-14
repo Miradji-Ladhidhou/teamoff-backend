@@ -1,7 +1,7 @@
 'use strict';
 const { body } = require('express-validator');
 
-const VALID_ROLES = ['super_admin', 'admin_entreprise', 'manager', 'employe'];
+const VALID_ROLES = ['super_admin', 'admin_entreprise', 'manager', 'employe', 'apprenti'];
 const VALID_STATUTS = ['actif', 'inactif', 'en_attente'];
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
