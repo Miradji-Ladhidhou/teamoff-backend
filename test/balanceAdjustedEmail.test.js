@@ -25,18 +25,14 @@ beforeAll(async () => {
   ctx = await seed();
   annee = new Date().getFullYear();
 
-  // Créer un compteur initial connu à 10 jours pour l'employé
-  await CompteurConges.upsert({
-    entreprise_id: ctx.entreprise.id,
-    utilisateur_id: ctx.employe.id,
-    conge_type_id: ctx.congeType.id,
-    annee,
-    jours_acquis: 10,
-    jours_pris: 0,
-    jours_reportes: 0,
-    jours_reserves: 0,
-    jours_annules: 0,
+  // Initialiser le compteur à 10 jours (crée ou met à jour si seed l'a déjà créé)
+  const [compteur] = await CompteurConges.findOrCreate({
+    where: { entreprise_id: ctx.entreprise.id, utilisateur_id: ctx.employe.id, conge_type_id: ctx.congeType.id, annee },
+    defaults: { jours_acquis: 10, jours_pris: 0, jours_reportes: 0, jours_reserves: 0, jours_annules: 0 },
   });
+  if (compteur.jours_acquis !== 10) {
+    await compteur.update({ jours_acquis: 10, jours_pris: 0, jours_reserves: 0, jours_reportes: 0, jours_annules: 0 });
+  }
 });
 
 afterAll(async () => {

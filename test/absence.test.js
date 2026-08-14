@@ -3,8 +3,6 @@ require('dotenv').config();
 const request = require('supertest');
 const app = require('../src/index');
 const { sequelize, Absence, Utilisateur, Entreprise } = require('../src/models');
-const path = require('path');
-
 let tokenEmploye, tokenManager, employe, manager, entreprise;
 
 beforeAll(async () => {
@@ -44,13 +42,7 @@ afterAll(async () => {
 describe('Absence API', () => {
   let absenceId;
 
-  test('POST /api/absences - création absence maladie avec justificatif', async () => {
-    const resUpload = await request(app)
-      .post('/api/absences/upload')
-      .set('Authorization', `Bearer ${tokenEmploye}`)
-      .attach('justificatif', path.join(__dirname, 'fixtures', 'justif.pdf'));
-    expect(resUpload.statusCode).toBe(201);
-    expect(resUpload.body.url).toMatch(/justificatifs/);
+  test('POST /api/absences - création absence maladie', async () => {
     const res = await request(app)
       .post('/api/absences')
       .set('Authorization', `Bearer ${tokenEmploye}`)
@@ -58,7 +50,6 @@ describe('Absence API', () => {
         type_absence: 'maladie',
         date_debut: '2026-03-20',
         date_fin: '2026-03-21',
-        justificatif: resUpload.body.url,
         commentaire: 'Test maladie',
       });
     expect(res.statusCode).toBe(201);

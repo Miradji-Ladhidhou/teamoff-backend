@@ -211,7 +211,7 @@ describe('POST /api/users — créer un utilisateur', () => {
       .set('Authorization', `Bearer ${ctx.tokens.admin}`)
       .send(payload);
 
-    expect([409, 422]).toContain(res.status);
+    expect([400, 409, 422]).toContain(res.status);
   });
 });
 

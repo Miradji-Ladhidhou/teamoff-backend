@@ -15,6 +15,11 @@ let ctx;
 
 beforeAll(async () => {
   ctx = await seed();
+  // These tests assert that manager validation is final (counter updates immediately).
+  // That requires a single-step workflow where the manager is the last approver.
+  await ctx.entreprise.update({
+    politique_conges: { approval_workflow: 'manager_only' },
+  });
 });
 
 afterAll(async () => {
@@ -33,8 +38,8 @@ describe('Quota deduction — workflow manager', () => {
       .set('Authorization', `Bearer ${ctx.tokens.employe}`)
       .send({
         conge_type_id: ctx.congeType.id,
-        date_debut: '2027-03-10',
-        date_fin: '2027-03-14', // lun–ven = 5 jours ouvrés
+        date_debut: '2026-09-07',
+        date_fin: '2026-09-11', // lun–ven = 5 jours ouvrés
         commentaire_employe: 'Test quota',
       });
 
@@ -46,7 +51,7 @@ describe('Quota deduction — workflow manager', () => {
       where: {
         utilisateur_id: ctx.employe.id,
         conge_type_id: ctx.congeType.id,
-        annee: 2027,
+        annee: 2026,
       },
     });
   });
@@ -70,7 +75,7 @@ describe('Quota deduction — workflow manager', () => {
 
     // Validation par le manager
     const valRes = await request(app)
-      .post(`/api/conges/${congeId}/valider`)
+      .post(`/api/conges/${congeId}/validate`)
       .set('Authorization', `Bearer ${ctx.tokens.manager}`)
       .send({ commentaire: 'OK quota test' });
 
@@ -80,7 +85,7 @@ describe('Quota deduction — workflow manager', () => {
       where: {
         utilisateur_id: ctx.employe.id,
         conge_type_id: ctx.congeType.id,
-        annee: 2027,
+        annee: 2026,
       },
     });
 
@@ -107,7 +112,7 @@ describe('Quota deduction — workflow manager', () => {
     }
 
     const res = await request(app)
-      .post(`/api/conges/${congeId}/valider`)
+      .post(`/api/conges/${congeId}/validate`)
       .set('Authorization', `Bearer ${ctx.tokens.admin}`)
       .send({ commentaire: 'OK admin final' });
 
@@ -130,8 +135,8 @@ describe('Quota deduction — refus annule la réservation', () => {
       .set('Authorization', `Bearer ${ctx.tokens.employe}`)
       .send({
         conge_type_id: ctx.congeType.id,
-        date_debut: '2027-04-07',
-        date_fin: '2027-04-11',
+        date_debut: '2026-09-21',
+        date_fin: '2026-09-25',
       });
 
     if (res.status !== 201) return;
@@ -141,7 +146,7 @@ describe('Quota deduction — refus annule la réservation', () => {
       where: {
         utilisateur_id: ctx.employe.id,
         conge_type_id: ctx.congeType.id,
-        annee: 2027,
+        annee: 2026,
       },
     });
   });
@@ -152,7 +157,7 @@ describe('Quota deduction — refus annule la réservation', () => {
     const reservesBefore = Number(compteurBefore.jours_reserves);
 
     const res = await request(app)
-      .post(`/api/conges/${congeId}/refuser`)
+      .post(`/api/conges/${congeId}/reject`)
       .set('Authorization', `Bearer ${ctx.tokens.manager}`)
       .send({ commentaire: 'Test refus quota' });
 
@@ -162,7 +167,7 @@ describe('Quota deduction — refus annule la réservation', () => {
       where: {
         utilisateur_id: ctx.employe.id,
         conge_type_id: ctx.congeType.id,
-        annee: 2027,
+        annee: 2026,
       },
     });
 

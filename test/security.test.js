@@ -202,8 +202,8 @@ describe('Injection SQL — l\'ORM doit paramétrer toutes les requêtes', () =>
         password: 'anything',
       });
 
-    // Doit retourner 400 ou 401 — jamais 500
-    expect([400, 401]).toContain(res.status);
+    // Doit retourner 400, 401 ou 422 (email invalide) — jamais 500
+    expect([400, 401, 422]).toContain(res.status);
     expect(res.body).not.toHaveProperty('stack');
     expect(JSON.stringify(res.body)).not.toMatch(/syntax error|pg error|sequelize/i);
   });
@@ -227,6 +227,7 @@ describe('Injection SQL — l\'ORM doit paramétrer toutes les requêtes', () =>
         nom: "Test",
         email: emailSafe,
         role: 'employe',
+        service: 'Dev',
         entreprise_id: ctx.entreprise.id,
       });
 

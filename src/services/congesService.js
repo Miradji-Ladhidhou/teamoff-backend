@@ -1197,6 +1197,30 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         }
       }
 
+      // Vérification de la limite globale (max_employees_on_leave.global)
+      const globalLimit = Number(leaveRules.max_employees_on_leave?.global);
+      if (Number.isFinite(globalLimit) && globalLimit > 0) {
+        const globalRows = await Conge.findAll({
+          where: {
+            entreprise_id: conge.entreprise_id,
+            statut: { [Op.in]: ['valide_manager', 'valide_final'] },
+            date_debut: { [Op.lte]: conge.date_fin },
+            date_fin:   { [Op.gte]: conge.date_debut },
+            id: { [Op.ne]: conge.id },
+          },
+          attributes: ['utilisateur_id'],
+          transaction: t,
+        });
+        const globalApproved = new Set(globalRows.map(r => r.utilisateur_id)).size;
+        if ((globalApproved + 1) > globalLimit && leaveRules.overlap_behavior !== 'warning') {
+          const err = new Error(
+            `Impossible de valider : Capacité globale (${globalLimit}) dépassée sur la période ${formatDateFR(conge.date_debut)} – ${formatDateFR(conge.date_fin)}`
+          );
+          err.statusCode = 409;
+          throw err;
+        }
+      }
+
       // Re-vérification chevauchement même-employé (Fix #29)
       // Cherche un congé déjà valide_final pour le même utilisateur sur la même période.
       // On compare uniquement valide_final car c'est le statut définitif ; un autre
@@ -1612,7 +1636,7 @@ async function getCongeById(id, user) {
       }
     ]
   });
-  if (!conge) throw new Error('Congé introuvable');
+  if (!conge) { const err = new Error('Congé introuvable'); err.status = 404; throw err; }
   if (user.role !== 'super_admin' && user.entreprise_id !== conge.entreprise_id)
     throw new Error('Accès interdit');
   if (user.role === 'employe' && user.id !== conge.utilisateur_id)

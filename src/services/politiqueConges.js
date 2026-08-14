@@ -91,6 +91,7 @@ function normalizeLeavePolicy(rawPolicy = {}) {
   return {
     overlap_behavior: overlapBehavior,
     max_employees_on_leave: {
+      global: rawPolicy?.max_employees_on_leave?.global,
       by_service: rawPolicy?.max_employees_on_leave?.by_service || {},
     },
     blocked_days: normalizeBlockedDays(rawPolicy?.blocked_days),

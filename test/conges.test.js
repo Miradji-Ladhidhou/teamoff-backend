@@ -21,6 +21,13 @@ const { Conge } = require('../src/models');
 let ctx;
 let createdCongeIds = [];
 
+// Dates dynamiques pour éviter les échecs liés au délai de préavis
+const addDays = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+const D_DEBUT = addDays(30);   // +30 j : employe valide
+const D_FIN   = addDays(36);   // +36 j
+const D_DEBUT_422 = addDays(40); // date_debut pour test 422 (fin antérieure)
+const D_FIN_422   = addDays(35); // date_fin < date_debut → 422
+
 beforeAll(async () => {
   ctx = await seed();
 });
@@ -41,8 +48,8 @@ describe('POST /api/conges/demande — créer une demande de congé', () => {
       .set('Authorization', `Bearer ${ctx.tokens.employe}`)
       .send({
         conge_type_id: ctx.congeType.id,
-        date_debut: '2026-08-01',
-        date_fin: '2026-08-07',
+        date_debut: D_DEBUT,
+        date_fin: D_FIN,
         commentaire_employe: 'Vacances été',
       });
 
@@ -73,8 +80,8 @@ describe('POST /api/conges/demande — créer une demande de congé', () => {
       .set('Authorization', `Bearer ${ctx.tokens.employe}`)
       .send({
         conge_type_id: ctx.congeType.id,
-        date_debut: '2026-08-10',
-        date_fin: '2026-08-05', // antérieure
+        date_debut: D_DEBUT_422,
+        date_fin: D_FIN_422, // antérieure à date_debut
       });
 
     expect([400, 422]).toContain(res.status);
@@ -86,8 +93,8 @@ describe('POST /api/conges/demande — créer une demande de congé', () => {
       .post('/api/conges/demande')
       .set('Authorization', `Bearer ${ctx.tokens.employe}`)
       .send({
-        date_debut: '2026-08-01',
-        date_fin: '2026-08-07',
+        date_debut: D_DEBUT,
+        date_fin: D_FIN,
       });
 
     expect([400, 422]).toContain(res.status);
@@ -99,8 +106,8 @@ describe('POST /api/conges/demande — créer une demande de congé', () => {
       .set('Authorization', `Bearer ${ctx.tokens.employe}`)
       .send({
         conge_type_id: 'not-a-uuid',
-        date_debut: '2026-08-01',
-        date_fin: '2026-08-07',
+        date_debut: D_DEBUT,
+        date_fin: D_FIN,
       });
 
     expect([400, 422]).toContain(res.status);
@@ -113,8 +120,8 @@ describe('POST /api/conges/demande — créer une demande de congé', () => {
       .set('Authorization', `Bearer ${ctx.tokens.employe}`)
       .send({
         conge_type_id: fakeTypeId,
-        date_debut: '2026-08-01',
-        date_fin: '2026-08-07',
+        date_debut: D_DEBUT,
+        date_fin: D_FIN,
       });
 
     expect([400, 404, 422]).toContain(res.status);
@@ -125,8 +132,8 @@ describe('POST /api/conges/demande — créer une demande de congé', () => {
       .post('/api/conges/demande')
       .send({
         conge_type_id: ctx.congeType.id,
-        date_debut: '2026-08-01',
-        date_fin: '2026-08-07',
+        date_debut: D_DEBUT,
+        date_fin: D_FIN,
       });
 
     expect(res.status).toBe(401);
@@ -255,7 +262,7 @@ describe('POST /api/conges/:id/valider — workflow de validation', () => {
   it('employe → 403 ne peut pas valider', async () => {
     if (!congeId) return;
     const res = await request(app)
-      .post(`/api/conges/${congeId}/valider`)
+      .post(`/api/conges/${congeId}/validate`)
       .set('Authorization', `Bearer ${ctx.tokens.employe}`)
       .send({ commentaire: 'auto-validation' });
 
@@ -265,7 +272,7 @@ describe('POST /api/conges/:id/valider — workflow de validation', () => {
   it('manager → 200 valide un congé en_attente_manager', async () => {
     if (!congeId) return;
     const res = await request(app)
-      .post(`/api/conges/${congeId}/valider`)
+      .post(`/api/conges/${congeId}/validate`)
       .set('Authorization', `Bearer ${ctx.tokens.manager}`)
       .send({ commentaire: 'OK manager' });
 
@@ -278,7 +285,7 @@ describe('POST /api/conges/:id/valider — workflow de validation', () => {
   it('admin → peut valider en validation finale', async () => {
     if (!congeId) return;
     const res = await request(app)
-      .post(`/api/conges/${congeId}/valider`)
+      .post(`/api/conges/${congeId}/validate`)
       .set('Authorization', `Bearer ${ctx.tokens.admin}`)
       .send({ commentaire: 'OK admin' });
 
@@ -310,7 +317,7 @@ describe('POST /api/conges/:id/refuser — refus', () => {
   it('manager → 200 peut refuser un congé en attente', async () => {
     if (!congeId) return;
     const res = await request(app)
-      .post(`/api/conges/${congeId}/refuser`)
+      .post(`/api/conges/${congeId}/reject`)
       .set('Authorization', `Bearer ${ctx.tokens.manager}`)
       .send({ commentaire: 'Indisponibilité équipe' });
 
@@ -323,7 +330,7 @@ describe('POST /api/conges/:id/refuser — refus', () => {
   it('employe → 403 ne peut pas refuser', async () => {
     if (!congeId) return;
     const res = await request(app)
-      .post(`/api/conges/${congeId}/refuser`)
+      .post(`/api/conges/${congeId}/reject`)
       .set('Authorization', `Bearer ${ctx.tokens.employe}`)
       .send({ commentaire: 'tentative' });
 

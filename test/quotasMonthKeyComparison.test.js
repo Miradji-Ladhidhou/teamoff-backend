@@ -62,10 +62,11 @@ describe('Fix #65 B — compteur non-paddé "2026-9" → crédit octobre appliqu
   let compteur;
 
   beforeAll(async () => {
-    // Pré-condition : créer un compteur dont le dernier_credit_mensuel est en
-    // ancien format non-paddé, comme si les données venaient d'avant l'introduction
-    // du padStart dans getMonthKey.
-    // On insère directement via SQL pour contourner getMonthKey.
+    // Pré-condition : créer un compteur avec dernier_credit_mensuel en ancien format non-paddé.
+    // Supprimer d'abord le compteur créé par seed (même clé composite) pour éviter le conflit.
+    await CompteurConges.destroy({
+      where: { utilisateur_id: ctx.employe.id, conge_type_id: ctx.congeType.id, annee: 2026, entreprise_id: ctx.entreprise.id },
+    });
     compteur = await CompteurConges.create({
       entreprise_id:          ctx.entreprise.id,
       utilisateur_id:         ctx.employe.id,

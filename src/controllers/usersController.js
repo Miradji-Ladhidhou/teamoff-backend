@@ -61,6 +61,7 @@ async function serviceExistsInEntreprise(entrepriseId, serviceName) {
   if (!entreprise) return false;
 
   const policies = entreprise.politique_conges?.service_policies || {};
+  if (Object.keys(policies).length === 0) return true;
   return Object.keys(policies).some((name) => name.toLowerCase() === normalizedService.toLowerCase());
 }
 

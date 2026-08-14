@@ -87,7 +87,22 @@ async function seed() {
     demi_journee_autorisee: true,
   });
 
-  // 4. Tokens
+  // 4. CompteurConges pour employe et manager (année courante, solde suffisant)
+  const annee = new Date().getFullYear();
+  await CompteurConges.bulkCreate([
+    {
+      entreprise_id: entreprise.id, utilisateur_id: employe.id,
+      conge_type_id: congeType.id, annee,
+      jours_acquis: 25, jours_pris: 0, jours_reserves: 0,
+    },
+    {
+      entreprise_id: entreprise.id, utilisateur_id: manager.id,
+      conge_type_id: congeType.id, annee,
+      jours_acquis: 25, jours_pris: 0, jours_reserves: 0,
+    },
+  ]);
+
+  // 5. Tokens
   const tokens = {
     superAdmin: generateToken(superAdmin),
     admin:      generateToken(admin),
