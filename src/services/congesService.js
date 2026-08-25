@@ -1483,7 +1483,7 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
 // ----------------------------
 async function getConges(user, query = {}) {
   const where = {};
-  if (user.role === 'employe') {
+  if (user.role === 'employe' || user.role === 'apprenti') {
     where.utilisateur_id = user.id;
   } else if (user.role === 'manager' || user.role === 'admin_entreprise') {
     where.entreprise_id = user.entreprise_id;
@@ -1639,7 +1639,7 @@ async function getCongeById(id, user) {
   if (!conge) { const err = new Error('Congé introuvable'); err.status = 404; throw err; }
   if (user.role !== 'super_admin' && user.entreprise_id !== conge.entreprise_id)
     throw new Error('Accès interdit');
-  if (user.role === 'employe' && user.id !== conge.utilisateur_id)
+  if ((user.role === 'employe' || user.role === 'apprenti') && user.id !== conge.utilisateur_id)
     throw new Error('Accès interdit');
 
   const annee = dayjs(conge.date_debut).year();
@@ -1993,8 +1993,8 @@ async function updateConge(id, data, user, req = null) {
       // Avant ce fix, Math.max(0, ...) masquait silencieusement tout déficit.
       if (sameCounter) {
         const netChange = safeNumber(newDays) - safeNumber(oldDays);
-        if (netChange > 0 && safeNumber(oldCounter.jours_acquis) < netChange) {
-          const deficit = (netChange - safeNumber(oldCounter.jours_acquis)).toFixed(2);
+        if (netChange > 0 && (safeNumber(oldCounter.jours_acquis) - safeNumber(oldCounter.jours_reserves)) < netChange) {
+          const deficit = (netChange - (safeNumber(oldCounter.jours_acquis) - safeNumber(oldCounter.jours_reserves))).toFixed(2);
           const err = new Error(`Solde insuffisant pour cette modification : il manque ${deficit} jour(s).`);
           err.statusCode = 409;
           throw err;
@@ -2003,6 +2003,18 @@ async function updateConge(id, data, user, req = null) {
         oldCounter.jours_pris = Math.max(0,
           safeNumber(oldCounter.jours_pris) - safeNumber(oldDays) + safeNumber(newDays));
         await oldCounter.save({ transaction: t });
+        await logMouvement({
+          entreprise_id: conge.entreprise_id,
+          utilisateur_id: conge.utilisateur_id,
+          conge_type_id: conge.conge_type_id,
+          annee: oldYear,
+          type: 'ajustement_admin',
+          quantite: safeNumber(oldDays) - safeNumber(newDays),
+          solde_apres: safeNumber(oldCounter.jours_acquis) - safeNumber(oldCounter.jours_reserves),
+          source_id: conge.id,
+          description: descriptionConge('Congé modifié (admin)', nextDateDebut, nextDateFin),
+          transaction: t,
+        });
       } else {
         if (safeNumber(nextCounter.jours_acquis) < safeNumber(newDays)) {
           const deficit = (safeNumber(newDays) - safeNumber(nextCounter.jours_acquis)).toFixed(2);
@@ -2016,6 +2028,30 @@ async function updateConge(id, data, user, req = null) {
         nextCounter.jours_pris = safeNumber(nextCounter.jours_pris) + safeNumber(newDays);
         await oldCounter.save({ transaction: t });
         await nextCounter.save({ transaction: t });
+        await logMouvement({
+          entreprise_id: conge.entreprise_id,
+          utilisateur_id: conge.utilisateur_id,
+          conge_type_id: conge.conge_type_id,
+          annee: oldYear,
+          type: 'ajustement_admin',
+          quantite: safeNumber(oldDays),
+          solde_apres: safeNumber(oldCounter.jours_acquis) - safeNumber(oldCounter.jours_reserves),
+          source_id: conge.id,
+          description: `Congé modifié (admin) · restitution sur ancien type`,
+          transaction: t,
+        });
+        await logMouvement({
+          entreprise_id: conge.entreprise_id,
+          utilisateur_id: conge.utilisateur_id,
+          conge_type_id: nextCongeTypeId,
+          annee: nextYear,
+          type: 'ajustement_admin',
+          quantite: -safeNumber(newDays),
+          solde_apres: safeNumber(nextCounter.jours_acquis) - safeNumber(nextCounter.jours_reserves),
+          source_id: conge.id,
+          description: descriptionConge('Congé modifié (admin) · nouveau type', nextDateDebut, nextDateFin),
+          transaction: t,
+        });
       }
     }
 
@@ -2290,6 +2326,7 @@ async function deleteConge(id, user, options = {}) {
     } else {
       if (isReserved || isPending || isManagerValidated) {
         compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
+        compteur.jours_annules = safeNumber(compteur.jours_annules) + safeNumber(joursConge);
       } else {
         compteur.jours_acquis = safeNumber(compteur.jours_acquis) + safeNumber(joursConge);
         compteur.jours_pris = Math.max(0, safeNumber(compteur.jours_pris) - safeNumber(joursConge));
@@ -2624,7 +2661,7 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
       // contre le budget restant (pas contre le total reserves), on obtient le bon
       // comportement partiel : la 1ère réservation peut s'activer même si le solde
       // ne couvre pas toutes les réservations en attente.
-      let budget = safeNumber(compteur.jours_acquis);
+      let budget = Math.max(0, safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves));
 
       for (const conge of yearReservations) {
         const jours = safeNumber(conge.jours_calcules);
@@ -2657,6 +2694,18 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
           compteur.jours_acquis   = Math.max(0, safeNumber(compteur.jours_acquis)   - jours);
           compteur.jours_pris     = safeNumber(compteur.jours_pris) + jours;
           await compteur.save({ transaction: t });
+          await logMouvement({
+            entreprise_id: conge.entreprise_id,
+            utilisateur_id: conge.utilisateur_id,
+            conge_type_id: compteur.conge_type_id,
+            annee: Number(annee),
+            type: 'activation_reservation',
+            quantite: -jours,
+            solde_apres: safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves),
+            source_id: conge.id,
+            description: descriptionConge('Réservation N+1 activée', conge.date_debut, conge.date_fin),
+            transaction: t,
+          });
         } else {
           newStatut = 'en_attente_manager';
           // Les jours restent dans reserves — aucun mouvement de compteur
