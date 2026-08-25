@@ -115,7 +115,7 @@ async function getAttestationData(req, res, next) {
       include: [
         { model: Utilisateur, as: 'utilisateur', attributes: ['id', 'prenom', 'nom', 'email', 'service', 'date_embauche'] },
         { model: CongeType,   as: 'conge_type',  attributes: ['libelle'] },
-        { model: Entreprise,  as: 'entreprise',  attributes: ['nom', 'politique_conges'] },
+        { model: Entreprise,  as: 'entreprise',  attributes: ['nom', 'politique_conges', 'parametres'] },
       ],
     });
 
@@ -162,6 +162,7 @@ async function getAttestationData(req, res, next) {
       genere_le: dayjs().format('DD/MM/YYYY'),
       entreprise: {
         nom: conge.entreprise?.nom || '',
+        logo: conge.entreprise?.parametres?.logo || null,
       },
       employe: {
         nom: conge.utilisateur?.nom || '',

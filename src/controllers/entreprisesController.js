@@ -412,6 +412,13 @@ async function updateParametres(req, res, next) {
     const safeParametres = {};
     if (parametres.timezone !== undefined) safeParametres.timezone = parametres.timezone;
 
+    if (parametres.logo !== undefined) {
+      if (typeof parametres.logo !== 'string') return res.status(400).json({ message: 'Logo invalide' });
+      if (parametres.logo !== '' && !parametres.logo.startsWith('data:image/')) return res.status(400).json({ message: 'Format logo invalide (PNG, JPG, SVG attendu)' });
+      if (parametres.logo.length > 400000) return res.status(400).json({ message: 'Logo trop volumineux (max 300 Ko)' });
+      safeParametres.logo = parametres.logo;
+    }
+
     const oldParametres = { ...(entreprise.parametres || {}) };
     entreprise.parametres = { ...oldParametres, ...safeParametres };
     await entreprise.save({ userId: req.user.id });
