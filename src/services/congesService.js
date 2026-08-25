@@ -1721,11 +1721,13 @@ async function updateConge(id, data, user, req = null) {
 
     const isPending = conge.statut === 'en_attente_manager';
     const isFinalValidated = conge.statut === 'valide_final';
+    const isManagerValidated = conge.statut === 'valide_manager';
+    const isAdminRole = ['admin_entreprise', 'super_admin'].includes(user?.role);
     const previousDateDebut = conge.date_debut;
     const previousDateFin = conge.date_fin;
     const previousCommentaireEmploye = conge.commentaire_employe || '';
 
-    if (!isPending && !isFinalValidated) {
+    if (!isPending && !isFinalValidated && !(isManagerValidated && isAdminRole)) {
       throw new Error('Modification impossible');
     }
 
@@ -1956,7 +1958,7 @@ async function updateConge(id, data, user, req = null) {
       }
     }
 
-    if (isPending) {
+    if (isPending || isManagerValidated) {
       const nextCounterAvailable =
         safeNumber(nextCounter.jours_acquis)
         - safeNumber(nextCounter.jours_reserves);
@@ -1970,7 +1972,7 @@ async function updateConge(id, data, user, req = null) {
       }
     }
 
-    if (isPending) {
+    if (isPending || isManagerValidated) {
       if (sameCounter) {
         const rawReserves = safeNumber(oldCounter.jours_reserves) - safeNumber(oldDays);
         if (rawReserves < 0) {

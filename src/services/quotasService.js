@@ -62,14 +62,27 @@ function computeProratedAcquiredDays({ annualQuota }) {
   return Number(Math.max(0, quota).toFixed(2));
 }
 
-function getMonthlyAccrualForType({ leaveRules, congeType }) {
+function getMonthlyAccrualForType({ leaveRules, congeType, mois = null }) {
   const configured = toNumber(leaveRules?.accrual_by_type?.[congeType.id], NaN);
   if (Number.isFinite(configured) && configured >= 0) {
     return Number(configured.toFixed(2));
   }
 
-  const fallback = toNumber(congeType?.quota_annuel, 0) / 12;
-  return Number(Math.max(0, fallback).toFixed(2));
+  const annualQuota = toNumber(congeType?.quota_annuel, null);
+  if (annualQuota === null || annualQuota === undefined || !Number.isFinite(Number(congeType?.quota_annuel))) {
+    logger.warn(`[quotas] quota_annuel non défini sur le type "${congeType?.libelle}" (id=${congeType?.id}) — crédit mensuel = 0. Configurez accrual_by_type ou quota_annuel.`);
+    return 0;
+  }
+
+  const monthly = Number(Math.max(0, annualQuota / 12).toFixed(2));
+
+  // Correction décembre : ajustement pour atteindre exactement le quota annuel
+  if (mois === 12) {
+    const remainder = Number(Math.max(0, annualQuota - monthly * 11).toFixed(2));
+    return remainder;
+  }
+
+  return monthly;
 }
 
 async function getEntrepriseLeaveRules(entrepriseId, transaction = null) {
@@ -317,7 +330,7 @@ async function ajouterAcquisitionMensuelle(entrepriseId, annee, mois, options = 
           continue;
         }
 
-        const monthlyCredit = getMonthlyAccrualForType({ leaveRules, congeType: type });
+        const monthlyCredit = getMonthlyAccrualForType({ leaveRules, congeType: type, mois: targetMonth });
 
         if (!compteur && apply) {
           compteur = await ensureCounter({

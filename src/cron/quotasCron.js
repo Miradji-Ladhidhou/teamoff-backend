@@ -85,12 +85,21 @@ function initQuotasCron() {
     }
   });
 
-  // Chaque 1er du mois à 00:05 (décalé pour éviter le chevauchement avec runAnnualInit le 1er janvier)
-  cron.schedule('5 0 1 * *', async () => {
+  // Chaque 1er du mois (fév-déc) à 00:05
+  cron.schedule('5 0 1 2-12 *', async () => {
     try {
       await runMonthlyAccrual();
     } catch (error) {
       logger.error('[quotas-cron] Erreur crédit mensuel:', error);
+    }
+  });
+
+  // 1er janvier à 02:05 — après runAnnualInit (00:00), délai de 2h pour les grandes instances
+  cron.schedule('5 2 1 1 *', async () => {
+    try {
+      await runMonthlyAccrual();
+    } catch (error) {
+      logger.error('[quotas-cron] Erreur crédit mensuel (janvier):', error);
     }
   });
 
