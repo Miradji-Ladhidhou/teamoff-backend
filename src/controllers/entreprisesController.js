@@ -367,8 +367,9 @@ async function updatePolitiqueConges(req, res, next) {
     // service_policies et max_employees_on_leave.by_service sont gérés via /services.
     const POLITIQUE_ALLOWED_KEYS = new Set([
       'overlap_behavior', 'approval_workflow', 'max_consecutive_days', 'min_notice_days',
-      'blocked_days', 'max_employees_on_leave', 'allow_employee_cancel_own_pending',
-      'allow_manager_cancel_own_pending',
+      'minimum_notice_days', 'blocked_days', 'max_employees_on_leave',
+      'allow_employee_cancel_own_pending', 'allow_manager_cancel_own_pending',
+      'manager_can_view_employee_history', 'manager_can_export_team_leaves',
     ]);
     const incomingPolitique = req.body.politique_conges || {};
     const safePolitique = {};
