@@ -364,17 +364,26 @@ async function updatePolitiqueConges(req, res, next) {
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
 
     // M-2: whitelist des clés acceptées — évite l'injection de clés fantômes dans le JSONB.
-    // service_policies et max_employees_on_leave.by_service sont gérés via /services.
     const POLITIQUE_ALLOWED_KEYS = new Set([
       'overlap_behavior', 'approval_workflow', 'max_consecutive_days', 'min_notice_days',
       'minimum_notice_days', 'blocked_days', 'max_employees_on_leave',
       'allow_employee_cancel_own_pending', 'allow_manager_cancel_own_pending',
       'manager_can_view_employee_history', 'manager_can_export_team_leaves',
+      'service_policies',
     ]);
     const incomingPolitique = req.body.politique_conges || {};
     const safePolitique = {};
     for (const key of Object.keys(incomingPolitique)) {
       if (POLITIQUE_ALLOWED_KEYS.has(key)) safePolitique[key] = incomingPolitique[key];
+    }
+    // Sanitiser chaque politique de service avec la même logique que les routes /services.
+    if (safePolitique.service_policies && typeof safePolitique.service_policies === 'object') {
+      const sanitized = {};
+      for (const [name, sp] of Object.entries(safePolitique.service_policies)) {
+        const safeName = String(name).trim().slice(0, SERVICE_NAME_MAX);
+        if (safeName) sanitized[safeName] = normalizeServicePolicy(sp || {});
+      }
+      safePolitique.service_policies = sanitized;
     }
 
     const oldPolitique = { ...entreprise.politique_conges };
