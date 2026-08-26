@@ -692,8 +692,8 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       statutConge = 'valide_manager';
       compteur.jours_reserves = safeNumber(compteur.jours_reserves) + safeNumber(jours);
     } else if (approvalWorkflow === 'admin_only') {
-      // admin_only : pas de validation manager, attend directement l'admin
-      statutConge = 'valide_manager';
+      // admin_only : pas d'étape manager, attend directement l'admin
+      statutConge = 'en_attente_manager';
       compteur.jours_reserves = safeNumber(compteur.jours_reserves) + safeNumber(jours);
     } else {
       statutConge = 'en_attente_manager';
@@ -924,6 +924,11 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
 
     const utilisateur = await Utilisateur.findByPk(conge.utilisateur_id, { transaction: t });
     const leaveRules = getEffectiveLeaveRules(baseLeaveRules, utilisateur?.service || null);
+    // Figer le workflow au moment de la création : évite qu'un changement de politique
+    // en cours de route modifie les règles de validation d'un congé déjà posé.
+    if (conge.effective_approval_workflow) {
+      leaveRules.approval_workflow = conge.effective_approval_workflow;
+    }
 
     // Résoudre le rôle effectif pour les délégués
     let effectiveRole = reqUser.role;
@@ -1365,9 +1370,13 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
 
     const utilisateur = await Utilisateur.findByPk(conge.utilisateur_id, { transaction: t });
     const leaveRules = getEffectiveLeaveRules(baseLeaveRules, utilisateur?.service || null);
+    if (conge.effective_approval_workflow) {
+      leaveRules.approval_workflow = conge.effective_approval_workflow;
+    }
     const ancienStatut = conge.statut;
 
     if (reqUser.role === 'manager') {
+      if (reqUser.id === conge.utilisateur_id) throw Object.assign(new Error('Un manager ne peut pas refuser son propre congé'), { statusCode: 403 });
       if (leaveRules.approval_workflow === 'admin_only') {
         const err = new Error('Workflow admin_only: refus par administrateur uniquement');
         err.statusCode = 403;
