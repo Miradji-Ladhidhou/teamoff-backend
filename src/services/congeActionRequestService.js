@@ -57,8 +57,20 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
   if (!commentaire?.trim()) {
     const err = new Error('Le motif est obligatoire'); err.statusCode = 400; throw err;
   }
+  if (commentaire.trim().length > 5000) {
+    const err = new Error('Le commentaire ne peut pas dépasser 5000 caractères'); err.statusCode = 400; throw err;
+  }
   if (type === 'modify' && (!date_debut_demandee || !date_fin_demandee)) {
     const err = new Error('Les nouvelles dates sont obligatoires pour une modification'); err.statusCode = 400; throw err;
+  }
+  const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  if (type === 'modify') {
+    if (!ISO_DATE_RE.test(date_debut_demandee) || !ISO_DATE_RE.test(date_fin_demandee)) {
+      const err = new Error('Format de date invalide (YYYY-MM-DD attendu)'); err.statusCode = 400; throw err;
+    }
+    if (date_fin_demandee < date_debut_demandee) {
+      const err = new Error('La date de fin ne peut pas être antérieure à la date de début'); err.statusCode = 400; throw err;
+    }
   }
 
   const conge = await Conge.findByPk(congeId, {

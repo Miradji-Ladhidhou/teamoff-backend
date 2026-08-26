@@ -321,7 +321,7 @@ async function sendAttestationEmail(req, res, next) {
       if (conge.commentaire_manager) parts.push({ label: 'Manager', text: conge.commentaire_manager });
       if (conge.commentaire_admin)   parts.push({ label: 'Administration', text: conge.commentaire_admin });
       if (parts.length === 0) return `<div style="font-size:12px;color:#a0aec0;font-family:Arial,sans-serif;font-style:italic;">Aucun commentaire.</div>`;
-      return parts.map(c => `<div style="margin-bottom:5px;"><div style="font-size:10px;color:#a16207;font-family:Arial,sans-serif;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:1px;">${c.label}</div><div style="font-size:12px;color:#3b2e00;font-family:Arial,sans-serif;font-style:italic;line-height:1.35;">« ${c.text} »</div></div>`).join('');
+      return parts.map(c => `<div style="margin-bottom:5px;"><div style="font-size:10px;color:#a16207;font-family:Arial,sans-serif;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:1px;">${esc(c.label)}</div><div style="font-size:12px;color:#3b2e00;font-family:Arial,sans-serif;font-style:italic;line-height:1.35;">« ${esc(c.text)} »</div></div>`).join('');
     })();
 
     const nom_complet = `${employe?.prenom || ''} ${employe?.nom || ''}`.trim();
