@@ -78,6 +78,8 @@ const updateCongeRules = [
  * Vérification de chevauchement (POST /conges/check-overlap)
  */
 const checkOverlapRules = [
+  body('conge_type_id')
+    .isUUID().withMessage('conge_type_id doit être un UUID'),
   dateField('date_debut'),
   dateField('date_fin'),
 ];

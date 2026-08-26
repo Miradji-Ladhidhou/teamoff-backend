@@ -897,7 +897,11 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
 async function validerConge(congeId, reqUser, commentaire = null, req = null) {
   const emailQueue = [];
   const conge = await sequelize.transaction(async (t) => {
-    const conge = await Conge.findByPk(congeId, { transaction: t, lock: t.LOCK.UPDATE });
+    const conge = await Conge.findByPk(congeId, {
+      include: [{ model: CongeType, as: 'conge_type' }],
+      transaction: t,
+      lock: { level: t.LOCK.UPDATE, of: Conge },
+    });
     if (!conge) throw new Error('Congé introuvable');
     if (reqUser.role !== 'super_admin' && reqUser.entreprise_id !== conge.entreprise_id) throw new Error('Accès interdit');
 
@@ -1504,9 +1508,21 @@ async function getConges(user, query = {}) {
   }
 
   // Filtres optionnels
-  if (query.statut) where.statut = query.statut;
-  if (query.conge_type_id) where.conge_type_id = query.conge_type_id;
-  if (query.utilisateur_id && user.role !== 'employe') where.utilisateur_id = query.utilisateur_id;
+  const STATUTS_VALIDES = ['reserve','en_attente_manager','valide_manager','valide_final','refuse_manager','refuse_final'];
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (query.statut) {
+    if (!STATUTS_VALIDES.includes(query.statut)) { const e = new Error('Statut invalide'); e.statusCode = 400; throw e; }
+    where.statut = query.statut;
+  }
+  if (query.conge_type_id) {
+    if (!UUID_RE.test(query.conge_type_id)) { const e = new Error('conge_type_id invalide'); e.statusCode = 400; throw e; }
+    where.conge_type_id = query.conge_type_id;
+  }
+  const canFilterUser = !['employe', 'apprenti'].includes(user.role);
+  if (query.utilisateur_id && canFilterUser) {
+    if (!UUID_RE.test(query.utilisateur_id)) { const e = new Error('utilisateur_id invalide'); e.statusCode = 400; throw e; }
+    where.utilisateur_id = query.utilisateur_id;
+  }
   if (query.annee) {
     const yr = parseInt(query.annee, 10);
     if (Number.isFinite(yr)) {
@@ -1745,7 +1761,7 @@ async function updateConge(id, data, user, req = null) {
       throw new Error('Modification impossible');
     }
 
-    if (isFinalValidated) {
+    if (isFinalValidated || (isManagerValidated && isAdminRole)) {
       const policyValidation = await LeavePolicyService.validateModification({
         entrepriseId: conge.entreprise_id,
         congeStatus: conge.statut,
@@ -1775,21 +1791,25 @@ async function updateConge(id, data, user, req = null) {
       'debut_demi_journee',
       'fin_demi_journee',
       'conge_type_id',
-      'commentaire_employe'
+      'commentaire_employe',
+      'commentaire_manager',
+      'commentaire_admin',
     ];
 
     const updates = {};
     for (const field of allowedFields) {
       if (field in data) {
-        if (field === 'commentaire_employe' && typeof data[field] === 'string') {
+        if (['commentaire_employe', 'commentaire_manager', 'commentaire_admin'].includes(field) && typeof data[field] === 'string') {
           const sanitized = sanitizeHtml(data[field], { allowedTags: [], allowedAttributes: {} });
-          if (['admin_entreprise', 'super_admin'].includes(user?.role)) {
+          // Routage explicite par rôle et champ envoyé
+          if (field === 'commentaire_admin' && ['admin_entreprise', 'super_admin'].includes(user?.role)) {
             updates['commentaire_admin'] = sanitized;
-          } else if (user?.role === 'manager') {
+          } else if (field === 'commentaire_manager' && user?.role === 'manager') {
             updates['commentaire_manager'] = sanitized;
-          } else {
+          } else if (field === 'commentaire_employe') {
             updates['commentaire_employe'] = sanitized;
           }
+          // champs non autorisés pour ce rôle sont silencieusement ignorés
         } else if (field === 'debut_demi_journee') {
           updates[field] = data[field] || 'matin';
         } else if (field === 'fin_demi_journee') {
@@ -2540,10 +2560,14 @@ async function deleteConge(id, user, options = {}) {
   });
 }
 
-async function calculateDaysPreview({ date_debut, date_fin, debut_demi_journee, fin_demi_journee }, reqUser) {
+async function calculateDaysPreview({ date_debut, date_fin, debut_demi_journee, fin_demi_journee, entreprise_id: entrepriseIdParam }, reqUser) {
   if (!validateDateRange(date_debut, date_fin)) throw new Error('Dates invalides ou date_fin < date_debut');
 
-  const entrepriseId = reqUser.entreprise_id;
+  const entrepriseId = reqUser.role === 'super_admin'
+    ? (entrepriseIdParam || reqUser.entreprise_id)
+    : reqUser.entreprise_id;
+
+  if (!entrepriseId) { const e = new Error('entreprise_id requis pour ce rôle'); e.statusCode = 400; throw e; }
   const jours = await calcJoursConges(
     entrepriseId,
     date_debut,

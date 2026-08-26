@@ -108,7 +108,7 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
   });
 
   // Charger les acteurs
-  const employe = await Utilisateur.findByPk(user.id, { attributes: ['id', 'prenom', 'nom', 'email'] });
+  const employe = await Utilisateur.findByPk(user.id, { attributes: ['id', 'prenom', 'nom', 'email', 'service'] });
   const adminUser = await Utilisateur.findOne({ where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise', statut: 'actif' } });
   const baseRules = await getEntrepriseLeaveRules(conge.entreprise_id);
   const leaveRules = getEffectiveLeaveRules(baseRules, employe?.service || null);
