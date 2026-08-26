@@ -4,6 +4,7 @@ const router = express.Router();
 const authorizeRole = require('../middlewares/authorizeRole');
 const validateUUIDParam = require('../middlewares/validateUUIDParam');
 const congeTypesService = require('../services/congeTypesService');
+const { auditEntity } = require('../services/auditHelper');
 
 function resolveEntrepriseId(req, { allowBody = false } = {}) {
   if (req.user?.role === 'super_admin') {
@@ -17,6 +18,7 @@ router.post('/', authorizeRole(['super_admin', 'admin_entreprise']), async (req,
   try {
     const entrepriseId = resolveEntrepriseId(req, { allowBody: true });
     const type = await congeTypesService.createType(entrepriseId, req.body);
+    await auditEntity({ action: 'CONGE_TYPE_CREATED', entity: 'CongeType', entityId: type.id, performedBy: req.user, req, metadata: { code: type.code, libelle: type.libelle, quota_annuel: type.quota_annuel } });
     res.status(201).json(type);
   } catch (err) { next(err); }
 });
@@ -41,6 +43,7 @@ router.put('/:id', authorizeRole(['super_admin', 'admin_entreprise']), validateU
   try {
     const entrepriseId = resolveEntrepriseId(req, { allowBody: true });
     const type = await congeTypesService.updateType(req.params.id, entrepriseId, req.body);
+    await auditEntity({ action: 'CONGE_TYPE_UPDATED', entity: 'CongeType', entityId: type.id, performedBy: req.user, req, metadata: { updates: req.body } });
     res.json(type);
   } catch (err) { next(err); }
 });
@@ -48,7 +51,8 @@ router.put('/:id', authorizeRole(['super_admin', 'admin_entreprise']), validateU
 router.delete('/:id', authorizeRole(['super_admin', 'admin_entreprise']), validateUUIDParam('id'), async (req, res, next) => {
   try {
     const entrepriseId = resolveEntrepriseId(req);
-    await congeTypesService.deleteType(req.params.id, entrepriseId);
+    const snapshot = await congeTypesService.deleteType(req.params.id, entrepriseId);
+    await auditEntity({ action: 'CONGE_TYPE_DELETED', entity: 'CongeType', entityId: req.params.id, performedBy: req.user, req, metadata: snapshot });
     res.status(204).send();
   } catch (err) { next(err); }
 });

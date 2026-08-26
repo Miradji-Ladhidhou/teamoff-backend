@@ -20,6 +20,8 @@ const DEFAULT_SERVICE_POLICY = {
   max_employees_on_leave: 0,
 };
 
+const SERVICE_NAME_MAX = 100;
+
 function normalizeServiceName(value) {
   return String(value || '').trim();
 }
@@ -361,8 +363,21 @@ async function updatePolitiqueConges(req, res, next) {
     const entreprise = await Entreprise.findByPk(req.params.id);
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
 
+    // M-2: whitelist des clés acceptées — évite l'injection de clés fantômes dans le JSONB.
+    // service_policies et max_employees_on_leave.by_service sont gérés via /services.
+    const POLITIQUE_ALLOWED_KEYS = new Set([
+      'overlap_behavior', 'approval_workflow', 'max_consecutive_days', 'min_notice_days',
+      'blocked_days', 'max_employees_on_leave', 'allow_employee_cancel_own_pending',
+      'allow_manager_cancel_own_pending',
+    ]);
+    const incomingPolitique = req.body.politique_conges || {};
+    const safePolitique = {};
+    for (const key of Object.keys(incomingPolitique)) {
+      if (POLITIQUE_ALLOWED_KEYS.has(key)) safePolitique[key] = incomingPolitique[key];
+    }
+
     const oldPolitique = { ...entreprise.politique_conges };
-    entreprise.politique_conges = { ...entreprise.politique_conges, ...req.body.politique_conges };
+    entreprise.politique_conges = { ...entreprise.politique_conges, ...safePolitique };
     await entreprise.save({ userId: req.user.id });
 
     // === Audit ===
@@ -423,6 +438,9 @@ async function updateParametres(req, res, next) {
     entreprise.parametres = { ...oldParametres, ...safeParametres };
     await entreprise.save({ userId: req.user.id });
 
+    // M-1: audit trail manquant pour les paramètres généraux
+    await auditEntreprise.updated(entreprise, req.user, req, { oldParametres, newParametres: entreprise.parametres });
+
     res.json({ message: 'Paramètres mis à jour', parametres: entreprise.parametres });
   } catch (err) {
     logger.error('Erreur mise à jour paramètres:', err);
@@ -476,6 +494,7 @@ async function createEntrepriseService(req, res, next) {
 
     const name = normalizeServiceName(req.body?.name);
     if (!name) return res.status(400).json({ message: 'Le nom du service est obligatoire' });
+    if (name.length > SERVICE_NAME_MAX) return res.status(400).json({ message: `Le nom du service est trop long (max ${SERVICE_NAME_MAX} caractères)` });
 
     const policy = getEntreprisePolicies(entreprise);
     const existingName = Object.keys(policy.service_policies || {}).find(
@@ -517,6 +536,7 @@ async function updateEntrepriseService(req, res, next) {
 
     const nextName = normalizeServiceName(req.body?.name || currentName);
     if (!nextName) return res.status(400).json({ message: 'Le nom du service est obligatoire' });
+    if (nextName.length > SERVICE_NAME_MAX) return res.status(400).json({ message: `Le nom du service est trop long (max ${SERVICE_NAME_MAX} caractères)` });
 
     const policy = getEntreprisePolicies(entreprise);
     if (!policy.service_policies[currentName]) {
@@ -545,16 +565,24 @@ async function updateEntrepriseService(req, res, next) {
       req.body?.policy?.max_employees_on_leave ?? mergedServicePolicy.max_employees_on_leave ?? currentLimit
     );
 
-    if (currentName !== nextName) {
-      await Utilisateur.update(
-        { service: nextName },
-        { where: { entreprise_id: entreprise.id, service: currentName } }
-      );
-    }
-
+    // C-5: Utilisateur.update et entreprise.save dans la même transaction pour éviter
+    // un état incohérent si la sauvegarde de l'entreprise échoue après le renommage des users.
     const oldPolitique = { ...(entreprise.politique_conges || {}) };
-    entreprise.politique_conges = policy;
-    await entreprise.save({ userId: req.user.id });
+    const t = await sequelize.transaction();
+    try {
+      if (currentName !== nextName) {
+        await Utilisateur.update(
+          { service: nextName },
+          { where: { entreprise_id: entreprise.id, service: currentName }, transaction: t }
+        );
+      }
+      entreprise.politique_conges = policy;
+      await entreprise.save({ userId: req.user.id, transaction: t });
+      await t.commit();
+    } catch (txErr) {
+      await t.rollback();
+      throw txErr;
+    }
 
     await auditEntreprise.updated(entreprise, req.user, req, {
       oldPolitique,

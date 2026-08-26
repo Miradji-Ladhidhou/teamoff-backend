@@ -296,6 +296,12 @@ async function importerJoursFeriesNationaux(req, res, next) {
       return res.status(400).json({ message: 'Année invalide.' });
     }
 
+    const COUNTRY_CODE_RE = /^[A-Z]{2,3}$/;
+    if (!COUNTRY_CODE_RE.test(countryCode)) {
+      await t.rollback();
+      return res.status(400).json({ message: 'Code pays invalide (2-3 lettres ISO attendu).' });
+    }
+
     const nagerBase = process.env.NAGER_API_URL || 'https://date.nager.at/api/v3';
     const response = await fetch(`${nagerBase}/PublicHolidays/${year}/${countryCode}`);
     if (!response.ok) {
@@ -566,6 +572,16 @@ async function appliquerModeleJoursFeries(req, res, next) {
     if (!template) {
       await t.rollback();
       return res.status(404).json({ message: 'Modèle introuvable.' });
+    }
+
+    // C-4: IDOR — un admin_entreprise ne peut appliquer que des templates globaux
+    // (source_entreprise_id null) ou ses propres templates
+    if (req.user?.role !== 'super_admin') {
+      if (template.source_entreprise_id !== null &&
+          template.source_entreprise_id !== req.user?.entreprise_id) {
+        await t.rollback();
+        return res.status(403).json({ message: 'Accès interdit à ce modèle.' });
+      }
     }
 
     const targetEntrepriseId = getTargetEntrepriseId(req, { allowBody: true });
