@@ -1807,7 +1807,12 @@ async function updateConge(id, data, user, req = null) {
           } else if (field === 'commentaire_manager' && user?.role === 'manager') {
             updates['commentaire_manager'] = sanitized;
           } else if (field === 'commentaire_employe') {
-            updates['commentaire_employe'] = sanitized;
+            // Les admins/super_admin sont routés vers le champ admin, pas le champ employé
+            if (['admin_entreprise', 'super_admin'].includes(user?.role)) {
+              updates['commentaire_admin'] = sanitized;
+            } else {
+              updates['commentaire_employe'] = sanitized;
+            }
           }
           // champs non autorisés pour ce rôle sont silencieusement ignorés
         } else if (field === 'debut_demi_journee') {
@@ -2861,7 +2866,7 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
       // contre le budget restant (pas contre le total reserves), on obtient le bon
       // comportement partiel : la 1ère réservation peut s'activer même si le solde
       // ne couvre pas toutes les réservations en attente.
-      let budget = Math.max(0, safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves));
+      let budget = Math.max(0, safeNumber(compteur.jours_acquis));
 
       for (const conge of yearReservations) {
         const jours = safeNumber(conge.jours_calcules);

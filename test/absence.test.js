@@ -124,16 +124,15 @@ describe('RGPD Art. 9 — commentaire arrêt maladie', () => {
     await Utilisateur.destroy({ where: { id: employe2.id } });
   });
 
-  test('un collègue (employe) ne voit pas le commentaire maladie d\'un autre employé', async () => {
+  test('un collègue (employe) ne voit pas les absences maladie des autres (C-1)', async () => {
     const res = await request(app)
       .get('/api/absences')
       .set('Authorization', `Bearer ${tokenEmploye2}`);
 
     expect(res.statusCode).toBe(200);
+    // C-1 : un employé ne peut voir que ses propres absences — l'absence du collègue est absente de la réponse
     const absenceDuCollègue = res.body.find(a => a.id === absenceMaladieId);
-    expect(absenceDuCollègue).toBeDefined();
-    // Le commentaire doit être masqué
-    expect(absenceDuCollègue.commentaire).toBeNull();
+    expect(absenceDuCollègue).toBeUndefined();
   });
 
   test('l\'employé voit son propre commentaire maladie', async () => {
@@ -160,7 +159,7 @@ describe('RGPD Art. 9 — commentaire arrêt maladie', () => {
     expect(absenceDuCollègue.commentaire).toBe('Post-opératoire — données médicales confidentielles');
   });
 
-  test('une absence exceptionnelle expose son commentaire à tous (non sensible)', async () => {
+  test('une absence exceptionnelle est invisible pour un collègue employé (C-1)', async () => {
     const resCreate = await request(app)
       .post('/api/absences')
       .set('Authorization', `Bearer ${tokenEmploye}`)
@@ -177,10 +176,9 @@ describe('RGPD Art. 9 — commentaire arrêt maladie', () => {
       .get('/api/absences')
       .set('Authorization', `Bearer ${tokenEmploye2}`);
 
+    // C-1 : employé2 ne peut voir que ses propres absences — absence de employe invisible
     const absenceExc = res.body.find(a => a.id === exId);
-    expect(absenceExc).toBeDefined();
-    // Les absences non-maladie ne sont pas masquées
-    expect(absenceExc.commentaire).toBe('Déménagement');
+    expect(absenceExc).toBeUndefined();
 
     await Absence.destroy({ where: { id: exId } });
   });
