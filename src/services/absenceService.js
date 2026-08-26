@@ -3,6 +3,9 @@ const emailService = require('./emailService');
 const logger = require('../utils/logger');
 const { Op } = require('sequelize');
 const { formatDateFR } = require('../utils/dateFormatter');
+const sanitizeHtml = require('sanitize-html');
+
+const VALID_ABSENCE_TYPES = ['maladie', 'absence_exceptionnelle'];
 
 // C-2: échappement HTML pour les contenus injectés dans les templates email
 function esc(s) {
@@ -88,6 +91,12 @@ async function createAbsence({ utilisateur_id, entreprise_id, type_absence, date
     throw Object.assign(new Error('Tous les champs obligatoires doivent être remplis, y compris le commentaire.'), { status: 400 });
   }
 
+  if (!VALID_ABSENCE_TYPES.includes(type_absence)) {
+    throw Object.assign(new Error(`Type d'absence invalide. Valeurs acceptées : ${VALID_ABSENCE_TYPES.join(', ')}`), { status: 400 });
+  }
+
+  const safeCommentaire = sanitizeHtml(String(commentaire).slice(0, 5000), { allowedTags: [], allowedAttributes: {} });
+
   // M-3: validation de format avant toute opération Date — new Date("bad") retourne NaN
   // ce qui fait passer silencieusement la comparaison date_fin < date_debut
   if (!ISO_DATE_RE.test(date_debut) || !ISO_DATE_RE.test(date_fin)) {
@@ -122,7 +131,7 @@ async function createAbsence({ utilisateur_id, entreprise_id, type_absence, date
     );
   }
 
-  const absence = await Absence.create({ utilisateur_id, entreprise_id, type_absence, date_debut, date_fin, commentaire });
+  const absence = await Absence.create({ utilisateur_id, entreprise_id, type_absence, date_debut, date_fin, commentaire: safeCommentaire });
 
   notifyAbsenceCreated(absence, entreprise_id);
 

@@ -80,6 +80,11 @@ exports.updateAbsence = async (req, res, next) => {
     if (req.body.commentaire !== undefined) {
       if (typeof req.body.commentaire !== 'string') return res.status(400).json({ message: 'commentaire invalide.' });
       if (req.body.commentaire.length > 5000) return res.status(400).json({ message: 'commentaire trop long (max 5000 caractères).' });
+      // Un employé ne peut modifier son commentaire que si l'absence est encore signalée
+      const isEmployee = ['employe', 'apprenti'].includes(req.user.role);
+      if (isEmployee && absence.statut !== 'signalée') {
+        return res.status(409).json({ message: 'Impossible de modifier une absence déjà approuvée ou rejetée.' });
+      }
       absence.commentaire = req.body.commentaire;
     }
 
