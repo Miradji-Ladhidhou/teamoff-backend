@@ -1501,15 +1501,22 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
 // ----------------------------
 async function getConges(user, query = {}) {
   const where = {};
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
   if (user.role === 'employe' || user.role === 'apprenti') {
     where.utilisateur_id = user.id;
   } else if (user.role === 'manager' || user.role === 'admin_entreprise') {
     where.entreprise_id = user.entreprise_id;
+  } else if (user.role === 'super_admin') {
+    if (query.entreprise_id) {
+      if (!UUID_RE.test(query.entreprise_id)) { const e = new Error('entreprise_id invalide'); e.statusCode = 400; throw e; }
+      where.entreprise_id = query.entreprise_id;
+    }
+    // sans filtre : super_admin voit tous les congés de toutes les entreprises
   }
 
   // Filtres optionnels
   const STATUTS_VALIDES = ['reserve','en_attente_manager','valide_manager','valide_final','refuse_manager','refuse_final'];
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (query.statut) {
     if (!STATUTS_VALIDES.includes(query.statut)) { const e = new Error('Statut invalide'); e.statusCode = 400; throw e; }
     where.statut = query.statut;

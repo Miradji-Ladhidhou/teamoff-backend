@@ -125,6 +125,9 @@ async function getAttestationData(req, res, next) {
     if (user.role !== 'super_admin' && user.entreprise_id !== conge.entreprise_id && user.id !== conge.utilisateur_id)
       return res.status(403).json({ message: 'Accès interdit' });
 
+    if (conge.statut !== 'valide_final')
+      return res.status(422).json({ message: 'L\'attestation ne peut être générée que pour un congé validé (statut valide_final).' });
+
     const joursFeries = await joursFeriesService.getJoursFeriesEntreprise(conge.entreprise_id);
     const leaveRules = getLeaveRules(conge.entreprise);
     const { count_saturday, count_sunday } = leaveRules.blocked_days || {};
