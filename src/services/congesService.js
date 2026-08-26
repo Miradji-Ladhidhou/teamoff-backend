@@ -2599,50 +2599,59 @@ async function activerReservation(congeId, reqUser) {
     if (conge.statut !== 'reserve') throw new Error('Ce congé n\'est pas une réservation');
     if (reqUser.role !== 'super_admin' && reqUser.entreprise_id !== conge.entreprise_id) throw new Error('Accès interdit');
 
-    // Respecter le workflow configuré et vérifier le solde (fix #41 + #42).
     const baseLeaveRules = await getEntrepriseLeaveRules(conge.entreprise_id, t);
     const employe = await Utilisateur.findByPk(conge.utilisateur_id, { transaction: t });
     const leaveRules = getEffectiveLeaveRules(baseLeaveRules, employe?.service || null);
     const joursConge = safeNumber(conge.jours_calcules);
-
-    // Charger le compteur avec verrou pour vérifier le solde et le mettre à jour.
     const annee = dayjs(conge.date_debut).year();
+
     const compteur = await CompteurConges.findOne({
-      where: {
-        utilisateur_id: conge.utilisateur_id,
-        conge_type_id: conge.conge_type_id,
-        annee,
-      },
+      where: { utilisateur_id: conge.utilisateur_id, conge_type_id: conge.conge_type_id, annee },
       transaction: t,
       lock: t.LOCK.UPDATE,
     });
 
+    // M-1 : compteur obligatoire — la réservation ne peut pas exister sans compteur.
+    if (!compteur) {
+      throw Object.assign(
+        new Error('Compteur introuvable — activation impossible. Contactez l\'administrateur.'),
+        { statusCode: 500 }
+      );
+    }
+
     // Fix #42 : vérifier que le solde couvre cette activation.
-    // Les joursConge sont déjà dans jours_reserves depuis la création de la réservation.
     // soldeDispo = jours_acquis - (jours_reserves - joursConge) : solde disponible une
     // fois qu'on retire la réservation courante des réserves pour évaluer si elle est couverte.
-    if (compteur) {
-      const soldeDispo = safeNumber(compteur.jours_acquis)
-        - safeNumber(compteur.jours_reserves)
-        + joursConge;
-      if (soldeDispo < joursConge) {
-        const disponible = Math.max(0, soldeDispo);
-        throw Object.assign(
-          new Error(`Solde insuffisant pour activer cette réservation : ${disponible} jour(s) disponible(s), ${joursConge} jour(s) requis`),
-          { statusCode: 400 }
-        );
-      }
+    const soldeDispo = safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves) + joursConge;
+    if (soldeDispo < joursConge) {
+      throw Object.assign(
+        new Error(`Solde insuffisant pour activer cette réservation : ${Math.max(0, soldeDispo)} jour(s) disponible(s), ${joursConge} jour(s) requis`),
+        { statusCode: 400 }
+      );
     }
+
+    const congeType = await CongeType.findByPk(conge.conge_type_id, { transaction: t });
+    const employeNom = `${employe?.prenom || ''} ${employe?.nom || ''}`.trim() || 'L\'employé';
 
     if (leaveRules.approval_workflow === 'auto') {
       conge.statut = 'valide_final';
-      // Sortir les jours du bucket 'reserves' et les consommer définitivement
-      if (compteur) {
-        compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - joursConge);
-        compteur.jours_acquis   = Math.max(0, safeNumber(compteur.jours_acquis)   - joursConge);
-        compteur.jours_pris     = safeNumber(compteur.jours_pris) + joursConge;
-        await compteur.save({ transaction: t });
-      }
+      compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - joursConge);
+      compteur.jours_acquis   = Math.max(0, safeNumber(compteur.jours_acquis)   - joursConge);
+      compteur.jours_pris     = safeNumber(compteur.jours_pris) + joursConge;
+      await compteur.save({ transaction: t });
+      // C-1 : logMouvement absent dans la branche auto
+      await logMouvement({
+        entreprise_id: conge.entreprise_id,
+        utilisateur_id: conge.utilisateur_id,
+        conge_type_id: conge.conge_type_id,
+        annee,
+        type: 'activation_reservation',
+        quantite: -joursConge,
+        solde_apres: safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves),
+        source_id: conge.id,
+        description: descriptionConge('Réservation N+1 activée (manuel)', conge.date_debut, conge.date_fin),
+        transaction: t,
+      });
     } else {
       conge.statut = 'en_attente_manager';
       // Les jours restent dans jours_reserves — aucun mouvement de compteur nécessaire.
@@ -2650,9 +2659,14 @@ async function activerReservation(congeId, reqUser) {
 
     await conge.save({ transaction: t });
 
-    const congeType = await CongeType.findByPk(conge.conge_type_id, { transaction: t });
-    const employeNom = `${employe?.prenom || ''} ${employe?.nom || ''}`.trim() || 'L\'employé';
+    // C-3 : audit après commit (symétrique avec tryActivateReservations)
+    const newStatut = conge.statut;
+    t.afterCommit(() => auditConge.activated(conge, {
+      from_statut: 'reserve', new_statut: newStatut, jours: joursConge, annee, triggered_by: reqUser.id,
+    }));
 
+    // Email employé
+    const statutLabel = newStatut === 'valide_final' ? 'validée automatiquement' : 'en attente de validation';
     emailQueue.push({
       to: employe?.email,
       subject: 'Votre réservation est maintenant une demande active',
@@ -2662,18 +2676,55 @@ async function activerReservation(congeId, reqUser) {
         type_conge: congeType?.libelle || 'Congé',
         date_debut: formatDateFR(conge.date_debut),
         date_fin: formatDateFR(conge.date_fin),
+        statut_label: statutLabel,
         action_url: buildCongeUrl(conge.id),
-      }
+      },
     });
 
     await notificationService.creerNotification({
       entreprise_id: conge.entreprise_id,
       utilisateur_id: conge.utilisateur_id,
       type: 'conge_demande',
-      message: `Votre réservation de congé (${formatDateFR(conge.date_debut)} - ${formatDateFR(conge.date_fin)}) a été activée et est en attente de validation.`,
+      message: `Votre réservation de congé (${formatDateFR(conge.date_debut)} - ${formatDateFR(conge.date_fin)}) a été activée et est ${statutLabel}.`,
       url: `/conges/${conge.id}`,
       transaction: t,
     });
+
+    // C-2 : notifier managers et admin si validation requise
+    if (newStatut === 'en_attente_manager') {
+      const managers = await Utilisateur.findAll({
+        where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
+        transaction: t,
+      });
+      const admin = await Utilisateur.findOne({
+        where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise' },
+        transaction: t,
+      });
+      for (const recipient of [...managers, ...(admin ? [admin] : [])]) {
+        await notificationService.creerNotification({
+          entreprise_id: conge.entreprise_id,
+          utilisateur_id: recipient.id,
+          type: 'conge_reserve_active',
+          message: `La réservation de ${employeNom} (${formatDateFR(conge.date_debut)} - ${formatDateFR(conge.date_fin)}) est maintenant en attente de validation.`,
+          url: `/conges/${conge.id}`,
+          transaction: t,
+        });
+        emailQueue.push({
+          to: recipient.email,
+          subject: `Nouvelle demande de congé – ${employeNom}`,
+          templateName: 'leave-reservation-admin',
+          data: {
+            destinataire_prenom: recipient.prenom || 'Responsable',
+            demandeur_nom: employeNom,
+            date_debut: formatDateFR(conge.date_debut),
+            date_fin: formatDateFR(conge.date_fin),
+            type_conge: congeType?.libelle || 'Congé',
+            jours_calcules: joursConge,
+            action_url: buildCongeUrl(conge.id),
+          },
+        });
+      }
+    }
 
     return conge;
   });
@@ -2709,17 +2760,19 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
       });
       if (!compteur) return;
 
-      // Toutes les réservations de l'année triées par date_debut (FIFO)
-      const reservations = await Conge.findAll({
-        where: { utilisateur_id: utilisateurId, conge_type_id: congeTypeId, statut: 'reserve' },
+      // Réservations de l'année triées par date_debut (FIFO).
+      // C-4 : filtre année dans SQL pour éviter un lock FOR UPDATE inutile sur les autres années.
+      const yearReservations = await Conge.findAll({
+        where: {
+          utilisateur_id: utilisateurId,
+          conge_type_id: congeTypeId,
+          statut: 'reserve',
+          date_debut: { [Op.between]: [`${annee}-01-01`, `${annee}-12-31`] },
+        },
         order: [['date_debut', 'ASC']],
         transaction: t,
         lock: t.LOCK.UPDATE,
       });
-
-      const yearReservations = reservations.filter(
-        (r) => dayjs(r.date_debut).year() === Number(annee)
-      );
       if (yearReservations.length === 0) return;
 
       // Règles entreprise chargées une seule fois
