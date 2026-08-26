@@ -2633,6 +2633,83 @@ async function activerReservation(congeId, reqUser) {
     const congeType = await CongeType.findByPk(conge.conge_type_id, { transaction: t });
     const employeNom = `${employe?.prenom || ''} ${employe?.nom || ''}`.trim() || 'L\'employé';
 
+    // M-2 : vérifications de chevauchement/capacité — symétrique avec validerConge (branche admin).
+    // On contrôle les congés déjà approuvés (valide_manager/valide_final), pas les en_attente.
+    {
+      const overlapBehavior = leaveRules.overlap_behavior || 'block';
+      const employeService = employe?.service || null;
+
+      // 2a. Chevauchement propre (valide_final uniquement — statut définitif)
+      const selfOverlap = await Conge.findOne({
+        where: {
+          utilisateur_id: conge.utilisateur_id,
+          statut: 'valide_final',
+          date_debut: { [Op.lte]: conge.date_fin },
+          date_fin:   { [Op.gte]: conge.date_debut },
+          id: { [Op.ne]: conge.id },
+        },
+        attributes: ['id'],
+        transaction: t,
+      });
+      if (selfOverlap) {
+        throw Object.assign(
+          new Error(`Activation impossible : ${employeNom} a déjà un congé approuvé sur cette période.`),
+          { statusCode: 409 }
+        );
+      }
+
+      // 2b. Capacité service
+      const serviceLimit = employeService
+        ? Number(leaveRules.max_employees_on_leave?.by_service?.[employeService])
+        : NaN;
+      if (employeService && Number.isFinite(serviceLimit) && serviceLimit > 0) {
+        const serviceRows = await Conge.findAll({
+          where: {
+            entreprise_id: conge.entreprise_id,
+            statut: { [Op.in]: ['valide_manager', 'valide_final'] },
+            date_debut: { [Op.lte]: conge.date_fin },
+            date_fin:   { [Op.gte]: conge.date_debut },
+            id: { [Op.ne]: conge.id },
+          },
+          attributes: ['utilisateur_id'],
+          include: [{ model: Utilisateur, as: 'utilisateur', attributes: ['service'], required: false }],
+          transaction: t,
+        });
+        const serviceCount = new Set(
+          serviceRows.filter(r => r.utilisateur?.service === employeService).map(r => r.utilisateur_id)
+        ).size;
+        if ((serviceCount + 1) > serviceLimit && overlapBehavior !== 'warning') {
+          throw Object.assign(
+            new Error(`Activation impossible : capacité service "${employeService}" dépassée sur la période ${formatDateFR(conge.date_debut)} – ${formatDateFR(conge.date_fin)}`),
+            { statusCode: 409 }
+          );
+        }
+      }
+
+      // 2c. Capacité globale
+      const globalLimit = Number(leaveRules.max_employees_on_leave?.global);
+      if (Number.isFinite(globalLimit) && globalLimit > 0) {
+        const globalRows = await Conge.findAll({
+          where: {
+            entreprise_id: conge.entreprise_id,
+            statut: { [Op.in]: ['valide_manager', 'valide_final'] },
+            date_debut: { [Op.lte]: conge.date_fin },
+            date_fin:   { [Op.gte]: conge.date_debut },
+            id: { [Op.ne]: conge.id },
+          },
+          attributes: ['utilisateur_id'],
+          transaction: t,
+        });
+        const globalCount = new Set(globalRows.map(r => r.utilisateur_id)).size;
+        if ((globalCount + 1) > globalLimit && overlapBehavior !== 'warning') {
+          throw Object.assign(
+            new Error(`Activation impossible : capacité globale (${globalLimit}) dépassée sur la période ${formatDateFR(conge.date_debut)} – ${formatDateFR(conge.date_fin)}`),
+            { statusCode: 409 }
+          );
+        }
+      }
+    }
+
     if (leaveRules.approval_workflow === 'auto') {
       conge.statut = 'valide_final';
       compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - joursConge);
@@ -2808,6 +2885,66 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
         const employe = await Utilisateur.findByPk(conge.utilisateur_id, { transaction: t });
         const leaveRules = getEffectiveLeaveRules(baseLeaveRules, employe?.service || null);
         const employeNom = `${employe?.prenom || ''} ${employe?.nom || ''}`.trim();
+
+        // M-2 : vérification de chevauchement avant activation automatique.
+        // Chevauchement propre — skip si l'employé a déjà un valide_final sur la période.
+        const selfOverlapAuto = await Conge.findOne({
+          where: {
+            utilisateur_id: conge.utilisateur_id,
+            statut: 'valide_final',
+            date_debut: { [Op.lte]: conge.date_fin },
+            date_fin:   { [Op.gte]: conge.date_debut },
+            id: { [Op.ne]: conge.id },
+          },
+          attributes: ['id'],
+          transaction: t,
+        });
+        if (selfOverlapAuto) {
+          budget += jours; // Restituer le budget — cette réservation ne sera pas activée
+          results.still_pending.push({ conge_id: conge.id, date_debut: formatDateFR(conge.date_debut), date_fin: formatDateFR(conge.date_fin), jours, reason: 'overlap' });
+          logger.warn(`[try-activate] ${conge.id} — chevauchement valide_final détecté, skippé`);
+          await auditConge.skipped(conge, { jours, reason: 'self_overlap', annee: Number(annee) });
+          continue;
+        }
+
+        // Capacité service/globale — vérifiée seulement pour 'auto' (sinon validerConge le fera).
+        if (leaveRules.approval_workflow === 'auto' && leaveRules.overlap_behavior !== 'warning') {
+          const employeService = employe?.service || null;
+          const overlapStatuts = { [Op.in]: ['valide_manager', 'valide_final'] };
+          const overlapPeriod = { date_debut: { [Op.lte]: conge.date_fin }, date_fin: { [Op.gte]: conge.date_debut } };
+          const baseWhere = { entreprise_id: conge.entreprise_id, statut: overlapStatuts, ...overlapPeriod, id: { [Op.ne]: conge.id } };
+
+          const serviceLimit = employeService ? Number(leaveRules.max_employees_on_leave?.by_service?.[employeService]) : NaN;
+          let capacityExceeded = false;
+
+          if (employeService && Number.isFinite(serviceLimit) && serviceLimit > 0) {
+            const svcRows = await Conge.findAll({
+              where: baseWhere,
+              attributes: ['utilisateur_id'],
+              include: [{ model: Utilisateur, as: 'utilisateur', attributes: ['service'], required: false }],
+              transaction: t,
+            });
+            const svcCount = new Set(svcRows.filter(r => r.utilisateur?.service === employeService).map(r => r.utilisateur_id)).size;
+            if ((svcCount + 1) > serviceLimit) capacityExceeded = true;
+          }
+
+          if (!capacityExceeded) {
+            const globalLimit = Number(leaveRules.max_employees_on_leave?.global);
+            if (Number.isFinite(globalLimit) && globalLimit > 0) {
+              const glbRows = await Conge.findAll({ where: baseWhere, attributes: ['utilisateur_id'], transaction: t });
+              const glbCount = new Set(glbRows.map(r => r.utilisateur_id)).size;
+              if ((glbCount + 1) > globalLimit) capacityExceeded = true;
+            }
+          }
+
+          if (capacityExceeded) {
+            budget += jours; // Restituer le budget
+            results.still_pending.push({ conge_id: conge.id, date_debut: formatDateFR(conge.date_debut), date_fin: formatDateFR(conge.date_fin), jours, reason: 'capacity' });
+            logger.warn(`[try-activate] ${conge.id} — capacité dépassée, skippé`);
+            await auditConge.skipped(conge, { jours, reason: 'capacity_exceeded', annee: Number(annee) });
+            continue;
+          }
+        }
 
         let newStatut;
         if (leaveRules.approval_workflow === 'auto') {
