@@ -25,9 +25,9 @@ router.get('/', authorizeRole(['employe','apprenti','manager','admin_entreprise'
 
 // Demandes de modification/annulation — avant /:id pour éviter les conflits de route
 router.get('/action-requests', authorizeRole(['admin_entreprise','super_admin']), actionRequestController.list);
-router.get('/action-requests/:requestId', authorizeRole(['admin_entreprise','super_admin']), actionRequestController.getOne);
-router.post('/action-requests/:requestId/approve', authorizeRole(['admin_entreprise','super_admin']), advancedRateLimiter('conges'), actionRequestController.approve);
-router.post('/action-requests/:requestId/reject', authorizeRole(['admin_entreprise','super_admin']), advancedRateLimiter('conges'), actionRequestController.reject);
+router.get('/action-requests/:requestId', authorizeRole(['admin_entreprise','super_admin']), validateUUIDParam('requestId'), actionRequestController.getOne);
+router.post('/action-requests/:requestId/approve', authorizeRole(['admin_entreprise','super_admin']), validateUUIDParam('requestId'), advancedRateLimiter('conges'), actionRequestController.approve);
+router.post('/action-requests/:requestId/reject', authorizeRole(['admin_entreprise','super_admin']), validateUUIDParam('requestId'), advancedRateLimiter('conges'), actionRequestController.reject);
 
 router.get('/:id', authorizeRole(['employe','apprenti','manager','admin_entreprise','super_admin']), validateUUIDParam('id'), congeController.get);
 router.put('/:id', authorizeRole(['employe','apprenti','manager','admin_entreprise','super_admin']), validateUUIDParam('id'), advancedRateLimiter('conges'), validate(updateCongeRules), congeController.update);
@@ -37,6 +37,9 @@ router.get('/:id/history', authorizeRole(['employe','apprenti','manager','admin_
   try {
     if (['employe', 'apprenti'].includes(req.user.role)) {
       const conge = await Conge.findOne({ where: { id: req.params.id, utilisateur_id: req.user.id } });
+      if (!conge) return res.status(403).json({ message: 'Accès interdit' });
+    } else if (req.user.role !== 'super_admin') {
+      const conge = await Conge.findOne({ where: { id: req.params.id, entreprise_id: req.user.entreprise_id } });
       if (!conge) return res.status(403).json({ message: 'Accès interdit' });
     }
     const logs = await AuditLog.findAll({

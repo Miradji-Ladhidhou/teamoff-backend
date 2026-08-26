@@ -691,6 +691,10 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       // manager_admin : saute la validation manager, attend l'admin directement
       statutConge = 'valide_manager';
       compteur.jours_reserves = safeNumber(compteur.jours_reserves) + safeNumber(jours);
+    } else if (approvalWorkflow === 'admin_only') {
+      // admin_only : pas de validation manager, attend directement l'admin
+      statutConge = 'valide_manager';
+      compteur.jours_reserves = safeNumber(compteur.jours_reserves) + safeNumber(jours);
     } else {
       statutConge = 'en_attente_manager';
       compteur.jours_reserves = safeNumber(compteur.jours_reserves) + safeNumber(jours);
@@ -895,7 +899,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
   const conge = await sequelize.transaction(async (t) => {
     const conge = await Conge.findByPk(congeId, { transaction: t, lock: t.LOCK.UPDATE });
     if (!conge) throw new Error('Congé introuvable');
-    if (reqUser.entreprise_id !== conge.entreprise_id) throw new Error('Accès interdit');
+    if (reqUser.role !== 'super_admin' && reqUser.entreprise_id !== conge.entreprise_id) throw new Error('Accès interdit');
 
     // Verrou consultatif PostgreSQL (advisory) par entreprise : sérialise les
     // validations concurrentes sans bloquer d'autres opérations sur la même ligne.
@@ -1351,7 +1355,7 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
       lock: { level: t.LOCK.UPDATE, of: Conge }
     });
     if (!conge) throw new Error('Congé introuvable');
-    if (reqUser.entreprise_id !== conge.entreprise_id) throw new Error('Accès interdit');
+    if (reqUser.role !== 'super_admin' && reqUser.entreprise_id !== conge.entreprise_id) throw new Error('Accès interdit');
     const joursConge = await resolveCongeDays(conge);
     const baseLeaveRules = await getEntrepriseLeaveRules(conge.entreprise_id, t);
 
@@ -1393,6 +1397,16 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
       transaction: t,
       lock: t.LOCK.UPDATE
     });
+
+    if (!compteur) {
+      logger.error('[rejeterConge] Compteur introuvable — jours_reserves non restitués. Intervention manuelle requise.', {
+        conge_id: conge.id,
+        utilisateur_id: conge.utilisateur_id,
+        conge_type_id: conge.conge_type_id,
+        annee: dayjs(conge.date_debut).year(),
+        jours: joursConge,
+      });
+    }
 
     if (compteur) {
       // Fix #49 : jours_annules manquant — le rejet est sémantiquement équivalent à une
@@ -2253,6 +2267,7 @@ async function deleteConge(id, user, options = {}) {
     if (user?.role === 'admin_entreprise' && user?.entreprise_id !== conge.entreprise_id) {
       throw new Error('Accès interdit: entreprise différente');
     }
+    // super_admin : pas de restriction entreprise (déjà protégé par authorizeRole)
 
     const isReserved = conge.statut === 'reserve';
     const isPending = conge.statut === 'en_attente_manager';
@@ -2398,6 +2413,35 @@ async function deleteConge(id, user, options = {}) {
       }
     }
 
+    if ((isReserved || isPending) && isAdminLevel) {
+      const adminNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Administrateur';
+      const employe_nom = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || 'Un employé';
+      if (employe.email) {
+        fireEmail({
+          to: employe.email,
+          subject: 'Votre demande de congé a été supprimée',
+          templateName: 'leave-cancelled-employee',
+          data: {
+            destinataire_prenom: employe.prenom || 'Collaborateur',
+            auteur_action: adminNom,
+            type_conge: conge.conge_type?.libelle || 'Congé',
+            date_debut: formatDateFR(conge.date_debut),
+            date_fin: formatDateFR(conge.date_fin),
+            commentaire: cancellationComment || null,
+            action_url: buildCongeUrl(conge.id),
+          }
+        });
+      }
+      await notificationService.creerNotification({
+        entreprise_id: conge.entreprise_id,
+        utilisateur_id: employe.id,
+        type: 'conge_supprime_admin',
+        message: `Votre demande de congé du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)} a été supprimée par ${adminNom}.`,
+        url: `/conges`,
+        transaction: t,
+      });
+    }
+
     if ((isManagerValidated || isFinalValidated) && !isAdminLevel) {
       const employe_nom = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || 'Un employé';
       const statutLabel = isFinalValidated ? 'congé validé définitivement' : 'congé validé par le manager';
@@ -2529,7 +2573,7 @@ async function activerReservation(congeId, reqUser) {
     const conge = await Conge.findByPk(congeId, { transaction: t, lock: t.LOCK.UPDATE });
     if (!conge) throw new Error('Congé introuvable');
     if (conge.statut !== 'reserve') throw new Error('Ce congé n\'est pas une réservation');
-    if (reqUser.entreprise_id !== conge.entreprise_id) throw new Error('Accès interdit');
+    if (reqUser.role !== 'super_admin' && reqUser.entreprise_id !== conge.entreprise_id) throw new Error('Accès interdit');
 
     // Respecter le workflow configuré et vérifier le solde (fix #41 + #42).
     const baseLeaveRules = await getEntrepriseLeaveRules(conge.entreprise_id, t);
