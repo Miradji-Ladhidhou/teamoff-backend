@@ -28,6 +28,10 @@ function errorHandler(err, req, res, next) {
   // Aucun message interne n'est exposé au client.
 
   if (err.name === 'SequelizeUniqueConstraintError') {
+    const fields = err.errors?.map((e) => e.path) || [];
+    if (fields.includes('email')) {
+      return res.status(409).json({ message: 'Cette adresse email est déjà utilisée' });
+    }
     return res.status(409).json({ message: 'Cette valeur existe déjà' });
   }
 

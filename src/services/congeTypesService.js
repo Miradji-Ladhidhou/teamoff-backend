@@ -1,4 +1,5 @@
-const { CongeType } = require('../models');
+const { CongeType, Conge } = require('../models');
+const { Op } = require('sequelize');
 const { AppError } = require('../utils/errors');
 
 async function listTypes(entrepriseId) {
@@ -31,11 +32,19 @@ async function createType(entrepriseId, { code, libelle, quota_annuel, demi_jour
 }
 
 async function updateType(id, entrepriseId, body) {
+  // Fix #54 : même validation que createType — quota_annuel doit être >= 0.
+  if (body.quota_annuel !== undefined && (isNaN(Number(body.quota_annuel)) || Number(body.quota_annuel) < 0)) {
+    throw new AppError('quota_annuel doit être un nombre positif', 400);
+  }
   const type = await getTypeById(id, entrepriseId);
   const allowed = ['code', 'libelle', 'quota_annuel', 'demi_journee_autorisee'];
   const updates = {};
   for (const field of allowed) {
     if (field in body) updates[field] = body[field];
+  }
+  // M-4: normalisation code cohérente avec createType
+  if (updates.code !== undefined) {
+    updates.code = String(updates.code).trim().toUpperCase();
   }
   await type.update(updates);
   return type;
@@ -43,7 +52,21 @@ async function updateType(id, entrepriseId, body) {
 
 async function deleteType(id, entrepriseId) {
   const type = await getTypeById(id, entrepriseId);
+  // C-1: bloquer la suppression si des demandes actives utilisent ce type
+  const activeCount = await Conge.count({
+    where: {
+      conge_type_id: id,
+      statut: { [Op.in]: ['reserve', 'en_attente_manager', 'valide_manager', 'valide_final'] },
+    },
+  });
+  if (activeCount > 0) {
+    throw new AppError(
+      `Ce type est utilisé par ${activeCount} demande(s) en cours. Impossible de le supprimer.`,
+      409
+    );
+  }
   await type.destroy();
+  return { id: type.id, code: type.code, libelle: type.libelle };
 }
 
 module.exports = { listTypes, getTypeById, createType, updateType, deleteType };

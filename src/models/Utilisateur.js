@@ -27,7 +27,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
     },
     role: {
-      type: DataTypes.ENUM('super_admin','admin_entreprise','manager','employe'),
+      type: DataTypes.ENUM('super_admin','admin_entreprise','manager','employe','apprenti'),
       allowNull: false,
     },
     password_hash: {
@@ -76,6 +76,8 @@ module.exports = (sequelize, DataTypes) => {
     },
     totp_secret: { type: DataTypes.TEXT, allowNull: true, defaultValue: null },
     totp_enabled: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    totp_used_token: { type: DataTypes.STRING(6), allowNull: true, defaultValue: null },
+    totp_used_at: { type: DataTypes.DATE, allowNull: true, defaultValue: null },
   }, {
     tableName: 'utilisateur',
     timestamps: true,
@@ -86,8 +88,8 @@ module.exports = (sequelize, DataTypes) => {
       { fields: ['entreprise_id', 'role'] },
     ],
     uniqueKeys: {
-      entreprise_email_unique: {
-        fields: ['entreprise_id', 'email'],
+      utilisateur_email_unique: {
+        fields: ['email'],
       },
     },
   });

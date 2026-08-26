@@ -1,32 +1,41 @@
-const { Entreprise, Utilisateur } = require('../models');
+const bcrypt  = require('bcrypt');
+const crypto  = require('crypto');
+const jwt     = require('jsonwebtoken');
+const { Entreprise, Utilisateur, LeavePolicy, sequelize } = require('../models');
 const logger = require('../utils/logger');
 const { validationResult } = require('express-validator');
-const { auditEntreprise } = require('../services/auditHelper');
+const { auditEntreprise, auditUser } = require('../services/auditHelper');
 const emailService = require('../services/emailService');
+const quotasService = require('../services/quotasService');
+const { BCRYPT_COST } = require('../services/authService');
+
+// Compte racine insupprimable — l'entreprise qui le contient l'est également
+const PROTECTED_SUPER_ADMIN_EMAIL = 'saas.teamoff@gmail.com';
 
 const DEFAULT_SERVICE_POLICY = {
-  overlap_policy: 'block',
+  overlap_behavior: 'block',
   minimum_notice_days: 0,
   max_consecutive_days: 365,
   approval_workflow: 'manager_admin',
   max_employees_on_leave: 0,
 };
 
+const SERVICE_NAME_MAX = 100;
+
 function normalizeServiceName(value) {
   return String(value || '').trim();
 }
 
 function normalizeServicePolicy(policy = {}) {
-  const overlapPolicy = ['block', 'warning', 'allow'].includes(policy.overlap_policy)
-    ? policy.overlap_policy
-    : DEFAULT_SERVICE_POLICY.overlap_policy;
-
   const approvalWorkflow = ['manager_admin', 'manager_only', 'admin_only'].includes(policy.approval_workflow)
     ? policy.approval_workflow
     : DEFAULT_SERVICE_POLICY.approval_workflow;
+  const overlapBehavior = ['block', 'warning'].includes(policy.overlap_behavior)
+    ? policy.overlap_behavior
+    : DEFAULT_SERVICE_POLICY.overlap_behavior;
 
   return {
-    overlap_policy: overlapPolicy,
+    overlap_behavior: overlapBehavior,
     minimum_notice_days: Number(policy.minimum_notice_days || 0),
     max_consecutive_days: Number(policy.max_consecutive_days || DEFAULT_SERVICE_POLICY.max_consecutive_days),
     approval_workflow: approvalWorkflow,
@@ -49,38 +58,109 @@ function getEntreprisePolicies(entreprise) {
 // ----------------------------
 // Création d'une entreprise
 // ----------------------------
+// Si le body contient un champ `admin` (email, prenom, nom), l'entreprise ET
+// l'utilisateur admin sont créés dans la même transaction DB (Fix #33).
+// En cas d'échec de l'une ou l'autre création, tout est rollbacké — aucune
+// entreprise orpheline ne peut subsister.
 async function createEntreprise(req, res, next) {
-
-  const { nom, politique_conges, parametres, statut } = req.body;
-
+  const { nom, politique_conges, parametres, statut, admin: adminData } = req.body;
   if (!nom) return res.status(400).json({ message: 'Nom requis' });
 
-  try {
+  if (adminData != null) {
+    if (!adminData.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminData.email)) {
+      return res.status(400).json({ message: 'admin.email est requis et doit être une adresse valide' });
+    }
+  }
 
-    const entreprise = await Entreprise.create(
-      {
-        nom,
-        politique_conges,
-        parametres,
-        statut
-      },
-      { userId: req.user.id }
-    );
+  try {
+    let entreprise, adminUser;
+
+    await sequelize.transaction(async (t) => {
+      entreprise = await Entreprise.create(
+        { nom, politique_conges, parametres, statut },
+        { transaction: t }
+      );
+
+      if (adminData?.email) {
+        // Vérification unicité globale de l'email : un email ne doit appartenir qu'à
+        // un seul compte, quelle que soit l'entreprise (évite l'ambiguïté de login).
+        const existing = await Utilisateur.findOne({
+          where: { email: adminData.email },
+          attributes: ['id'],
+          transaction: t,
+        });
+        if (existing) {
+          const err = new Error('Un utilisateur avec cet email existe déjà');
+          err.statusCode = 409;
+          throw err;
+        }
+
+        const placeholderHash = await bcrypt.hash(
+          crypto.randomBytes(32).toString('hex'), BCRYPT_COST
+        );
+        adminUser = await Utilisateur.create({
+          nom:    adminData.nom    || '',
+          prenom: adminData.prenom || '',
+          email:  adminData.email,
+          role:   'admin_entreprise',
+          entreprise_id: entreprise.id,
+          password_hash: placeholderHash,
+          statut: 'en_attente',
+        }, { transaction: t });
+
+        await quotasService.initializeUserCounters({
+          entrepriseId: entreprise.id,
+          utilisateurId: adminUser.id,
+          annee: new Date().getFullYear(),
+          transaction: t,
+        });
+      }
+    });
+
+    // Post-transaction : token d'invitation + emails (fire-and-forget hors transaction)
+    if (adminUser) {
+      const inviteToken = jwt.sign(
+        { id: adminUser.id, type: 'set_password' },
+        process.env.JWT_SECRET,
+        { expiresIn: '48h' }
+      );
+      const inviteHash = crypto.createHash('sha256').update(inviteToken).digest('hex');
+      await adminUser.update({ invite_token_hash: inviteHash });
+
+      emailService.sendSetPasswordEmail(adminUser, entreprise, inviteToken)
+        .catch(err => logger.error('Erreur email invitation admin entreprise', { error: err.message }));
+
+      await auditUser.created(adminUser, req.user, req);
+    }
 
     await auditEntreprise.created(entreprise, req.user, req);
 
     const creator = await Utilisateur.findByPk(req.user.id, {
       attributes: ['id', 'prenom', 'nom', 'email']
     });
-
     if (creator?.email) {
       emailService.sendEntrepriseCreatedEmail(creator, entreprise)
         .catch(err => logger.error('Erreur envoi email création entreprise', { error: err.message }));
     }
 
+    if (adminUser) {
+      return res.status(201).json({
+        entreprise,
+        admin: {
+          id:     adminUser.id,
+          email:  adminUser.email,
+          prenom: adminUser.prenom,
+          nom:    adminUser.nom,
+          role:   adminUser.role,
+          statut: adminUser.statut,
+        },
+      });
+    }
+
     res.status(201).json(entreprise);
 
   } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ message: err.message });
     logger.error('Erreur création entreprise:', err);
     next(err);
   }
@@ -158,10 +238,18 @@ async function deleteEntreprise(req, res, next) {
     const entreprise = await Entreprise.findByPk(req.params.id);
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
 
-    await entreprise.destroy({ userId: req.user.id });
+    const hasProtectedAdmin = await Utilisateur.count({
+      where: { entreprise_id: entreprise.id, email: PROTECTED_SUPER_ADMIN_EMAIL },
+    });
+    if (hasProtectedAdmin) {
+      return res.status(403).json({ message: 'Cette entreprise est protégée et ne peut pas être supprimée' });
+    }
 
-    // === Audit ===
+    // Log écrit AVANT destroy : avec SET NULL, le destroy nullifie entreprise_id
+    // mais entity_id + action + metadata restent intacts pour traçabilité post-mortem.
     await auditEntreprise.deleted(entreprise, req.user, req);
+
+    await entreprise.destroy({ userId: req.user.id });
 
     res.json({ message: 'Entreprise supprimée' });
   } catch (err) {
@@ -185,7 +273,7 @@ async function patchStatutEntreprise(req, res, next) {
     const oldStatut = entreprise.statut;
     await entreprise.update({ statut }, { userId: req.user.id });
 
-    // Email de suspension aux admins de l'entreprise
+    // Emails aux admins de l'entreprise selon la transition de statut
     if (statut === 'suspendue' && oldStatut !== 'suspendue') {
       const admins = await Utilisateur.findAll({
         where: { entreprise_id: entreprise.id, role: 'admin_entreprise', statut: 'actif' },
@@ -194,6 +282,18 @@ async function patchStatutEntreprise(req, res, next) {
       for (const admin of admins) {
         emailService.sendEnterpriseSuspended(admin, entreprise).catch((e) =>
           logger.error('sendEnterpriseSuspended error', { error: e.message })
+        );
+      }
+    }
+
+    if (statut === 'active' && oldStatut === 'suspendue') {
+      const admins = await Utilisateur.findAll({
+        where: { entreprise_id: entreprise.id, role: 'admin_entreprise', statut: 'actif' },
+        attributes: ['email', 'prenom', 'nom'],
+      });
+      for (const admin of admins) {
+        emailService.sendEnterpriseReactivated(admin, entreprise).catch((e) =>
+          logger.error('sendEnterpriseReactivated error', { error: e.message })
         );
       }
     }
@@ -224,12 +324,16 @@ async function getBlockedDays(req, res, next) {
     }
 
     const pol = entreprise.politique_conges || {};
+    const lp = await LeavePolicy.findOne({ where: { entreprise_id: req.params.id } });
     res.json({
       blocked_days: pol.blocked_days || {},
       allow_employee_cancel_own_pending: pol.allow_employee_cancel_own_pending !== undefined
         ? Boolean(pol.allow_employee_cancel_own_pending) : true,
       allow_manager_cancel_own_pending: pol.allow_manager_cancel_own_pending !== undefined
         ? Boolean(pol.allow_manager_cancel_own_pending) : true,
+      allow_modify_validated: lp ? Boolean(lp.allow_modify_validated) : false,
+      allow_cancel_validated: lp ? Boolean(lp.allow_cancel_validated) : false,
+      min_notice_days: lp ? Number(lp.min_notice_days || 0) : 0,
     });
   } catch (err) {
     logger.error('Erreur récupération blocked_days:', err);
@@ -259,8 +363,31 @@ async function updatePolitiqueConges(req, res, next) {
     const entreprise = await Entreprise.findByPk(req.params.id);
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
 
+    // M-2: whitelist des clés acceptées — évite l'injection de clés fantômes dans le JSONB.
+    const POLITIQUE_ALLOWED_KEYS = new Set([
+      'overlap_behavior', 'approval_workflow', 'max_consecutive_days', 'min_notice_days',
+      'minimum_notice_days', 'blocked_days', 'max_employees_on_leave',
+      'allow_employee_cancel_own_pending', 'allow_manager_cancel_own_pending',
+      'manager_can_view_employee_history', 'manager_can_export_team_leaves',
+      'service_policies',
+    ]);
+    const incomingPolitique = req.body.politique_conges || {};
+    const safePolitique = {};
+    for (const key of Object.keys(incomingPolitique)) {
+      if (POLITIQUE_ALLOWED_KEYS.has(key)) safePolitique[key] = incomingPolitique[key];
+    }
+    // Sanitiser chaque politique de service avec la même logique que les routes /services.
+    if (safePolitique.service_policies && typeof safePolitique.service_policies === 'object') {
+      const sanitized = {};
+      for (const [name, sp] of Object.entries(safePolitique.service_policies)) {
+        const safeName = String(name).trim().slice(0, SERVICE_NAME_MAX);
+        if (safeName) sanitized[safeName] = normalizeServicePolicy(sp || {});
+      }
+      safePolitique.service_policies = sanitized;
+    }
+
     const oldPolitique = { ...entreprise.politique_conges };
-    entreprise.politique_conges = { ...entreprise.politique_conges, ...req.body.politique_conges };
+    entreprise.politique_conges = { ...entreprise.politique_conges, ...safePolitique };
     await entreprise.save({ userId: req.user.id });
 
     // === Audit ===
@@ -310,9 +437,19 @@ async function updateParametres(req, res, next) {
     const safeParametres = {};
     if (parametres.timezone !== undefined) safeParametres.timezone = parametres.timezone;
 
+    if (parametres.logo !== undefined) {
+      if (typeof parametres.logo !== 'string') return res.status(400).json({ message: 'Logo invalide' });
+      if (parametres.logo !== '' && !parametres.logo.startsWith('data:image/')) return res.status(400).json({ message: 'Format logo invalide (PNG, JPG, SVG attendu)' });
+      if (parametres.logo.length > 400000) return res.status(400).json({ message: 'Logo trop volumineux (max 300 Ko)' });
+      safeParametres.logo = parametres.logo;
+    }
+
     const oldParametres = { ...(entreprise.parametres || {}) };
     entreprise.parametres = { ...oldParametres, ...safeParametres };
     await entreprise.save({ userId: req.user.id });
+
+    // M-1: audit trail manquant pour les paramètres généraux
+    await auditEntreprise.updated(entreprise, req.user, req, { oldParametres, newParametres: entreprise.parametres });
 
     res.json({ message: 'Paramètres mis à jour', parametres: entreprise.parametres });
   } catch (err) {
@@ -367,6 +504,7 @@ async function createEntrepriseService(req, res, next) {
 
     const name = normalizeServiceName(req.body?.name);
     if (!name) return res.status(400).json({ message: 'Le nom du service est obligatoire' });
+    if (name.length > SERVICE_NAME_MAX) return res.status(400).json({ message: `Le nom du service est trop long (max ${SERVICE_NAME_MAX} caractères)` });
 
     const policy = getEntreprisePolicies(entreprise);
     const existingName = Object.keys(policy.service_policies || {}).find(
@@ -408,6 +546,7 @@ async function updateEntrepriseService(req, res, next) {
 
     const nextName = normalizeServiceName(req.body?.name || currentName);
     if (!nextName) return res.status(400).json({ message: 'Le nom du service est obligatoire' });
+    if (nextName.length > SERVICE_NAME_MAX) return res.status(400).json({ message: `Le nom du service est trop long (max ${SERVICE_NAME_MAX} caractères)` });
 
     const policy = getEntreprisePolicies(entreprise);
     if (!policy.service_policies[currentName]) {
@@ -436,16 +575,24 @@ async function updateEntrepriseService(req, res, next) {
       req.body?.policy?.max_employees_on_leave ?? mergedServicePolicy.max_employees_on_leave ?? currentLimit
     );
 
-    if (currentName !== nextName) {
-      await Utilisateur.update(
-        { service: nextName },
-        { where: { entreprise_id: entreprise.id, service: currentName } }
-      );
-    }
-
+    // C-5: Utilisateur.update et entreprise.save dans la même transaction pour éviter
+    // un état incohérent si la sauvegarde de l'entreprise échoue après le renommage des users.
     const oldPolitique = { ...(entreprise.politique_conges || {}) };
-    entreprise.politique_conges = policy;
-    await entreprise.save({ userId: req.user.id });
+    const t = await sequelize.transaction();
+    try {
+      if (currentName !== nextName) {
+        await Utilisateur.update(
+          { service: nextName },
+          { where: { entreprise_id: entreprise.id, service: currentName }, transaction: t }
+        );
+      }
+      entreprise.politique_conges = policy;
+      await entreprise.save({ userId: req.user.id, transaction: t });
+      await t.commit();
+    } catch (txErr) {
+      await t.rollback();
+      throw txErr;
+    }
 
     await auditEntreprise.updated(entreprise, req.user, req, {
       oldPolitique,

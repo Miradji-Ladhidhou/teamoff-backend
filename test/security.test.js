@@ -202,8 +202,8 @@ describe('Injection SQL — l\'ORM doit paramétrer toutes les requêtes', () =>
         password: 'anything',
       });
 
-    // Doit retourner 400 ou 401 — jamais 500
-    expect([400, 401]).toContain(res.status);
+    // Doit retourner 400, 401 ou 422 (email invalide) — jamais 500
+    expect([400, 401, 422]).toContain(res.status);
     expect(res.body).not.toHaveProperty('stack');
     expect(JSON.stringify(res.body)).not.toMatch(/syntax error|pg error|sequelize/i);
   });
@@ -227,6 +227,7 @@ describe('Injection SQL — l\'ORM doit paramétrer toutes les requêtes', () =>
         nom: "Test",
         email: emailSafe,
         role: 'employe',
+        service: 'Dev',
         entreprise_id: ctx.entreprise.id,
       });
 
@@ -313,6 +314,51 @@ describe('Pas d\'exposition d\'informations sensibles', () => {
     expect(res.status).toBe(200);
     expect(res.body).not.toHaveProperty('password_hash');
     expect(res.body).not.toHaveProperty('password');
+  });
+});
+
+// ===========================================================================
+describe('Rate limiting — bypass header sécurisé', () => {
+  // isWhitelisted est exportée pour permettre les tests unitaires
+  const { isWhitelisted } = require('../src/middlewares/advancedRateLimiter');
+
+  function makeReq(headers = {}, user = null) {
+    return { headers, user, ip: '127.0.0.1' };
+  }
+
+  it('x-internal-script avec valeur arbitraire ne bypasse plus (header legacy supprimé)', () => {
+    expect(isWhitelisted(makeReq({ 'x-internal-script': 'true' }))).toBe(false);
+  });
+
+  it('x-internal-script avec valeur "1" ne bypasse plus', () => {
+    expect(isWhitelisted(makeReq({ 'x-internal-script': '1' }))).toBe(false);
+  });
+
+  it('x-internal-secret avec n\'importe quelle valeur ne bypasse pas (mécanisme supprimé)', () => {
+    expect(isWhitelisted(makeReq({ 'x-internal-secret': 'any-value' }))).toBe(false);
+  });
+
+  it('x-internal-secret avec valeur "correct" ne bypasse pas même si INTERNAL_API_SECRET est défini', () => {
+    process.env.INTERNAL_API_SECRET = 'correct-secret-test';
+    const result = isWhitelisted(makeReq({ 'x-internal-secret': 'correct-secret-test' }));
+    delete process.env.INTERNAL_API_SECRET;
+    expect(result).toBe(false);
+  });
+
+  it('super_admin est toujours whitelisté (rôle vérifié en DB via authJwt)', () => {
+    expect(isWhitelisted(makeReq({}, { id: 'some-uuid', role: 'super_admin' }))).toBe(true);
+  });
+
+  it('admin_entreprise n\'est pas whitelisté', () => {
+    expect(isWhitelisted(makeReq({}, { id: 'some-uuid', role: 'admin_entreprise' }))).toBe(false);
+  });
+
+  it('manager n\'est pas whitelisté', () => {
+    expect(isWhitelisted(makeReq({}, { id: 'some-uuid', role: 'manager' }))).toBe(false);
+  });
+
+  it('requête sans user ni header passe par le rate limiter normalement', () => {
+    expect(isWhitelisted(makeReq())).toBe(false);
   });
 });
 

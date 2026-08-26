@@ -7,11 +7,14 @@ const { Utilisateur, Entreprise, sequelize } = require('../models');
 const emailService = require('../services/emailService');
 const { auditUser } = require('../services/auditHelper');
 const logger = require('../utils/logger');
-const { validatePasswordPolicy } = require('../services/authService');
+const { validatePasswordPolicy, BCRYPT_COST } = require('../services/authService');
 const quotasService = require('../services/quotasService');
 
 // Champs jamais exposés dans les réponses API
 const EXCLUDED_FIELDS = { exclude: ['password_hash', 'refresh_token_hash', 'invite_token_hash'] };
+
+// Compte racine insupprimable — protégé contre toute suppression accidentelle ou malveillante
+const PROTECTED_SUPER_ADMIN_EMAIL = 'saas.teamoff@gmail.com';
 
 // Sanitize HTML (nom/prenom)
 function sanitize(value) {
@@ -58,6 +61,7 @@ async function serviceExistsInEntreprise(entrepriseId, serviceName) {
   if (!entreprise) return false;
 
   const policies = entreprise.politique_conges?.service_policies || {};
+  if (Object.keys(policies).length === 0) return true;
   return Object.keys(policies).some((name) => name.toLowerCase() === normalizedService.toLowerCase());
 }
 
@@ -68,7 +72,7 @@ async function applyOwnProfileFields(utilisateur, { nom, prenom, email }) {
     const normalized = String(email).trim().toLowerCase();
     if (normalized !== utilisateur.email) {
       const existing = await Utilisateur.findOne({
-        where: { entreprise_id: utilisateur.entreprise_id, email: normalized },
+        where: { email: normalized },
       });
       if (existing) {
         const err = new Error('Cette adresse email est déjà utilisée');
@@ -97,7 +101,7 @@ async function updateOwnPasswordIfRequested(utilisateur, { currentPassword, newP
   }
 
   await validatePasswordPolicy(newPassword);
-  utilisateur.password_hash = await bcrypt.hash(newPassword, 10);
+  utilisateur.password_hash = await bcrypt.hash(newPassword, BCRYPT_COST);
 
   const notificationEmail = email && email !== utilisateur.email ? email : utilisateur.email;
   emailService.sendPasswordResetConfirmation(notificationEmail)
@@ -114,12 +118,12 @@ async function createUser(req, res, next) {
   const user = req.user;
   const normalizedService = normalizeServiceName(service);
 
-  if (role === 'employe' && !normalizedService) {
+  if (['employe', 'apprenti'].includes(role) && !normalizedService) {
     return res.status(400).json({ message: 'Le service est obligatoire pour un employé' });
   }
 
-  if (user.role === 'admin_entreprise' && !['manager', 'employe'].includes(role)) {
-    return res.status(403).json({ message: 'Vous ne pouvez créer que manager ou employe' });
+  if (user.role === 'admin_entreprise' && !['manager', 'employe', 'apprenti'].includes(role)) {
+    return res.status(403).json({ message: 'Vous ne pouvez créer que manager, employe ou apprenti' });
   }
   if (user.role === 'admin_entreprise' && entreprise_id !== user.entreprise_id) {
     return res.status(403).json({ message: 'Vous ne pouvez créer des utilisateurs que dans votre entreprise' });
@@ -136,7 +140,7 @@ async function createUser(req, res, next) {
     }
 
     // Mdp placeholder — l'utilisateur définira le sien via le lien d'invitation
-    const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+    const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_COST);
 
     let newUser = null;
 
@@ -191,7 +195,7 @@ async function createUser(req, res, next) {
     });
   } catch (err) {
     logger.error('Erreur création utilisateur', { error: err.message });
-    res.status(err.status || 500).json({ message: err.status ? err.message : 'Erreur serveur' });
+    next(err);
   }
 }
 
@@ -254,7 +258,7 @@ async function getUserById(req, res, next) {
     if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
     if (
-      ['admin_entreprise', 'manager', 'employe'].includes(req.user.role) &&
+      ['admin_entreprise', 'manager', 'employe', 'apprenti'].includes(req.user.role) &&
       req.user.role !== 'super_admin' &&
       utilisateur.entreprise_id !== req.user.entreprise_id
     ) {
@@ -286,7 +290,7 @@ async function updateUser(req, res, next) {
       const normalized = String(email).trim().toLowerCase();
       if (normalized !== utilisateur.email) {
         const existing = await Utilisateur.findOne({
-          where: { entreprise_id: utilisateur.entreprise_id, email: normalized },
+          where: { email: normalized },
         });
         if (existing) return res.status(409).json({ message: 'Cette adresse email est déjà utilisée' });
         email = normalized;
@@ -300,7 +304,7 @@ async function updateUser(req, res, next) {
     const nextService          = typeof service !== 'undefined' ? service : utilisateur.service;
     const normalizedNextService = normalizeServiceName(nextService);
 
-    if (nextRole === 'employe' && !normalizedNextService) {
+    if (['employe', 'apprenti'].includes(nextRole) && !normalizedNextService) {
       return res.status(400).json({ message: 'Le service est obligatoire pour un employé' });
     }
 
@@ -311,15 +315,52 @@ async function updateUser(req, res, next) {
       }
     }
 
-    if (req.user.role === 'admin_entreprise' && role && !['manager', 'employe'].includes(role)) {
-      return res.status(403).json({ message: 'Vous ne pouvez attribuer que manager ou employe' });
+    if (req.user.role === 'admin_entreprise' && role && !['admin_entreprise', 'manager', 'employe'].includes(role)) {
+      return res.status(403).json({ message: "Vous ne pouvez attribuer que les rôles admin_entreprise, manager ou employe" });
+    }
+
+    // Seul un super_admin peut modifier le rôle d'un admin_entreprise
+    if (role && role !== utilisateur.role && utilisateur.role === 'admin_entreprise' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ message: "Seul un super administrateur peut modifier le rôle d'un administrateur d'entreprise" });
+    }
+
+    // Compte racine : toute tentative de désactivation bloquée
+    if (statut === 'inactif' && utilisateur.email === PROTECTED_SUPER_ADMIN_EMAIL) {
+      return res.status(403).json({ message: 'Ce compte administrateur est protégé et ne peut pas être désactivé' });
+    }
+
+    // Auto-désactivation refusée (vérifié avant le check de rôle pour donner un message précis)
+    if (statut === 'inactif' && utilisateur.id === req.user.id) {
+      return res.status(409).json({ message: 'Vous ne pouvez pas vous désactiver vous-même.' });
+    }
+
+    // Seul un super_admin peut désactiver un admin_entreprise
+    if (statut === 'inactif' && utilisateur.role === 'admin_entreprise' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ message: 'Seul un super administrateur peut désactiver un administrateur d\'entreprise' });
+    }
+
+    // Dernier admin actif : refuse la désactivation si elle crée un lock-out
+    if (statut === 'inactif' && utilisateur.role === 'admin_entreprise') {
+      const activeAdminCount = await Utilisateur.count({
+        where: {
+          entreprise_id: utilisateur.entreprise_id,
+          role: 'admin_entreprise',
+          statut: 'actif',
+          id: { [Op.ne]: utilisateur.id },
+        },
+      });
+      if (activeAdminCount === 0) {
+        return res.status(409).json({
+          message: 'Impossible de désactiver le dernier administrateur actif de cette entreprise.',
+        });
+      }
     }
 
     const oldData = utilisateur.toJSON();
 
     if (password) {
       await validatePasswordPolicy(password);
-      utilisateur.password_hash = await bcrypt.hash(password, 10);
+      utilisateur.password_hash = await bcrypt.hash(password, BCRYPT_COST);
       emailService.sendPasswordResetConfirmation(email || utilisateur.email)
         .catch(emailErr => logger.error('Erreur envoi email confirmation mot de passe', { error: emailErr.message }));
     }
@@ -328,6 +369,13 @@ async function updateUser(req, res, next) {
     if (statut === 'actif' && ['inactif', 'en_attente'].includes(utilisateur.statut)) {
       emailService.sendAccountReactivated(utilisateur).catch((e) =>
         logger.error('sendAccountReactivated error', { error: e.message })
+      );
+    }
+
+    // Email de désactivation si le compte passe à inactif
+    if (statut === 'inactif' && utilisateur.statut !== 'inactif') {
+      emailService.sendAccountDeactivated(utilisateur).catch((e) =>
+        logger.error('sendAccountDeactivated error', { error: e.message })
       );
     }
 
@@ -341,6 +389,22 @@ async function updateUser(req, res, next) {
 
     if (role && role !== oldData.role) {
       await auditUser.roleChanged(utilisateur, oldData.role, role, req.user, req);
+      emailService.sendRoleChanged(utilisateur, oldData.role, role).catch((e) =>
+        logger.error('sendRoleChanged error', { error: e.message })
+      );
+    }
+
+    if (email && email !== oldData.email) {
+      emailService.sendEmailChanged(
+        { email: oldData.email, prenom: oldData.prenom },
+        { oldEmail: oldData.email, newEmail: email }
+      ).catch((e) => logger.error('sendEmailChanged error', { error: e.message }));
+    }
+
+    if (typeof service !== 'undefined' && (normalizedNextService || null) !== (oldData.service || null) && utilisateur.email) {
+      emailService.sendServiceChanged(utilisateur, oldData.service, normalizedNextService).catch((e) =>
+        logger.error('sendServiceChanged error', { error: e.message })
+      );
     }
 
     res.json(safeUser(utilisateur));
@@ -364,8 +428,8 @@ async function changeUserRole(req, res, next) {
 
     const { role } = req.body;
 
-    if (req.user.role === 'admin_entreprise' && role && !['manager', 'employe'].includes(role)) {
-      return res.status(403).json({ message: 'Vous ne pouvez attribuer que manager ou employe' });
+    if (req.user.role === 'admin_entreprise' && role && !['admin_entreprise', 'manager', 'employe', 'apprenti'].includes(role)) {
+      return res.status(403).json({ message: "Vous ne pouvez attribuer que les rôles admin_entreprise, manager, employe ou apprenti" });
     }
 
     const oldRole = utilisateur.role;
@@ -373,6 +437,9 @@ async function changeUserRole(req, res, next) {
 
     if (role !== oldRole) {
       await auditUser.roleChanged(utilisateur, oldRole, role, req.user, req);
+      emailService.sendRoleChanged(utilisateur, oldRole, role).catch((e) =>
+        logger.error('sendRoleChanged error', { error: e.message })
+      );
     }
 
     res.json(safeUser(utilisateur));
@@ -394,6 +461,14 @@ async function deleteUser(req, res, next) {
       return res.status(403).json({ message: 'Vous ne pouvez supprimer que les utilisateurs de votre entreprise' });
     }
 
+    if (utilisateur.email === PROTECTED_SUPER_ADMIN_EMAIL) {
+      return res.status(403).json({ message: 'Ce compte administrateur est protégé et ne peut pas être supprimé' });
+    }
+
+    if (utilisateur.role === 'admin_entreprise' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ message: 'Seul un super administrateur peut supprimer un administrateur d\'entreprise' });
+    }
+
     if (utilisateur.id === req.user.id) {
       return res.status(403).json({ message: 'Vous ne pouvez pas supprimer votre propre compte' });
     }
@@ -411,8 +486,39 @@ async function deleteUser(req, res, next) {
       }
     }
 
+    // Capturer les données avant suppression (la ligne est effacée après destroy)
+    const employeEmail  = utilisateur.email;
+    const employePrenom = utilisateur.prenom;
+    const employe_nom   = `${utilisateur.prenom || ''} ${utilisateur.nom || ''}`.trim() || 'Un utilisateur';
+    const date_suppression = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+    // Le JWT ne contient pas email/prenom — on charge les données de l'admin pour l'email de confirmation
+    const adminUser = await Utilisateur.findByPk(req.user.id, { attributes: ['id', 'email', 'prenom', 'nom'] });
+    const adminNom  = `${adminUser?.prenom || ''} ${adminUser?.nom || ''}`.trim() || "L'administrateur";
+
     await utilisateur.destroy();
     await auditUser.deleted(utilisateur, req.user, req);
+
+    if (employeEmail) {
+      emailService.sendAccountDeleted(
+        { email: employeEmail, prenom: employePrenom },
+        {
+          employe_nom,
+          message_principal: `Votre compte TeamOff a été supprimé le <strong>${date_suppression}</strong> par <strong>${adminNom}</strong>. Toutes vos données ont été effacées de notre système.`,
+          date_suppression,
+        }
+      ).catch((e) => logger.error('sendAccountDeleted (employee) error', { error: e.message }));
+    }
+
+    if (adminUser?.email) {
+      emailService.sendAccountDeleted(
+        { email: adminUser.email, prenom: adminUser.prenom },
+        {
+          employe_nom,
+          message_principal: `Le compte de <strong>${employe_nom}</strong> a été supprimé le <strong>${date_suppression}</strong>. Toutes les données associées ont été effacées de notre système.`,
+          date_suppression,
+        }
+      ).catch((e) => logger.error('sendAccountDeleted (admin) error', { error: e.message }));
+    }
 
     res.json({ message: 'Utilisateur supprimé avec succès' });
   } catch (err) {
@@ -430,11 +536,19 @@ async function updateOwnProfile(req, res, next) {
     if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
     const { nom, prenom, email, currentPassword, newPassword } = req.body;
+    const oldEmail = utilisateur.email;
 
     await updateOwnPasswordIfRequested(utilisateur, { currentPassword, newPassword, email });
     await applyOwnProfileFields(utilisateur, { nom, prenom, email });
     await utilisateur.save();
     await auditUser.updated(utilisateur, req.user, req);
+
+    if (email && utilisateur.email !== oldEmail) {
+      emailService.sendEmailChanged(
+        { email: oldEmail, prenom: utilisateur.prenom },
+        { oldEmail, newEmail: utilisateur.email }
+      ).catch((e) => logger.error('sendEmailChanged error', { error: e.message }));
+    }
 
     res.json({
       id:      utilisateur.id,
@@ -494,8 +608,9 @@ async function setDelegate(req, res, next) {
 
     const { delegue_id } = req.body;
 
+    let delegue = null;
     if (delegue_id) {
-      const delegue = await Utilisateur.findByPk(delegue_id);
+      delegue = await Utilisateur.findByPk(delegue_id);
       if (!delegue || delegue.entreprise_id !== utilisateur.entreprise_id) {
         return res.status(400).json({ message: 'Délégué introuvable ou hors entreprise' });
       }
@@ -505,6 +620,12 @@ async function setDelegate(req, res, next) {
     }
 
     await utilisateur.update({ delegue_id: delegue_id || null });
+
+    if (delegue) {
+      emailService.sendDelegateAssigned(delegue, utilisateur).catch((e) =>
+        logger.error('sendDelegateAssigned error', { error: e.message })
+      );
+    }
     res.json({ message: 'Délégation mise à jour', delegue_id: utilisateur.delegue_id });
   } catch (err) {
     logger.error('Erreur setDelegate', { error: err.message });

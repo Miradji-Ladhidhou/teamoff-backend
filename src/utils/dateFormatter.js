@@ -40,4 +40,12 @@ function toIsoString(dateValue) {
   return date.toISOString();
 }
 
-module.exports = { isValidTimezone, normalizeTimezone, resolveTimezone, formatDateInTimezone, toIsoString };
+function formatDateFR(dateStr) {
+  if (!dateStr) return '';
+  const s = String(dateStr).split('T')[0];
+  const parts = s.split('-');
+  if (parts.length !== 3) return String(dateStr);
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+module.exports = { isValidTimezone, normalizeTimezone, resolveTimezone, formatDateInTimezone, toIsoString, formatDateFR };

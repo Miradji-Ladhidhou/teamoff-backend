@@ -1,7 +1,7 @@
 'use strict';
 const { body } = require('express-validator');
 
-const VALID_ROLES = ['super_admin', 'admin_entreprise', 'manager', 'employe'];
+const VALID_ROLES = ['super_admin', 'admin_entreprise', 'manager', 'employe', 'apprenti'];
 const VALID_STATUTS = ['actif', 'inactif', 'en_attente'];
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -20,6 +20,7 @@ const createUserRules = [
     .isLength({ max: 255 }),
   body('email')
     .isString().trim().notEmpty()
+    .isEmail().withMessage('email invalide')
     .isLength({ max: 255 }),
   body('role')
     .isIn(VALID_ROLES).withMessage('rôle invalide'),
@@ -50,6 +51,7 @@ const updateUserRules = [
   body('email')
     .optional({ nullable: true })
     .isString()
+    .isEmail().withMessage('email invalide')
     .isLength({ max: 255 }),
   body('role')
     .optional({ nullable: true })

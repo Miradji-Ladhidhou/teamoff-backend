@@ -5,11 +5,31 @@ const jwt = require('jsonwebtoken');
 const { Utilisateur, Entreprise } = require('../models');
 const authService = require('../services/authService');
 const logger = require('../utils/logger');
+const { encryptTotpSecret, decryptTotpSecret } = require('../utils/totpCrypto');
+const { auditAuth } = require('../services/auditHelper');
+const emailService = require('../services/emailService');
+
+// window:1 → ±1 step × 30 s = 90 s de validité maximale pour un code TOTP.
+const TOTP_WINDOW_MS = 90 * 1000;
+
+function isReplay(user, token) {
+  if (!user.totp_used_token || !user.totp_used_at) return false;
+  if (user.totp_used_token !== token) return false;
+  return (Date.now() - new Date(user.totp_used_at).getTime()) < TOTP_WINDOW_MS;
+}
+
+async function markUsed(user, token) {
+  await user.update({ totp_used_token: token, totp_used_at: new Date() });
+}
 
 async function setup2FA(req, res) {
   try {
     const user = await Utilisateur.findByPk(req.user.id);
     if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
+
+    if (user.totp_enabled) {
+      return res.status(409).json({ message: 'Le 2FA est déjà activé. Désactivez-le d\'abord avant de le reconfigurer.' });
+    }
 
     const secret = speakeasy.generateSecret({
       name: `TeamOff (${user.email})`,
@@ -17,8 +37,8 @@ async function setup2FA(req, res) {
       length: 20,
     });
 
-    // Store secret temporarily (not yet enabled)
-    await user.update({ totp_secret: secret.base32 });
+    // Stocker chiffré — AES-256-GCM via TOTP_ENCRYPTION_KEY
+    await user.update({ totp_secret: encryptTotpSecret(secret.base32) });
 
     const qrCodeDataUrl = await QRCode.toDataURL(secret.otpauth_url);
 
@@ -39,16 +59,29 @@ async function enable2FA(req, res) {
       return res.status(400).json({ message: 'Configurez d\'abord le 2FA' });
     }
 
+    const token = String(code).replace(/\s/g, '');
+
+    if (isReplay(user, token)) {
+      return res.status(401).json({ message: 'Code TOTP déjà utilisé. Attendez le prochain code.' });
+    }
+
     const valid = speakeasy.totp.verify({
-      secret: user.totp_secret,
+      secret: decryptTotpSecret(user.totp_secret),
       encoding: 'base32',
-      token: String(code).replace(/\s/g, ''),
+      token,
       window: 1,
     });
 
     if (!valid) return res.status(400).json({ message: 'Code invalide' });
 
+    await markUsed(user, token);
     await user.update({ totp_enabled: true });
+    auditAuth.twoFactorEnabled(user, req).catch((e) =>
+      logger.error('auditAuth.twoFactorEnabled error', { error: e.message })
+    );
+    emailService.send2FAEnabled(user).catch((e) =>
+      logger.error('send2FAEnabled error', { error: e.message })
+    );
     res.json({ message: '2FA activé avec succès' });
   } catch (err) {
     logger.error('enable2FA error', { error: err.message });
@@ -68,6 +101,12 @@ async function disable2FA(req, res) {
     if (!valid) return res.status(400).json({ message: 'Mot de passe incorrect' });
 
     await user.update({ totp_secret: null, totp_enabled: false });
+    auditAuth.twoFactorDisabled(user, req).catch((e) =>
+      logger.error('auditAuth.twoFactorDisabled error', { error: e.message })
+    );
+    emailService.send2FADisabled(user).catch((e) =>
+      logger.error('send2FADisabled error', { error: e.message })
+    );
     res.json({ message: '2FA désactivé' });
   } catch (err) {
     logger.error('disable2FA error', { error: err.message });
@@ -94,15 +133,22 @@ async function verify2FA(req, res) {
       return res.status(400).json({ message: '2FA non configuré' });
     }
 
+    const token = String(code).replace(/\s/g, '');
+
+    if (isReplay(user, token)) {
+      return res.status(401).json({ message: 'Code TOTP déjà utilisé. Attendez le prochain code.' });
+    }
+
     const valid = speakeasy.totp.verify({
-      secret: user.totp_secret,
+      secret: decryptTotpSecret(user.totp_secret),
       encoding: 'base32',
-      token: String(code).replace(/\s/g, ''),
+      token,
       window: 1,
     });
 
     if (!valid) return res.status(400).json({ message: 'Code invalide' });
 
+    await markUsed(user, token);
     const accessToken = authService.generateAccessToken(user);
     const refreshToken = jwt.sign(
       { id: user.id, type: 'refresh' },
@@ -125,6 +171,10 @@ async function verify2FA(req, res) {
     };
     res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS);
 
+    auditAuth.twoFactorVerified(user, req).catch((e) =>
+      logger.error('auditAuth.twoFactorVerified error', { error: e.message })
+    );
+
     res.json({
       token: accessToken,
       utilisateur: {
@@ -132,6 +182,7 @@ async function verify2FA(req, res) {
         email: user.email, role: user.role,
         entreprise_id: user.entreprise_id,
         entreprise_nom: entreprise?.nom,
+        totp_enabled: user.totp_enabled ?? false,
       },
     });
   } catch (err) {
@@ -140,4 +191,33 @@ async function verify2FA(req, res) {
   }
 }
 
-module.exports = { setup2FA, enable2FA, disable2FA, verify2FA };
+async function adminDisable2FA(req, res) {
+  try {
+    const targetUser = await Utilisateur.findByPk(req.params.userId);
+    if (!targetUser) return res.status(404).json({ message: 'Utilisateur introuvable' });
+
+    if (!targetUser.totp_enabled) {
+      return res.status(400).json({ message: 'Le 2FA n\'est pas activé pour cet utilisateur' });
+    }
+
+    await targetUser.update({
+      totp_secret: null,
+      totp_enabled: false,
+      totp_used_token: null,
+      totp_used_at: null,
+    });
+
+    auditAuth.twoFactorDisabled(targetUser, req).catch((e) =>
+      logger.error('auditAuth.twoFactorDisabled (admin) error', { error: e.message })
+    );
+
+    logger.info(`[admin-2fa] Super admin ${req.user.id} a désactivé le 2FA de ${targetUser.email} (${targetUser.id})`);
+
+    res.json({ message: `2FA désactivé pour ${targetUser.prenom} ${targetUser.nom}` });
+  } catch (err) {
+    logger.error('adminDisable2FA error', { error: err.message });
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+}
+
+module.exports = { setup2FA, enable2FA, disable2FA, verify2FA, adminDisable2FA };

@@ -59,7 +59,7 @@ const REFRESH_COOKIE_OPTIONS = {
 
 async function login(req, res, next) {
   try {
-    const data = await authService.loginUtilisateur(req.body);
+    const data = await authService.loginUtilisateur(req.body, { ip: req.ip, userAgent: req.get?.('User-Agent') });
 
     await auditAuth.loginSuccess(data.utilisateur, req);
 
@@ -98,15 +98,25 @@ async function login(req, res, next) {
 // ---------------------------
 async function logout(req, res, next) {
   try {
-    // Invalidate the refresh token server-side (decode only — no verify needed)
     const cookieToken = req.cookies?.refreshToken;
     if (cookieToken) {
+      let decoded;
       try {
-        const decoded = jwt.decode(cookieToken);
-        if (decoded?.id) {
-          await Utilisateur.update({ refresh_token_hash: null }, { where: { id: decoded.id } });
-        }
-      } catch {}
+        // ignoreExpiration : un token expiré mais bien signé reste légitime pour le logout
+        // (l'utilisateur doit pouvoir se déconnecter même après l'expiration du refresh).
+        // Une signature invalide → token forgé → rejet 401 sans modifier la DB.
+        decoded = jwt.verify(
+          cookieToken,
+          process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
+          { ignoreExpiration: true }
+        );
+      } catch {
+        res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
+        return res.status(401).json({ message: 'Refresh token invalide' });
+      }
+      if (decoded?.id) {
+        await Utilisateur.update({ refresh_token_hash: null }, { where: { id: decoded.id } });
+      }
     }
     res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
     await auditAuth.logout(req.user, req);
@@ -169,7 +179,7 @@ async function refresh(req, res, next) {
 
     // 7. Répondre avec le nouveau couple access + refresh token
     res.cookie('refreshToken', newRefreshToken, REFRESH_COOKIE_OPTIONS);
-    const newAccessToken = authService.generateAccessToken(user, 60);
+    const newAccessToken = authService.generateAccessToken(user);
     res.json({ token: newAccessToken });
   } catch (err) {
     next(err);
@@ -184,12 +194,13 @@ async function forgotPassword(req, res) {
 
   try {
     await authService.forgotPassword(req.body?.email);
-
-    // === Audit demande reset ===
-    await auditAuth.passwordResetRequest(req.body?.email, req);
   } catch (_) {
-    // Reponse volontairement identique pour eviter la fuite d'information.
+    // Reponse volontairement identique pour eviter la fuite d'information (anti-enumeration).
   }
+
+  // Audit toujours écrit — que l'email existe ou non, que l'envoi ait réussi ou non.
+  // L'audit ne doit pas dépendre du succès du service email.
+  auditAuth.passwordResetRequest(req.body?.email, req).catch(() => {});
 
   return res.status(200).json(genericResponse);
 }
@@ -252,12 +263,7 @@ async function setPassword(req, res) {
     const { token, password, confirmPassword } = req.body;
     const user = await authService.setPassword(token, password, confirmPassword);
 
-    try {
-      await emailService.sendPasswordResetConfirmation(user.email);
-    } catch (mailErr) {
-      logger.error('setPassword: erreur email confirmation', { error: mailErr.message });
-    }
-
+    // welcome-activated est déjà envoyé dans authService.setPassword
     await auditAuth.passwordResetSuccess(user, req);
 
     res.json({ message: 'Mot de passe défini avec succès. Vous pouvez vous connecter.' });

@@ -1,6 +1,8 @@
 // services/quotasService.js
-const { CompteurConges, CongeType, Utilisateur, Entreprise, sequelize } = require('../models');
+const { CompteurConges, CongeType, Utilisateur, Entreprise, Conge, sequelize } = require('../models');
+const { Op } = require('sequelize');
 const { getLeaveRules } = require('./politiqueConges');
+const { auditCounter } = require('./auditHelper');
 const logger = require('../utils/logger');
 
 const isQuotasDebug = process.env.QUOTAS_DEBUG === 'true';
@@ -29,6 +31,19 @@ function getCurrentMonthKey() {
   return getMonthKey(now.getFullYear(), now.getMonth() + 1);
 }
 
+// Normalise un mois-clé potentiellement stocké sans zero-padding (ex: "2026-9" → "2026-09").
+// Les données antérieures à l'introduction de padStart dans getMonthKey peuvent avoir
+// le format court, qui provoque des faux positifs dans la comparaison lexicographique.
+function normalizeMonthKey(key) {
+  if (!key) return null;
+  const parts = String(key).split('-');
+  if (parts.length !== 2) return key;
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return key;
+  return getMonthKey(year, month);
+}
+
 function normalizeCounterPayload(payload = {}) {
   const sourceAcquired = payload.conges_acquis ?? payload.solde_conges ?? payload.jours_acquis;
 
@@ -47,14 +62,27 @@ function computeProratedAcquiredDays({ annualQuota }) {
   return Number(Math.max(0, quota).toFixed(2));
 }
 
-function getMonthlyAccrualForType({ leaveRules, congeType }) {
+function getMonthlyAccrualForType({ leaveRules, congeType, mois = null }) {
   const configured = toNumber(leaveRules?.accrual_by_type?.[congeType.id], NaN);
   if (Number.isFinite(configured) && configured >= 0) {
     return Number(configured.toFixed(2));
   }
 
-  const fallback = toNumber(congeType?.quota_annuel, 0) / 12;
-  return Number(Math.max(0, fallback).toFixed(2));
+  const annualQuota = toNumber(congeType?.quota_annuel, null);
+  if (annualQuota === null || annualQuota === undefined || !Number.isFinite(Number(congeType?.quota_annuel))) {
+    logger.warn(`[quotas] quota_annuel non défini sur le type "${congeType?.libelle}" (id=${congeType?.id}) — crédit mensuel = 0. Configurez accrual_by_type ou quota_annuel.`);
+    return 0;
+  }
+
+  const monthly = Number(Math.max(0, annualQuota / 12).toFixed(2));
+
+  // Correction décembre : ajustement pour atteindre exactement le quota annuel
+  if (mois === 12) {
+    const remainder = Number(Math.max(0, annualQuota - monthly * 11).toFixed(2));
+    return remainder;
+  }
+
+  return monthly;
 }
 
 async function getEntrepriseLeaveRules(entrepriseId, transaction = null) {
@@ -175,7 +203,7 @@ async function initializeUserCounters({ entrepriseId, utilisateurId, annee = get
 async function initQuotaAnnuel(entrepriseId, annee) {
   return await sequelize.transaction(async (t) => {
     const [utilisateurs, congeTypes, leaveRules] = await Promise.all([
-      Utilisateur.findAll({ where: { entreprise_id: entrepriseId }, attributes: ['id'], transaction: t }),
+      Utilisateur.findAll({ where: { entreprise_id: entrepriseId, statut: 'actif' }, attributes: ['id'], transaction: t }),
       CongeType.findAll({ where: { entreprise_id: entrepriseId }, transaction: t }),
       getEntrepriseLeaveRules(entrepriseId),
     ]);
@@ -220,6 +248,19 @@ async function initQuotaAnnuel(entrepriseId, annee) {
           await newCounter.save({ transaction: t });
 
           quotasLog(`[report-annuel] ${utilisateur.id} / ${type.libelle}: ${carry}j reportes de ${prevYear} vers ${annee}`);
+
+          const { logMouvement } = require('./mouvementSoldeService');
+          await logMouvement({
+            entreprise_id: entrepriseId,
+            utilisateur_id: utilisateur.id,
+            conge_type_id: type.id,
+            annee: Number(annee),
+            type: 'report_annee',
+            quantite: +carry,
+            solde_apres: toNumber(newCounter.jours_acquis, 0) - toNumber(newCounter.jours_reserves, 0),
+            description: `Report année ${prevYear} → ${annee}`,
+            transaction: t,
+          });
         }
       }
     }
@@ -251,7 +292,7 @@ async function ajouterAcquisitionMensuelle(entrepriseId, annee, mois, options = 
   return sequelize.transaction(async (t) => {
     const [leaveRules, utilisateurs, congeTypes, existingCounters] = await Promise.all([
       getEntrepriseLeaveRules(entrepriseId, t),
-      Utilisateur.findAll({ where: { entreprise_id: entrepriseId }, attributes: ['id', 'prenom', 'nom'], transaction: t }),
+      Utilisateur.findAll({ where: { entreprise_id: entrepriseId, statut: 'actif' }, attributes: ['id', 'prenom', 'nom'], transaction: t }),
       CongeType.findAll({ where: { entreprise_id: entrepriseId }, transaction: t }),
       CompteurConges.findAll({
         where: { entreprise_id: entrepriseId, annee: targetYear },
@@ -277,7 +318,9 @@ async function ajouterAcquisitionMensuelle(entrepriseId, annee, mois, options = 
 
         const key = `${utilisateur.id}::${type.id}`;
         let compteur = countersByKey.get(key) || null;
-        const lastCreditMonth = compteur?.dernier_credit_mensuel || null;
+        // normalizeMonthKey : corrige les valeurs stockées sans zero-padding
+        // (ex: "2026-9" → "2026-09") afin que la comparaison lexicographique soit valide.
+        const lastCreditMonth = normalizeMonthKey(compteur?.dernier_credit_mensuel) || null;
 
         const alreadyCredited = lastCreditMonth === targetMonthKey;
         const hasFutureCredit = Boolean(lastCreditMonth) && lastCreditMonth > targetMonthKey;
@@ -287,7 +330,7 @@ async function ajouterAcquisitionMensuelle(entrepriseId, annee, mois, options = 
           continue;
         }
 
-        const monthlyCredit = getMonthlyAccrualForType({ leaveRules, congeType: type });
+        const monthlyCredit = getMonthlyAccrualForType({ leaveRules, congeType: type, mois: targetMonth });
 
         if (!compteur && apply) {
           compteur = await ensureCounter({
@@ -326,6 +369,19 @@ async function ajouterAcquisitionMensuelle(entrepriseId, annee, mois, options = 
           compteur.dernier_credit_mensuel = targetMonthKey;
           await compteur.save({ transaction: t });
           applied += 1;
+
+          const { logMouvement } = require('./mouvementSoldeService');
+          await logMouvement({
+            entreprise_id: entrepriseId,
+            utilisateur_id: utilisateur.id,
+            conge_type_id: type.id,
+            annee: targetYear,
+            type: 'credit_mensuel',
+            quantite: +monthlyCredit,
+            solde_apres: toNumber(compteur.jours_acquis, 0) - toNumber(compteur.jours_reserves, 0),
+            description: `Crédit mensuel · ${targetMonthKey}`,
+            transaction: t,
+          });
         } else {
           toApply += 1;
         }
@@ -413,7 +469,25 @@ async function listCountersForUser(entrepriseId, utilisateurId, annee) {
   }));
 }
 
-async function createOrUpdateCounter({ entrepriseId, utilisateurId, congeTypeId, annee, values }) {
+// Calcule le total des jours réservés par les congés encore en attente
+// pour un utilisateur/type/année donné.
+async function getPendingReservedDays({ utilisateurId, congeTypeId, annee, transaction = null }) {
+  const rows = await Conge.findAll({
+    where: {
+      utilisateur_id: utilisateurId,
+      conge_type_id: congeTypeId,
+      statut: { [Op.in]: ['en_attente_manager', 'valide_manager'] },
+    },
+    attributes: ['jours_calcules', 'date_debut'],
+    transaction,
+  });
+  // Ne compter que les congés dont la date de début est dans l'année concernée
+  return rows
+    .filter(r => new Date(r.date_debut).getFullYear() === Number(annee))
+    .reduce((sum, r) => sum + toNumber(r.jours_calcules, 0), 0);
+}
+
+async function createOrUpdateCounter({ entrepriseId, utilisateurId, congeTypeId, annee, values, performedBy = null, req = null }) {
   return sequelize.transaction(async (t) => {
     const utilisateur = await Utilisateur.findOne({
       where: { id: utilisateurId, entreprise_id: entrepriseId },
@@ -433,13 +507,72 @@ async function createOrUpdateCounter({ entrepriseId, utilisateurId, congeTypeId,
     });
 
     const normalized = normalizeCounterPayload(values);
+
+    // Calculer les jours effectivement réservés par des congés en attente
+    const pendingReserved = await getPendingReservedDays({
+      utilisateurId,
+      congeTypeId,
+      annee,
+      transaction: t,
+    });
+
+    if (pendingReserved > 0) {
+      if (values.jours_reserves === undefined || values.jours_reserves === null) {
+        // jours_reserves absent du payload : préserver la valeur actuelle pour éviter
+        // le zeroing silencieux causé par normalizeCounterPayload defaultant à 0.
+        normalized.jours_reserves = toNumber(compteur.jours_reserves, 0);
+      } else if (normalized.jours_reserves < pendingReserved) {
+        // Valeur explicitement trop basse : bloquer pour éviter la double consommation.
+        const err = new Error(
+          `Impossible de définir jours_reserves à ${normalized.jours_reserves} : ` +
+          `${pendingReserved} jour(s) sont actuellement réservés par des congés en attente. ` +
+          `Valeur minimale autorisée : ${pendingReserved}.`
+        );
+        err.statusCode = 409;
+        throw err;
+      }
+    }
+
+    const before = {
+      jours_acquis:   toNumber(compteur.jours_acquis, 0),
+      jours_pris:     toNumber(compteur.jours_pris, 0),
+      jours_reportes: toNumber(compteur.jours_reportes, 0),
+      jours_reserves: toNumber(compteur.jours_reserves, 0),
+    };
+
     await compteur.update(normalized, { transaction: t });
 
-    return compteur;
+    const after = {
+      jours_acquis:   toNumber(compteur.jours_acquis, 0),
+      jours_pris:     toNumber(compteur.jours_pris, 0),
+      jours_reportes: toNumber(compteur.jours_reportes, 0),
+      jours_reserves: toNumber(compteur.jours_reserves, 0),
+    };
+
+    auditCounter.updated(compteur, before, after, performedBy, req).catch((e) =>
+      logger.error('auditCounter.updated error', { error: e.message })
+    );
+
+    const delta = (toNumber(after.jours_acquis, 0) - toNumber(after.jours_reserves, 0))
+                - (toNumber(before.jours_acquis, 0) - toNumber(before.jours_reserves, 0));
+    const { logMouvement } = require('./mouvementSoldeService');
+    await logMouvement({
+      entreprise_id: compteur.entreprise_id,
+      utilisateur_id: compteur.utilisateur_id,
+      conge_type_id: compteur.conge_type_id,
+      annee: compteur.annee,
+      type: 'ajustement_admin',
+      quantite: Number(delta.toFixed(2)),
+      solde_apres: toNumber(after.jours_acquis, 0) - toNumber(after.jours_reserves, 0),
+      description: 'Ajustement administratif',
+      transaction: t,
+    });
+
+    return { compteur, before, after };
   });
 }
 
-async function deleteCounter({ entrepriseId, counterId }) {
+async function deleteCounter({ entrepriseId, counterId, performedBy = null, req = null }) {
   return sequelize.transaction(async (t) => {
     const where = { id: counterId };
     if (entrepriseId) {
@@ -456,6 +589,10 @@ async function deleteCounter({ entrepriseId, counterId }) {
     }
 
     await compteur.destroy({ transaction: t });
+
+    auditCounter.deleted(compteur, performedBy, req).catch((e) =>
+      logger.error('auditCounter.deleted error', { error: e.message })
+    );
   });
 }
 

@@ -1,7 +1,6 @@
 const DEFAULT_LEAVE_POLICY = {
-  overlap_policy: 'block',
+  overlap_behavior: 'block',
   max_employees_on_leave: {
-    global: null,
     by_service: {}
   },
   blocked_days: {
@@ -84,19 +83,15 @@ function normalizeNotificationSettings(settings = {}) {
 }
 
 function normalizeLeavePolicy(rawPolicy = {}) {
-  const overlapPolicy = ['block', 'warning', 'allow'].includes(rawPolicy?.overlap_policy)
-    ? rawPolicy.overlap_policy
-    : DEFAULT_LEAVE_POLICY.overlap_policy;
-
   const approvalWorkflow = normalizeApprovalWorkflow(rawPolicy?.approval_workflow);
-
-  const globalLimit = Number(rawPolicy?.max_employees_on_leave?.global);
-  const normalizedGlobalLimit = Number.isFinite(globalLimit) && globalLimit > 0 ? globalLimit : null;
+  const overlapBehavior = ['block', 'warning'].includes(rawPolicy?.overlap_behavior)
+    ? rawPolicy.overlap_behavior
+    : DEFAULT_LEAVE_POLICY.overlap_behavior;
 
   return {
-    overlap_policy: overlapPolicy,
+    overlap_behavior: overlapBehavior,
     max_employees_on_leave: {
-      global: normalizedGlobalLimit,
+      global: rawPolicy?.max_employees_on_leave?.global,
       by_service: rawPolicy?.max_employees_on_leave?.by_service || {},
     },
     blocked_days: normalizeBlockedDays(rawPolicy?.blocked_days),
@@ -108,6 +103,10 @@ function normalizeLeavePolicy(rawPolicy = {}) {
     notification_settings: normalizeNotificationSettings(rawPolicy?.notification_settings),
     report_autorise: rawPolicy?.report_autorise === true,
     report_max_jours: Math.max(0, Number(rawPolicy?.report_max_jours) || 0),
+    // Réservation N+1 sans solde — true par défaut pour ne pas casser les entreprises existantes.
+    autoriser_reservation_sans_solde: rawPolicy?.autoriser_reservation_sans_solde !== false,
+    // Historique de solde visible par l'employé — true par défaut.
+    afficher_historique_employe: rawPolicy?.afficher_historique_employe !== false,
   };
 }
 
@@ -125,8 +124,8 @@ function getEffectiveLeaveRules(baseRules, service) {
     },
   };
 
-  if (['block', 'warning', 'allow'].includes(servicePolicy.overlap_policy)) {
-    effective.overlap_policy = servicePolicy.overlap_policy;
+  if (['block', 'warning'].includes(servicePolicy.overlap_behavior)) {
+    effective.overlap_behavior = servicePolicy.overlap_behavior;
   }
 
   if (['auto', 'manager', 'manager_admin', 'manager_only', 'admin_only'].includes(servicePolicy.approval_workflow)) {
@@ -135,12 +134,16 @@ function getEffectiveLeaveRules(baseRules, service) {
     effective.approval_workflow = normalizeApprovalWorkflow(servicePolicy.approval_workflow, effective.approval_workflow);
   }
 
-  if (Number.isFinite(Number(servicePolicy.minimum_notice_days))) {
-    effective.minimum_notice_days = Math.max(0, Number(servicePolicy.minimum_notice_days));
+  // N'écraser le préavis global que si la politique de service définit explicitement > 0.
+  // Une valeur 0 signifie "non configuré" (défaut UI) et ne doit pas annuler le réglage global.
+  const svcNotice = Number(servicePolicy.minimum_notice_days);
+  if (Number.isFinite(svcNotice) && svcNotice > 0) {
+    effective.minimum_notice_days = svcNotice;
   }
 
-  if (Number.isFinite(Number(servicePolicy.max_consecutive_days))) {
-    effective.max_consecutive_days = Math.max(1, Number(servicePolicy.max_consecutive_days));
+  const svcMaxConsec = Number(servicePolicy.max_consecutive_days);
+  if (Number.isFinite(svcMaxConsec) && svcMaxConsec > 0) {
+    effective.max_consecutive_days = Math.max(1, svcMaxConsec);
   }
 
   if (Number.isFinite(Number(servicePolicy.max_employees_on_leave))) {

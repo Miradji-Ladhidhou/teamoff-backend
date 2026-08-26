@@ -5,6 +5,7 @@ const path = require('path');
 const { Utilisateur, Entreprise } = require('../models');
 const systemSettingsService = require('./systemSettingsService');
 const logger = require('../utils/logger');
+const { formatDateFR } = require('../utils/dateFormatter');
 
 const isEmailDebug = process.env.EMAIL_DEBUG === 'true';
 
@@ -17,6 +18,19 @@ function emailLog(...args) {
     logger.debug(...args);
   }
 }
+
+// HTML-encode user-controlled strings to prevent injection into email templates.
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Keys whose values are pre-built server-side HTML and must NOT be escaped.
+const SAFE_HTML_KEYS = new Set(['content', 'table_rows', 'comments_rows', 'decompte_rows', 'employe_context']);
 
 class EmailService {
   constructor() {
@@ -183,7 +197,11 @@ class EmailService {
   replaceTemplateVariables(html, data) {
     Object.keys(data).forEach(key => {
       const regex = new RegExp(`{{${key}}}`, 'g');
-      html = html.replace(regex, data[key] || '');
+      // Keys in SAFE_HTML_KEYS or ending with '_html' contain server-built HTML — preserve as-is.
+      // All other values are user-controlled and must be HTML-escaped.
+      const isSafeHtml = SAFE_HTML_KEYS.has(key) || key.endsWith('_html');
+      const value = isSafeHtml ? (data[key] || '') : escapeHtml(data[key] ?? '');
+      html = html.replace(regex, value);
     });
 
     const globals = {
@@ -219,13 +237,6 @@ class EmailService {
       'password-reset-confirmation': `
         <p>Bonjour,</p>
         <p>Votre mot de passe a été mis à jour avec succès.</p>
-        <p><a href="${data.login_url || '#'}">Se connecter</a></p>
-      `,
-      'user-invitation': `
-        <p>Bonjour,</p>
-        <p>${data.inviter_nom || 'Un administrateur'} vous a invité à rejoindre ${process.env.EMAIL_NAME || 'TeamOff'}.</p>
-        <p><strong>Email :</strong> ${data.email || 'Non renseigné'}</p>
-        <p><strong>Mot de passe temporaire :</strong> ${data.password_temporaire || 'Non renseigné'}</p>
         <p><a href="${data.login_url || '#'}">Se connecter</a></p>
       `,
       'registration-confirmation': `
@@ -264,6 +275,13 @@ class EmailService {
         <p><strong>Période :</strong> ${data.dates || 'Non renseignée'}</p>
         <p><strong>Commentaire :</strong> ${data.commentaire || data.raison || 'Non renseignée'}</p>
         <p><a href="${data.dashboard_url || '#'}">Voir mon espace</a></p>
+      `,
+      'leave-cancelled-by-employee': `
+        <p>Bonjour ${data.destinataire_prenom || ''},</p>
+        <p><strong>${data.demandeur_nom || 'Un employé'}</strong> a annulé sa demande de congé.</p>
+        <p><strong>Période :</strong> du ${data.date_debut || '?'} au ${data.date_fin || '?'}</p>
+        <p>Aucune action de votre part n'est requise. La demande a été supprimée.</p>
+        <p><a href="${data.action_url || '#'}">Voir les congés</a></p>
       `,
       'monthly-report': `
         <p>Bonjour,</p>
@@ -493,20 +511,6 @@ class EmailService {
     );
   }
 
-  async sendNewUserInvitation(email, temporaryPassword, inviterName) {
-    return this.sendEmail(
-      email,
-      'Vous avez été invité à rejoindre TeamOff',
-      'user-invitation',
-      {
-        inviter_nom: inviterName,
-        email,
-        password_temporaire: temporaryPassword,
-        login_url: `${getFrontendUrl()}/login`,
-      }
-    );
-  }
-
   async sendMonthlyReport(email, reportData, entreprise = null) {
     try {
       // Si aucune entreprise n'est fournie, la recuperer depuis l'utilisateur
@@ -582,8 +586,8 @@ class EmailService {
         destinataire_prenom: utilisateur.prenom || 'Collaborateur',
         type_conge: conge.conge_type?.libelle || 'Congé',
         delai_label: delaiLabel,
-        date_debut: conge.date_debut,
-        date_fin: conge.date_fin,
+        date_debut: formatDateFR(conge.date_debut),
+        date_fin: formatDateFR(conge.date_fin),
         jours_calcules: conge.jours_calcules || '?',
         action_url: `${getFrontendUrl()}/dashboard`,
       }
@@ -636,8 +640,8 @@ class EmailService {
         destinataire_prenom: manager.prenom || 'Manager',
         demandeur_nom: `${conge.utilisateur?.prenom || ''} ${conge.utilisateur?.nom || ''}`.trim(),
         type_conge: conge.conge_type?.libelle || 'Congé',
-        date_debut: conge.date_debut,
-        date_fin: conge.date_fin,
+        date_debut: formatDateFR(conge.date_debut),
+        date_fin: formatDateFR(conge.date_fin),
         jours_calcules: conge.jours_calcules || '?',
         jours_attente: joursAttente,
         date_soumission: new Date(conge.created_at).toLocaleDateString('fr-FR'),
@@ -662,6 +666,84 @@ class EmailService {
   }
 
   // ---------------------------
+  // Désactivation compte utilisateur
+  // ---------------------------
+  async sendAccountDeactivated(utilisateur) {
+    return this.sendEmail(
+      utilisateur.email,
+      'Votre compte a été suspendu',
+      'account-deactivated',
+      {
+        destinataire_prenom: utilisateur.prenom || 'Utilisateur',
+      }
+    );
+  }
+
+  // ---------------------------
+  // Changement de rôle utilisateur
+  // ---------------------------
+  async sendRoleChanged(utilisateur, ancienRole, nouveauRole) {
+    const labels = {
+      employe:           'Employé',
+      manager:           'Manager',
+      admin_entreprise:  'Administrateur d\'entreprise',
+      super_admin:       'Super administrateur',
+    };
+    return this.sendEmail(
+      utilisateur.email,
+      'Votre rôle a été modifié',
+      'role-changed',
+      {
+        destinataire_prenom: utilisateur.prenom || 'Utilisateur',
+        ancien_role:  labels[ancienRole]  || ancienRole,
+        nouveau_role: labels[nouveauRole] || nouveauRole,
+        login_url: `${getFrontendUrl()}/login`,
+      }
+    );
+  }
+
+  // ---------------------------
+  // Sécurité — 2FA activé
+  // ---------------------------
+  async send2FAEnabled(utilisateur) {
+    return this.sendEmail(
+      utilisateur.email,
+      'Double authentification activée sur votre compte',
+      '2fa-enabled',
+      { destinataire_prenom: utilisateur.prenom || 'Utilisateur' }
+    );
+  }
+
+  // ---------------------------
+  // Sécurité — 2FA désactivé
+  // ---------------------------
+  async send2FADisabled(utilisateur) {
+    return this.sendEmail(
+      utilisateur.email,
+      'Double authentification désactivée sur votre compte',
+      '2fa-disabled',
+      { destinataire_prenom: utilisateur.prenom || 'Utilisateur' }
+    );
+  }
+
+  // ---------------------------
+  // Désignation d'un délégué
+  // ---------------------------
+  async sendDelegateAssigned(delegue, manager) {
+    const managerNom = `${manager.prenom || ''} ${manager.nom || ''}`.trim() || 'Votre manager';
+    return this.sendEmail(
+      delegue.email,
+      'Vous avez été désigné délégué',
+      'delegate-assigned',
+      {
+        destinataire_prenom: delegue.prenom || 'Utilisateur',
+        manager_nom: managerNom,
+        dashboard_url: `${getFrontendUrl()}/conges`,
+      }
+    );
+  }
+
+  // ---------------------------
   // Suspension entreprise
   // ---------------------------
   async sendEnterpriseSuspended(admin, entreprise) {
@@ -673,6 +755,21 @@ class EmailService {
         destinataire_prenom: admin.prenom || 'Administrateur',
         entreprise_nom: entreprise.nom,
         support_email: process.env.SUPPORT_EMAIL || process.env.EMAIL_FROM || 'support@teamoff.fr',
+      }
+    );
+  }
+
+  // ---------------------------
+  // Réactivation entreprise
+  // ---------------------------
+  async sendEnterpriseReactivated(admin, entreprise) {
+    return this.sendEmail(
+      admin.email,
+      `Compte entreprise réactivé : ${entreprise.nom}`,
+      'enterprise-reactivated',
+      {
+        destinataire_prenom: admin.prenom || 'Administrateur',
+        entreprise_nom: entreprise.nom,
       }
     );
   }
@@ -714,13 +811,141 @@ class EmailService {
     );
   }
 
+  async sendLeaveUpdatedSelfConfirm(employe, typeConge, anciennePeriode, nouvellePeriode, ancienCommentaire, nouveauCommentaire) {
+    return this.sendEmail(
+      employe.email,
+      'Votre demande de congé a été modifiée',
+      'leave-updated-self-confirm',
+      {
+        destinataire_prenom: employe.prenom || 'Collaborateur',
+        type_conge: typeConge,
+        ancienne_periode: anciennePeriode,
+        nouvelle_periode: nouvellePeriode,
+        ancien_commentaire_employe: ancienCommentaire || 'Aucun',
+        commentaire_employe: nouveauCommentaire || 'Aucun',
+        action_url: `${getFrontendUrl()}/conges`,
+      }
+    );
+  }
+
+  async sendLeaveCancelledByAdmin(manager, employeNom, adminNom, dateDebut, dateFin, commentaire) {
+    return this.sendEmail(
+      manager.email,
+      `Congé de ${employeNom} annulé par l'administration`,
+      'leave-cancelled-by-admin',
+      {
+        destinataire_prenom: manager.prenom || 'Responsable',
+        employe_nom: employeNom,
+        admin_nom: adminNom,
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        commentaire: commentaire || 'Aucun',
+        action_url: `${getFrontendUrl()}/conges`,
+      }
+    );
+  }
+
+  async sendLeaveCancelledSelfConfirm(employe, dateDebut, dateFin, statutLabel, commentaire) {
+    return this.sendEmail(
+      employe.email,
+      'Confirmation d\'annulation de votre congé',
+      'leave-cancelled-self-confirm',
+      {
+        destinataire_prenom: employe.prenom || 'Collaborateur',
+        statut_conge_label: statutLabel,
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        commentaire: commentaire || 'Aucun',
+        action_url: `${getFrontendUrl()}/conges`,
+      }
+    );
+  }
+
+  async sendBalanceAdjusted(utilisateur, congeTypeLibelle, ancienSolde, nouveauSolde) {
+    const delta = Number((nouveauSolde - ancienSolde).toFixed(2));
+    const signe = delta >= 0 ? `+${delta}` : `${delta}`;
+    return this.sendEmail(
+      utilisateur.email,
+      `Votre solde de ${congeTypeLibelle} a été ajusté`,
+      'balance-adjusted',
+      {
+        destinataire_prenom: utilisateur.prenom || 'Collaborateur',
+        type_conge: congeTypeLibelle,
+        ancien_solde: String(ancienSolde),
+        nouveau_solde: String(nouveauSolde),
+        delta: signe,
+        action_url: `${getFrontendUrl()}/dashboard`,
+      }
+    );
+  }
+
+  async sendLeaveRejectedManagerInfo(manager, { employe_nom, admin_nom, type_conge, date_debut, date_fin, commentaire }) {
+    return this.sendEmail(
+      manager.email,
+      `Pour information — congé de ${employe_nom} refusé par l'administrateur`,
+      'leave-rejected-manager-info',
+      {
+        destinataire_prenom: manager.prenom || 'Manager',
+        employe_nom,
+        admin_nom,
+        type_conge,
+        date_debut,
+        date_fin,
+        commentaire: commentaire || 'Aucun',
+        action_url: `${getFrontendUrl()}/conges`,
+      }
+    );
+  }
+
+  async sendEmailChanged(recipient, { oldEmail, newEmail }) {
+    return this.sendEmail(
+      recipient.email,
+      'Votre adresse email TeamOff a été modifiée',
+      'email-changed',
+      {
+        destinataire_prenom: recipient.prenom || 'Collaborateur',
+        ancienne_adresse: oldEmail,
+        nouvelle_adresse: newEmail,
+      }
+    );
+  }
+
+  async sendServiceChanged(utilisateur, ancienService, nouveauService) {
+    return this.sendEmail(
+      utilisateur.email,
+      'Votre service a été modifié',
+      'service-changed',
+      {
+        destinataire_prenom: utilisateur.prenom || 'Collaborateur',
+        ancien_service: ancienService || 'Non défini',
+        nouveau_service: nouveauService || 'Non défini',
+        action_url: `${getFrontendUrl()}/conges`,
+      }
+    );
+  }
+
+  async sendAccountDeleted(recipient, { employe_nom, message_principal, date_suppression }) {
+    return this.sendEmail(
+      recipient.email,
+      'Suppression de compte TeamOff',
+      'account-deleted',
+      {
+        destinataire_prenom: recipient.prenom || 'Collaborateur',
+        employe_nom,
+        message_principal,
+        date_suppression,
+      }
+    );
+  }
+
   async sendWeeklyManagerSummary(manager, conges, startOfWeek, endOfWeek) {
     const dayjs = require('dayjs');
     const rows = conges.map((c) => {
       const name = `${c.utilisateur?.prenom || ''} ${c.utilisateur?.nom || ''}`.trim();
       const service = c.utilisateur?.service || '-';
       const type = c.conge_type?.libelle || 'Congé';
-      return `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${name}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${service}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${type}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${c.date_debut}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${c.date_fin}</td></tr>`;
+      const fmtD = (d) => { if (!d) return ''; const p = String(d).split('T')[0].split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : d; };
+      return `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${name}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${service}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${type}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${fmtD(c.date_debut)}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${fmtD(c.date_fin)}</td></tr>`;
     }).join('');
 
     const periode = `${dayjs(startOfWeek).format('DD/MM')} – ${dayjs(endOfWeek).format('DD/MM/YYYY')}`;

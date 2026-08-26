@@ -1,9 +1,8 @@
 module.exports = {
   testEnvironment: 'node',
 
-  // Exécution séquentielle obligatoire pour les tests d'intégration
-  // (évite les race conditions sur la DB partagée)
-  runInBand: true,
+  // Exécution séquentielle obligatoire (évite les race conditions sur la DB partagée)
+  maxWorkers: 1,
 
   testMatch: ['**/test/**/*.test.js'],
 

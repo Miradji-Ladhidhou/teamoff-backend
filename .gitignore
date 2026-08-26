@@ -5,6 +5,8 @@ node_modules/
 .env
 .env.*
 !.env.example
+!.env.test.example
+.env.test
 
 # Clés et certificats
 keys/
@@ -31,6 +33,7 @@ logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+lerna-debug.log*
 
 # Fichiers temporaires et uploads
 tmp/
@@ -45,10 +48,31 @@ uploads/
 # Système
 .DS_Store
 Thumbs.db
+*.DS_Store
 
 # Prisma généré
 /generated/prisma
 
 # Schémas et dumps SQL (contiennent la structure de la DB)
 ../BDD/
+
+# Données de tests de charge Artillery (contiennent des comptes/emails)
+users_artillery.json
+users_artillery.jsonl
+users_artillery_minimal.jsonl
+*.artillery.json
+*.artillery.jsonl
+
+# Cache Jest
+.jest-cache/
+jest_cache/
+
+# Cache ESLint
+.eslintcache
+
+# Éditeurs
+.idea/
+.vscode/settings.json
+*.swp
+*.swo
 

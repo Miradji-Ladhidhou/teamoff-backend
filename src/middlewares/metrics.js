@@ -12,7 +12,8 @@ const metrics = {
   errors4xx: 0,
   errors5xx: 0,
   responseTimes: [],
-  enterpriseUsage: new Map()
+  enterpriseUsage: new Map(),
+  recentErrors: [],   // buffer circulaire des 50 dernières erreurs
 };
 
 const getEntrepriseIdFromRequest = (req) => {
@@ -62,6 +63,15 @@ const metricsMiddleware = (req, res, next) => {
       if (res.statusCode >= 500) {
         metrics.errors5xx++;
       }
+      metrics.recentErrors.push({
+        timestamp: new Date().toISOString(),
+        method: req.method,
+        url: req.originalUrl,
+        statusCode: res.statusCode,
+        entreprise_id: entrepriseId || null,
+        durationMs: duration,
+      });
+      if (metrics.recentErrors.length > 50) metrics.recentErrors.shift();
     }
   });
 
@@ -130,6 +140,8 @@ const getMetrics = async (req, res) => {
     error5xx: metrics.errors5xx,
     errorRate: metrics.requests > 0 ? (metrics.errors / metrics.requests) : 0,
     enterpriseUsage,
+
+    recentErrors: [...metrics.recentErrors].reverse(), // plus récent en premier
 
     // Champs historiques conservés pour compatibilité
     totalRequests: metrics.requests,

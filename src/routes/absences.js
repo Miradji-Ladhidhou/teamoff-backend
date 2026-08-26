@@ -35,4 +35,13 @@ router.get('/', canViewAbsences, absenceController.listAbsences);
  */
 router.patch('/:id', validateUUIDParam('id'), absenceController.updateAbsence);
 
+/**
+ * DELETE /api/absences/:id
+ * Suppression d'une absence.
+ * - Employé : uniquement la sienne, si statut === 'signalée'
+ * - Manager / admin_entreprise : toute absence de leur entreprise
+ * - super_admin : toute absence
+ */
+router.delete('/:id', validateUUIDParam('id'), absenceController.deleteAbsence);
+
 module.exports = router;

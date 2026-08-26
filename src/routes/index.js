@@ -85,7 +85,7 @@ router.get('/me', authJwt, async (req, res) => {
   try {
     const { Utilisateur, Entreprise } = require('../models');
     const user = await Utilisateur.findByPk(req.user.id, {
-      attributes: ['id', 'nom', 'prenom', 'email', 'role', 'entreprise_id', 'statut', 'service', 'date_embauche'],
+      attributes: ['id', 'nom', 'prenom', 'email', 'role', 'entreprise_id', 'statut', 'service', 'date_embauche', 'totp_enabled'],
     });
     if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
     const entreprise = await Entreprise.findByPk(user.entreprise_id, { attributes: ['id', 'nom'] });
@@ -100,13 +100,14 @@ router.get('/me', authJwt, async (req, res) => {
       statut: user.statut,
       service: user.service,
       date_embauche: user.date_embauche,
+      totp_enabled: user.totp_enabled ?? false,
     });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur' });
   }
 });
 
-router.put('/me', authJwt, require('../middlewares/advancedRateLimiter').advancedRateLimiter('login'), usersController.updateOwnProfile);
+router.put('/me', authJwt, require('../middlewares/advancedRateLimiter').advancedRateLimiter('profileUpdate'), usersController.updateOwnProfile);
 
 // ------------------------------
 // Métriques (super_admin uniquement)
@@ -136,15 +137,20 @@ router.post('/monitoring/cleanup', authJwt, authorizeRole(['super_admin']), asyn
   try {
     const rawDaysToKeep = req.body?.daysToKeep;
     const hasInput = rawDaysToKeep !== undefined && rawDaysToKeep !== null && rawDaysToKeep !== '';
-    const daysToKeep = hasInput ? Number(rawDaysToKeep) : 30;
+    const daysToKeep = hasInput ? Number(rawDaysToKeep) : MonitoringService.MIN_RETENTION_DAYS;
 
-    if (!Number.isFinite(daysToKeep) || daysToKeep <= 0) {
-      return res.status(400).json({ message: 'daysToKeep doit être un nombre strictement positif' });
+    if (!Number.isFinite(daysToKeep) || daysToKeep < MonitoringService.MIN_RETENTION_DAYS) {
+      return res.status(400).json({
+        message: `daysToKeep doit être ≥ ${MonitoringService.MIN_RETENTION_DAYS} jours (politique de rétention minimale)`,
+      });
     }
 
-    const result = await MonitoringService.cleanupOldMetrics(daysToKeep);
+    const result = await MonitoringService.cleanupOldMetrics(daysToKeep, req.user);
     res.status(200).json({ message: 'Nettoyage des métriques terminé', ...result });
   } catch (error) {
+    if (error.code === 'RETENTION_TOO_SHORT') {
+      return res.status(400).json({ message: error.message });
+    }
     res.status(500).json({ message: 'Impossible de nettoyer les métriques' });
   }
 });

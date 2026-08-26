@@ -1,6 +1,7 @@
 // /controllers/notificationController.js
 const { Notification, Entreprise } = require('../models');
 const logger = require('../utils/logger');
+const notificationService = require('../services/notificationService');
 const { resolveTimezone, formatDateInTimezone, toIsoString } = require('../utils/dateFormatter');
 
 /**
@@ -62,23 +63,10 @@ async function getNotifications(req, res, next) {
  */
 async function marquerCommeLue(req, res, next) {
   try {
-    const notif = await Notification.findOne({
-      where: {
-        id: req.params.id,
-        utilisateur_id: req.user.id
-      }
-    });
-
-    if (!notif) {
-      return res.status(404).json({ message: 'Notification introuvable' });
-    }
-
-    notif.lu = true;
-    await notif.save();
-
+    const notif = await notificationService.marquerCommeLue(req.params.id, req.user.id);
     res.json({ message: 'Notification marquée comme lue', notif });
-
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ message: err.message });
     logger.error('marquerCommeLue error', { user_id: req.user?.id, notif_id: req.params.id, error: err.message });
     next(err);
   }

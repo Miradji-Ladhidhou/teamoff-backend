@@ -27,14 +27,26 @@ router.delete('/:id', authorizeRole(['super_admin']), validateUUIDParam('id'), e
 router.patch('/:id/statut', authorizeRole(['super_admin']), validateUUIDParam('id'), entreprisesController.patchStatutEntreprise);
 
 // jours bloqués — accessible à tous les rôles authentifiés de l'entreprise
-router.get('/:id/blocked-days', authorizeRole(['super_admin', 'admin_entreprise', 'manager', 'employe']), validateUUIDParam('id'), entreprisesController.getBlockedDays);
+router.get('/:id/blocked-days', authorizeRole(['super_admin', 'admin_entreprise', 'manager', 'employe', 'apprenti']), validateUUIDParam('id'), entreprisesController.getBlockedDays);
 
-// gestion de la politique de congés d'une entreprise (super_admin et admin_entreprise de l'entreprise concernée)
-router.get('/:id/politique', authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id), validateUUIDParam('id'), entreprisesController.getPolitiqueConges);
+// lecture de la politique — managers inclus (lecture seule, même contrôle d'entreprise)
+router.get('/:id/politique', authorizeRole(['super_admin', 'admin_entreprise', 'manager'], req => req.params.id), validateUUIDParam('id'), entreprisesController.getPolitiqueConges);
 
 // mise à jour de la politique de congés d'une entreprise (super_admin et admin_entreprise de l'entreprise concernée)
 router.put('/:id/politique', authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id), validateUUIDParam('id'),
   body('politique_conges').isObject().withMessage('Politique_conges doit être un objet JSON'),
+  body('politique_conges.max_consecutive_days')
+    .optional()
+    .isInt({ min: 1, max: 365 })
+    .withMessage('max_consecutive_days doit être un entier entre 1 et 365'),
+  body('politique_conges.minimum_notice_days')
+    .optional()
+    .isInt({ min: 0, max: 365 })
+    .withMessage('minimum_notice_days doit être un entier entre 0 et 365'),
+  body('politique_conges.report_max_jours')
+    .optional()
+    .isInt({ min: 0, max: 365 })
+    .withMessage('report_max_jours doit être un entier entre 0 et 365'),
   entreprisesController.updatePolitiqueConges
 );
 

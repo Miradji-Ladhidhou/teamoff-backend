@@ -9,7 +9,7 @@ const validate = require('../middlewares/validate');
 const { createUserRules, updateUserRules, changeRoleRules } = require('../validators/users.validators');
 const { forUserCreate, forUserUpdate } = require('../middlewares/stripForbiddenFields');
 const usersController = require('../controllers/usersController');
-const { importUsersCSV } = require('../controllers/usersImportController');
+const { importUsersCSV, getImportTemplate } = require('../controllers/usersImportController');
 
 const csvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
 
@@ -30,7 +30,7 @@ router.get(
 
 router.get(
   '/:id',
-  authorizeRole(['super_admin', 'admin_entreprise', 'manager', 'employe']),
+  authorizeRole(['super_admin', 'admin_entreprise', 'manager', 'employe', 'apprenti']),
   validateUUIDParam('id'),
   advancedRateLimiter('getData'),
   usersController.getUserById
@@ -53,9 +53,15 @@ router.put(
   usersController.changeUserRole
 );
 
+router.get(
+  '/import/csv/template',
+  authorizeRole(['super_admin']),
+  getImportTemplate
+);
+
 router.post(
   '/import/csv',
-  authorizeRole(['super_admin', 'admin_entreprise']),
+  authorizeRole(['super_admin']),
   csvUpload.single('file'),
   importUsersCSV
 );

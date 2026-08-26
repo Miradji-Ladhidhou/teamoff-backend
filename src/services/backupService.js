@@ -73,6 +73,8 @@ async function runDatabaseBackup() {
       '--format=plain',
       '--no-owner',
       '--no-privileges',
+      '--clean',
+      '--if-exists',
       '--host',
       host,
       '--port',
@@ -118,6 +120,114 @@ async function runDatabaseBackup() {
   }
 }
 
+// Supprime les statements EVENT TRIGGER du SQL (pgrst_drop_watch etc. sont
+// créés par PostgREST/Render avec un superuser — l'app user n'en est pas propriétaire).
+function stripEventTriggers(content) {
+  const lines = content.split('\n');
+  const result = [];
+  let skip = false;
+
+  for (const line of lines) {
+    const upper = line.trim().toUpperCase();
+    if (
+      upper.startsWith('DROP EVENT TRIGGER') ||
+      upper.startsWith('CREATE EVENT TRIGGER') ||
+      upper.startsWith('ALTER EVENT TRIGGER')
+    ) {
+      skip = true;
+    }
+    if (!skip) result.push(line);
+    if (skip && upper.includes(';')) skip = false;
+  }
+
+  return result.join('\n');
+}
+
+async function restoreFromFile(filePath) {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    const err = new Error('DATABASE_URL est manquante.');
+    err.statusCode = 500;
+    throw err;
+  }
+
+  if (!fs.existsSync(filePath)) {
+    const err = new Error('Fichier de sauvegarde introuvable.');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  // Écrire une version filtrée sans les EVENT TRIGGERs
+  const strippedPath = filePath + '.stripped.sql';
+  const strippedContent = stripEventTriggers(fs.readFileSync(filePath, 'utf8'));
+  fs.writeFileSync(strippedPath, strippedContent);
+
+  const parsedUrl = new URL(databaseUrl);
+  const databaseName = parsedUrl.pathname.replace(/^\//, '');
+  const username = decodeURIComponent(parsedUrl.username || '');
+  const password = decodeURIComponent(parsedUrl.password || '');
+  const host = parsedUrl.hostname;
+  const port = parsedUrl.port || '5432';
+
+  const childEnv = { ...process.env, PGPASSWORD: password };
+  const sslMode = parsedUrl.searchParams.get('sslmode');
+  if (sslMode) childEnv.PGSSLMODE = sslMode;
+
+  // Sans --single-transaction ni ON_ERROR_STOP : psql continue malgré les
+  // erreurs "must be owner of" sur les objets d'extension Render (vector_indexes,
+  // pgrst_drop_watch…). On échoue seulement si des erreurs non liées aux permissions
+  // sont détectées dans stderr.
+  const psqlArgs = [
+    '--host', host,
+    '--port', String(port),
+    '--username', username,
+    '--dbname', databaseName,
+    '--file', strippedPath,
+  ];
+
+  const psqlCandidates = [
+    process.env.PSQL_BIN,
+    '/opt/homebrew/bin/psql',
+    '/usr/local/bin/psql',
+    'psql',
+  ].filter(Boolean);
+
+  let lastError = null;
+  try {
+    for (const bin of psqlCandidates) {
+      try {
+        await execFileAsync(bin, psqlArgs, { env: childEnv });
+        lastError = null;
+        break;
+      } catch (e) {
+        // psql exit non-zero : vérifier si c'est uniquement des erreurs de permission
+        // sur des objets d'extension (attendues sur Render managed PostgreSQL)
+        const stderr = (e.stderr || e.message || '').toString();
+        const errorLines = stderr.split('\n').filter((l) => /^psql:.*ERROR:/i.test(l));
+        const onlyPermissionErrors = errorLines.length > 0 && errorLines.every((l) =>
+          l.includes('must be owner of') ||
+          l.includes('already exists') ||
+          l.includes('does not exist')
+        );
+        if (onlyPermissionErrors) {
+          lastError = null; // erreurs bénignes — restauration considérée réussie
+          break;
+        }
+        lastError = e;
+      }
+    }
+  } finally {
+    try { fs.unlinkSync(strippedPath); } catch { /* ignore */ }
+  }
+
+  if (lastError) {
+    const detail = (lastError.stderr || lastError.message || '').toString().trim();
+    const err = new Error(`Échec de la restauration : ${detail || 'Erreur inconnue.'}`);
+    err.statusCode = 500;
+    throw err;
+  }
+}
+
 function getBackupPathByFilename(filename) {
   const safeName = path.basename(filename || '');
   if (!safeName || safeName !== filename) {
@@ -157,6 +267,7 @@ function cleanupOldBackups(retentionDays = 7) {
 module.exports = {
   backupsDir,
   runDatabaseBackup,
+  restoreFromFile,
   getBackupPathByFilename,
   cleanupOldBackups,
 };

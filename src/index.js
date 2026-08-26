@@ -171,6 +171,13 @@ const startServer = async () => {
     await sequelize.authenticate();
     logger.info('✅ DB connected');
 
+    // Ajout idempotent de la valeur 'reserve' dans l'ENUM statut de la table conge
+    try {
+      await sequelize.query(`ALTER TYPE "enum_conge_statut" ADD VALUE IF NOT EXISTS 'reserve' BEFORE 'en_attente_manager';`);
+    } catch (e) {
+      logger.warn('ALTER TYPE enum_conge_statut (reserve): ' + e.message);
+    }
+
     // Cron jobs — isolated so one failure doesn't block startup
     try { await initBackupCron(); } catch (e) { logger.error('initBackupCron failed', { error: e.message }); }
     try { initQuotasCron(); } catch (e) { logger.error('initQuotasCron failed', { error: e.message }); }

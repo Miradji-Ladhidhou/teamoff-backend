@@ -33,10 +33,10 @@ const createCongeRules = [
   dateField('date_debut'),
   dateField('date_fin'),
   body('debut_demi_journee')
-    .optional()
+    .optional({ nullable: true })
     .isIn(DEMI_JOURNEE).withMessage('debut_demi_journee invalide'),
   body('fin_demi_journee')
-    .optional()
+    .optional({ nullable: true })
     .isIn(DEMI_JOURNEE).withMessage('fin_demi_journee invalide'),
   body('commentaire_employe')
     .optional({ nullable: true })
@@ -78,8 +78,22 @@ const updateCongeRules = [
  * Vérification de chevauchement (POST /conges/check-overlap)
  */
 const checkOverlapRules = [
+  body('conge_type_id')
+    .isUUID().withMessage('conge_type_id doit être un UUID'),
   dateField('date_debut'),
   dateField('date_fin'),
 ];
 
-module.exports = { createCongeRules, updateCongeRules, checkOverlapRules };
+/**
+ * Refus d'un congé (POST /conges/:id/reject)
+ * Le motif de refus est obligatoire — l'employé doit comprendre pourquoi.
+ */
+const rejectCongeRules = [
+  body('commentaire')
+    .isString().withMessage('commentaire requis')
+    .trim()
+    .notEmpty().withMessage('Le motif de refus est obligatoire')
+    .isLength({ max: 5000 }).withMessage('commentaire trop long'),
+];
+
+module.exports = { createCongeRules, updateCongeRules, checkOverlapRules, rejectCongeRules };

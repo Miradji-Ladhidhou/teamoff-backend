@@ -53,7 +53,7 @@ function forUserUpdate(req, res, next) {
   // employe / manager : autorisés à mettre à jour uniquement leur propre profil
   // via PUT /me — s'ils arrivent sur PUT /:id, authorizeRole a déjà bloqué
   // Mais en défense en profondeur, on retire les champs privilégiés
-  if (['employe', 'manager'].includes(userRole)) {
+  if (['employe', 'apprenti', 'manager'].includes(userRole)) {
     delete req.body.role;
     delete req.body.statut;
     delete req.body.entreprise_id;

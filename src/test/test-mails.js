@@ -63,10 +63,7 @@ async function testEmails() {
     // ----- 7. Annulation congé -----
     await EmailService.sendLeaveCancellation(conge, user, 'manager');
 
-    // ----- 8. Invitation nouvel utilisateur -----
-    await EmailService.sendNewUserInvitation(user.email, user.password_temporaire, admin.nom);
-
-    // ----- 9. Rapport mensuel -----
+    // ----- 8. Rapport mensuel -----
     await EmailService.sendMonthlyReport(
       user.email,
       {

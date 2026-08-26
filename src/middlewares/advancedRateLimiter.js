@@ -58,8 +58,8 @@ function getUserKey(req) {
 }
 
 function isWhitelisted(req) {
+  // Rôle super_admin — vérifié en DB à chaque requête via authJwt
   if (req.user && rateLimitConfig.whitelistRoles.includes(req.user.role)) return true;
-  if (req.headers[rateLimitConfig.whitelistHeader]) return true;
   return false;
 }
 
@@ -82,4 +82,4 @@ function advancedRateLimiter(endpointKey) {
   };
 }
 
-module.exports = { advancedRateLimiter };
+module.exports = { advancedRateLimiter, isWhitelisted };

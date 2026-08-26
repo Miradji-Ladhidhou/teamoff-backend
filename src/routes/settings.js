@@ -9,13 +9,40 @@ const sequelize = require('../config/database');
 const systemSettingsService = require('../services/systemSettingsService');
 const emailService = require('../services/emailService');
 const backupService = require('../services/backupService');
+const { uploadBackupToDrive, listDriveBackups, downloadFromDrive } = require('../services/googleDriveService');
+const { restoreFromFile } = require('../services/backupService');
 const auditActions = require('../services/auditActions');
-const { AuditLog, Utilisateur, Entreprise } = require('../models');
+const { AuditLog, Utilisateur } = require('../models');
 const { initBackupCron } = require('../cron/backupCron');
 
 const router = express.Router();
 
 router.use(authorizeRole(['super_admin']));
+
+// Champs secrets : jamais exposés en clair via l'API HTTP.
+// Remplacés par un booléen <field>Set indiquant si une valeur est configurée.
+const API_SECRET_FIELDS = ['smtpPassword', 'slackWebhook'];
+
+function redactSecrets(settings = {}) {
+  const out = { ...settings };
+  for (const field of API_SECRET_FIELDS) {
+    out[`${field}Set`] = Boolean(out[field]);
+    delete out[field];
+  }
+  return out;
+}
+
+// Retire les secrets vides d'un body HTTP : chaîne vide = "ne pas modifier".
+// Évite qu'un oubli de saisie dans le formulaire efface un secret existant.
+function stripEmptySecrets(body = {}) {
+  const out = { ...body };
+  for (const field of API_SECRET_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(out, field) && out[field] === '') {
+      delete out[field];
+    }
+  }
+  return out;
+}
 
 function getChangedFields(before = {}, after = {}, fields = []) {
   const changed = {};
@@ -37,41 +64,15 @@ function getChangedFields(before = {}, after = {}, fields = []) {
   return changed;
 }
 
-async function resolveEntrepriseId(req) {
-  if (req.user?.entreprise_id) {
-    return req.user.entreprise_id;
-  }
-
-  if (req.user?.id) {
-    const currentUser = await Utilisateur.findByPk(req.user.id, {
-      attributes: ['entreprise_id'],
-    });
-
-    if (currentUser?.entreprise_id) {
-      return currentUser.entreprise_id;
-    }
-  }
-
-  const firstEntreprise = await Entreprise.findOne({
-    attributes: ['id'],
-    order: [['created_at', 'ASC']],
-  });
-
-  return firstEntreprise?.id || null;
-}
-
 async function logSettingsAudit(req, action, metadata = {}) {
-  const entrepriseId = await resolveEntrepriseId(req);
-  if (!entrepriseId) {
-    return;
-  }
-
+  // Ces routes sont restreintes à super_admin (authorizeRole ligne 18).
+  // Les actions sont de scope global → entreprise_id intentionnellement null.
   await AuditLog.create({
     action,
     entity: 'system_settings',
     entity_id: null,
     user_id: req.user?.id || null,
-    entreprise_id: entrepriseId,
+    entreprise_id: null,
     ip_address: req.ip,
     user_agent: req.get('User-Agent'),
     metadata,
@@ -81,7 +82,7 @@ async function logSettingsAudit(req, action, metadata = {}) {
 router.get('/', async (req, res, next) => {
   try {
     const settings = await systemSettingsService.getSettings();
-    res.json(settings);
+    res.json(redactSecrets(settings));
   } catch (error) {
     next(error);
   }
@@ -90,9 +91,10 @@ router.get('/', async (req, res, next) => {
 router.put('/', async (req, res, next) => {
   try {
     const previous = await systemSettingsService.getSettings();
-    const updated = await systemSettingsService.updateSettings(req.body || {}, req.user?.id);
+    const safeBody = stripEmptySecrets(req.body || {});
+    const updated = await systemSettingsService.updateSettings(safeBody, req.user?.id);
 
-    const changedFields = getChangedFields(previous, updated, Object.keys(req.body || {}));
+    const changedFields = getChangedFields(previous, updated, Object.keys(safeBody));
     await logSettingsAudit(req, auditActions.SYSTEM_SETTINGS_UPDATED, {
       scope: 'global',
       changedFields,
@@ -100,7 +102,7 @@ router.put('/', async (req, res, next) => {
 
     res.json({
       message: 'Paramètres mis à jour avec succès',
-      settings: updated,
+      settings: redactSecrets(updated),
     });
   } catch (error) {
     next(error);
@@ -110,22 +112,22 @@ router.put('/', async (req, res, next) => {
 router.put('/sections/:section', async (req, res, next) => {
   try {
     const previous = await systemSettingsService.getSettings();
-    const updated = await systemSettingsService.updateSection(req.params.section, req.body || {}, req.user?.id);
+    const safeBody = stripEmptySecrets(req.body || {});
+    const updated = await systemSettingsService.updateSection(req.params.section, safeBody, req.user?.id);
 
-    const changedFields = getChangedFields(previous, updated, Object.keys(req.body || {}));
+    const changedFields = getChangedFields(previous, updated, Object.keys(safeBody));
     await logSettingsAudit(req, auditActions.SYSTEM_SETTINGS_UPDATED, {
       scope: req.params.section,
       changedFields,
     });
 
-    // Recharger le cron de sauvegarde si les paramètres base de données changent
     if (req.params.section === 'database') {
       await initBackupCron();
     }
 
     res.json({
       message: `Section ${req.params.section} mise à jour`,
-      settings: updated,
+      settings: redactSecrets(updated),
     });
   } catch (error) {
     next(error);
@@ -150,18 +152,13 @@ function getSettingsHistoryWhere() {
 router.get('/history/csv', async (req, res, next) => {
   try {
     const logs = await AuditLog.findAll({
-      where: {
-        ...getSettingsHistoryWhere(),
-        user_id: {
-          [Op.ne]: null,
-        },
-      },
+      where: getSettingsHistoryWhere(),
       include: [
         {
           model: Utilisateur,
           as: 'utilisateur',
           attributes: ['prenom', 'nom', 'email'],
-          required: true,
+          required: false,
         },
       ],
       order: [['created_at', 'DESC']],
@@ -169,29 +166,39 @@ router.get('/history/csv', async (req, res, next) => {
     });
 
     const rows = logs.map((log) => {
-      const actor = log.utilisateur
-        ? [log.utilisateur.prenom, log.utilisateur.nom].filter(Boolean).join(' ').trim() || log.utilisateur.email
+      const u = log.utilisateur;
+      const actor = u
+        ? [u.prenom, u.nom].filter(Boolean).join(' ').trim() || u.email || 'Inconnu'
         : 'Inconnu';
 
       return {
-        date: new Date(log.createdAt).toISOString(),
+        date: (() => { const raw = log.createdAt ?? log.created_at; if (!raw) return ''; const iso = new Date(raw).toISOString(); return `${iso.slice(8,10)}-${iso.slice(5,7)}-${iso.slice(0,4)} ${iso.slice(11,16)}`; })(),
         action: log.action,
         acteur: actor,
-        email_acteur: log.utilisateur?.email || '',
+        email_acteur: u?.email || '',
         ip: log.ip_address || '',
         details: JSON.stringify(log.metadata || {}),
       };
     });
 
+    const sanitize = (v) => {
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+    };
+    const safeRows = rows.map((r) =>
+      Object.fromEntries(Object.entries(r).map(([k, v]) => [k, sanitize(v)]))
+    );
     const parser = new Parser({
       fields: ['date', 'action', 'acteur', 'email_acteur', 'ip', 'details'],
     });
-    const csv = parser.parse(rows);
+    const csv = parser.parse(safeRows);
 
     const filename = `settings_history_${new Date().toISOString().slice(0, 10)}.csv`;
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    return res.status(200).send(csv);
+    // BOM UTF-8 pour compatibilité Excel
+    return res.status(200).send('﻿' + csv);
   } catch (error) {
     return next(error);
   }
@@ -322,6 +329,86 @@ router.post('/actions/backup', async (req, res, next) => {
   }
 });
 
+router.post('/actions/backup-drive', async (req, res, next) => {
+  try {
+    const backup = await backupService.runDatabaseBackup();
+    const driveFile = await uploadBackupToDrive(backup.filePath, backup.filename);
+
+    await logSettingsAudit(req, auditActions.SYSTEM_BACKUP_CREATED, {
+      filename: backup.filename,
+      sizeBytes: backup.sizeBytes,
+      destination: 'google_drive',
+      driveFileId: driveFile.id,
+    });
+
+    res.json({
+      message: 'Sauvegarde envoyée sur Google Drive avec succès.',
+      backup: {
+        filename: backup.filename,
+        sizeBytes: backup.sizeBytes,
+        createdAt: backup.createdAt,
+      },
+      drive: {
+        fileId: driveFile.id,
+        name: driveFile.name,
+        webViewLink: driveFile.webViewLink,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/drive-backups', async (req, res, next) => {
+  try {
+    const files = await listDriveBackups(30);
+    res.json({ files });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/actions/restore-drive', async (req, res, next) => {
+  const { fileId, filename } = req.body;
+  if (!fileId) return res.status(400).json({ message: 'fileId est requis.' });
+
+  let tempPath = null;
+  try {
+    tempPath = await downloadFromDrive(fileId, filename);
+    await restoreFromFile(tempPath);
+
+    // Vérification post-restauration : compter les lignes des tables clés
+    let verification = null;
+    try {
+      const [rows] = await sequelize.query(`
+        SELECT
+          (SELECT COUNT(*) FROM utilisateur)  AS utilisateurs,
+          (SELECT COUNT(*) FROM entreprise)   AS entreprises,
+          (SELECT COUNT(*) FROM conge)        AS conges
+      `);
+      verification = rows[0];
+    } catch { /* table manquante = restauration incomplète, on l'ignore ici */ }
+
+    await logSettingsAudit(req, auditActions.SYSTEM_BACKUP_CREATED, {
+      action: 'restore',
+      filename: filename || fileId,
+      source: 'google_drive',
+      verification,
+    });
+
+    res.json({
+      message: `Base de données restaurée depuis "${filename || fileId}" avec succès.`,
+      verification,
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    if (tempPath && fs.existsSync(tempPath)) {
+      try { fs.unlinkSync(tempPath); } catch { /* ignore */ }
+    }
+  }
+});
+
 router.get('/backups/:filename', async (req, res, next) => {
   try {
     const filePath = backupService.getBackupPathByFilename(req.params.filename);
@@ -332,6 +419,12 @@ router.get('/backups/:filename', async (req, res, next) => {
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ message: 'Sauvegarde introuvable.' });
     }
+
+    // Audit du téléchargement avant d'envoyer le fichier (Fix #34).
+    // Journalisé même si le client interrompt le transfert en cours de route.
+    await logSettingsAudit(req, auditActions.SYSTEM_BACKUP_DOWNLOADED, {
+      filename: req.params.filename,
+    });
 
     return res.download(filePath, path.basename(filePath));
   } catch (error) {

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>Attestation de congé</title></head>
+<body style="margin:0;padding:0;background:#e8edf2;font-family:Arial,sans-serif;color:#1f2937;">
+<table width="100%" cellspacing="0" cellpadding="0" bgcolor="#e8edf2" style="background:#e8edf2;padding:32px 16px;">
+<tr><td align="center">
+
+<!-- Document principal -->
+<table width="794" cellspacing="0" cellpadding="0" style="max-width:794px;width:100%;background:#fff;box-shadow:0 4px 32px rgba(0,0,0,0.14);">
+
+  <!-- EN-TÊTE BLEUE -->
+  <tr><td bgcolor="#1e3a5f" style="background:#1e3a5f;padding:20px 28px 12px;">
+    <table width="100%" cellspacing="0" cellpadding="0"><tr>
+      <td>
+        <div style="color:#fff;font-size:18px;font-weight:700;letter-spacing:0.5px;font-family:Georgia,'Times New Roman',serif;">{{entreprise_nom}}</div>
+        <div style="color:rgba(255,255,255,0.55);font-size:12px;margin-top:2px;font-family:Arial,sans-serif;font-weight:400;">Document officiel — Usage interne</div>
+      </td>
+      <td align="right">
+        <div style="color:rgba(255,255,255,0.55);font-size:10px;font-family:Arial,sans-serif;letter-spacing:1px;text-transform:uppercase;">Référence</div>
+        <div style="color:rgba(255,255,255,0.9);font-size:12px;font-family:'Courier New',monospace;margin-top:1px;">{{reference}}</div>
+        <div style="color:rgba(255,255,255,0.55);font-size:10px;font-family:Arial,sans-serif;letter-spacing:1px;text-transform:uppercase;margin-top:6px;">Émis le</div>
+        <div style="color:rgba(255,255,255,0.9);font-size:12px;font-family:'Courier New',monospace;margin-top:1px;">{{genere_le}}</div>
+      </td>
+    </tr></table>
+  </td></tr>
+
+  <!-- BANDE GRADIENT BLEUE -->
+  <tr><td height="4" bgcolor="#2563eb" style="background:linear-gradient(90deg,#2563eb 0%,#4f9cf9 60%,#93c5fd 100%);font-size:0;line-height:0;">&nbsp;</td></tr>
+
+  <!-- TITRE -->
+  <tr><td style="padding:9px 28px 8px;border-bottom:1px solid #e5e9ef;">
+    <div style="font-size:15px;font-weight:700;color:#1e3a5f;letter-spacing:2px;text-transform:uppercase;font-family:Georgia,'Times New Roman',serif;">Attestation de congé</div>
+    <div style="font-size:12px;color:#6b7f96;margin-top:2px;font-family:Arial,sans-serif;font-weight:400;">Délivrée par {{entreprise_nom}} · Généré automatiquement via TeamOff</div>
+  </td></tr>
+
+  <!-- PARAGRAPHE OFFICIEL -->
+  <tr><td style="padding:10px 28px 0;">
+    <p style="font-size:13px;font-family:Arial,sans-serif;color:#2d3748;line-height:1.65;margin:0 0 5px 0;text-align:justify;">
+      La société <strong style="color:#1e3a5f;font-weight:700;">{{entreprise_nom}}</strong> atteste par le présent document
+      que <strong style="color:#1e3a5f;font-weight:700;">{{nom_complet}}</strong>{{employe_context}},
+      a bénéficié d'un congé de type <strong style="color:#1e3a5f;font-weight:700;">« {{conge_type}} »</strong> du
+      <strong style="color:#1e3a5f;font-weight:700;">{{date_debut}}</strong> au <strong style="color:#1e3a5f;font-weight:700;">{{date_fin}}</strong>,
+      pour une durée de <strong style="color:#1e3a5f;font-weight:700;">{{jours_ouvres}} jour(s) ouvré(s)</strong>,
+      conformément à la politique de congés de l'entreprise.
+    </p>
+    <p style="font-size:12px;color:#6b7f96;font-family:Arial,sans-serif;font-style:italic;margin:0;">
+      Ce document est établi à la demande de l'intéressé(e) pour servir et valoir ce que de droit.
+    </p>
+  </td></tr>
+
+  <!-- SECTION SALARIÉ / CONGÉ (deux colonnes) -->
+  <tr><td style="padding:10px 28px 0;">
+    <table width="100%" cellspacing="0" cellpadding="0">
+      <tr valign="top">
+        <!-- Salarié -->
+        <td width="48%" style="border:1px solid #e0e6ef;border-radius:5px;overflow:hidden;vertical-align:top;">
+          <div style="background:#f4f7fb;padding:5px 10px;font-size:10px;font-weight:700;color:#4a6080;letter-spacing:1.2px;text-transform:uppercase;font-family:Arial,sans-serif;border-bottom:1px solid #e0e6ef;">Salarié</div>
+          <table width="100%" cellspacing="0" cellpadding="0">
+            <tr>
+              <td style="padding:4px 10px;border-bottom:1px solid #f0f3f8;font-size:12px;color:#6b7f96;font-family:Arial,sans-serif;width:80px;white-space:nowrap;">Nom</td>
+              <td style="padding:4px 10px;border-bottom:1px solid #f0f3f8;font-size:12px;color:#1a2b40;font-weight:600;font-family:Arial,sans-serif;">{{nom_complet}}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 10px;border-bottom:1px solid #f0f3f8;font-size:12px;color:#6b7f96;font-family:Arial,sans-serif;">Email</td>
+              <td style="padding:4px 10px;border-bottom:1px solid #f0f3f8;font-size:10px;color:#1a2b40;font-family:Arial,sans-serif;word-break:break-all;">{{employe_email}}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 10px;border-bottom:1px solid #f0f3f8;font-size:12px;color:#6b7f96;font-family:Arial,sans-serif;">Service</td>
+              <td style="padding:4px 10px;border-bottom:1px solid #f0f3f8;font-size:12px;color:#1a2b40;font-weight:600;font-family:Arial,sans-serif;">{{employe_service_ou_tiret}}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 10px;font-size:12px;color:#6b7f96;font-family:Arial,sans-serif;">Embauche</td>
+              <td style="padding:4px 10px;font-size:12px;color:#1a2b40;font-weight:600;font-family:Arial,sans-serif;">{{employe_embauche_ou_tiret}}</td>
+            </tr>
+          </table>
+        </td>
+        <td width="4%"></td>
+        <!-- Congé -->
+        <td width="48%" style="border:1px solid #e0e6ef;border-radius:5px;overflow:hidden;vertical-align:top;">
+          <div style="background:#f4f7fb;padding:5px 10px;font-size:10px;font-weight:700;color:#4a6080;letter-spacing:1.2px;text-transform:uppercase;font-family:Arial,sans-serif;border-bottom:1px solid #e0e6ef;">Congé</div>
+          <table width="100%" cellspacing="0" cellpadding="0">
+            <tr>
+              <td style="padding:4px 10px;border-bottom:1px solid #f0f3f8;font-size:12px;color:#6b7f96;font-family:Arial,sans-serif;width:80px;white-space:nowrap;">Type</td>
+              <td style="padding:4px 10px;border-bottom:1px solid #f0f3f8;font-size:12px;color:#1a2b40;font-weight:600;font-family:Arial,sans-serif;">{{conge_type}}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 10px;border-bottom:1px solid #f0f3f8;font-size:12px;color:#6b7f96;font-family:Arial,sans-serif;">Période</td>
+              <td style="padding:4px 10px;border-bottom:1px solid #f0f3f8;font-size:10px;color:#1a2b40;font-family:Arial,sans-serif;">{{period_label}}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 10px;border-bottom:1px solid #f0f3f8;font-size:12px;color:#6b7f96;font-family:Arial,sans-serif;">Jours ouvrés</td>
+              <td style="padding:4px 10px;border-bottom:1px solid #f0f3f8;font-size:12px;color:#1a2b40;font-weight:600;font-family:Arial,sans-serif;">{{jours_ouvres}} jour(s)</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 10px;font-size:12px;color:#6b7f96;font-family:Arial,sans-serif;">Statut</td>
+              <td style="padding:4px 10px;font-size:12px;font-weight:700;font-family:Arial,sans-serif;color:{{statut_color}};">{{statut_label}}</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+
+  <!-- COMMENTAIRES + DÉCOMPTE (deux colonnes) -->
+  <tr><td style="padding:12px 28px 0;">
+    <table width="100%" cellspacing="0" cellpadding="0">
+      <tr valign="top">
+        <!-- Commentaires -->
+        <td width="48%" bgcolor="#fffbeb" style="background:#fffbeb;border-left:3px solid #d97706;border-radius:0 5px 5px 0;padding:8px 10px;vertical-align:top;">
+          <div style="font-size:10px;font-weight:700;color:#92400e;letter-spacing:1px;text-transform:uppercase;font-family:Arial,sans-serif;margin-bottom:5px;">Commentaires</div>
+          {{comments_rows}}
+        </td>
+        <td width="4%"></td>
+        <!-- Décompte -->
+        <td width="48%" bgcolor="#eff6ff" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:5px;padding:8px 10px;vertical-align:top;">
+          <div style="font-size:10px;font-weight:700;color:#1d4ed8;letter-spacing:1px;text-transform:uppercase;font-family:Arial,sans-serif;margin-bottom:3px;">Décompte des jours</div>
+          <div style="font-size:10px;color:#6b7f96;font-family:Arial,sans-serif;font-style:italic;margin-bottom:6px;">du {{date_debut}} au {{date_fin}}</div>
+          {{decompte_rows}}
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+
+  <!-- MENTION LÉGALE -->
+  <tr><td style="padding:12px 28px 8px;font-size:10px;color:#a0aec0;font-family:Arial,sans-serif;font-style:italic;text-align:center;line-height:1.4;">
+    Ce document est généré automatiquement et constitue une attestation officielle de congé.<br/>
+    Il ne requiert pas de signature manuscrite pour être valide.
+  </td></tr>
+
+  <!-- SIGNATURES -->
+  <tr><td style="padding:0 28px 24px;">
+    <table width="100%" cellspacing="0" cellpadding="0">
+      <tr valign="top">
+        <td width="48%" bgcolor="#eff6ff" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:5px;padding:10px 12px;vertical-align:top;">
+          <div style="font-size:8px;font-weight:700;letter-spacing:1px;text-transform:uppercase;font-family:Arial,sans-serif;color:#1d4ed8;margin-bottom:1px;">Le salarié</div>
+          <div style="font-size:12px;font-family:Georgia,'Times New Roman',serif;color:#1a2b40;font-weight:700;margin-bottom:22px;">{{nom_complet}}</div>
+          <div style="border-top:1px solid #bfdbfe;padding-top:3px;font-size:8px;font-family:Arial,sans-serif;color:#93c5fd;">Signature</div>
+        </td>
+        <td width="4%"></td>
+        <td width="48%" bgcolor="#f8f9fa" style="background:#f8f9fa;border:1px solid #e0e6ef;border-radius:5px;padding:10px 12px;vertical-align:top;">
+          <div style="font-size:8px;font-weight:700;letter-spacing:1px;text-transform:uppercase;font-family:Arial,sans-serif;color:#8a9ab0;margin-bottom:1px;">Pour la direction</div>
+          <div style="font-size:10px;font-family:Georgia,'Times New Roman',serif;color:#8a9ab0;font-style:italic;font-weight:400;margin-bottom:22px;">Direction de {{entreprise_nom}}</div>
+          <div style="border-top:1px solid #d1d9e6;padding-top:3px;font-size:8px;font-family:Arial,sans-serif;color:#b0bec5;">Cachet &amp; Signature</div>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+
+</table>
+<!-- /Document -->
+
+</td></tr>
+</table>
+</body>
+</html>

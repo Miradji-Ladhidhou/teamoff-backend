@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>{{app_name}} - Demande en attente</title></head>
+  <body style="margin:0;padding:0;background:#f4f6fb;font-family:Arial,sans-serif;color:#1f2937;">
+    <table width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;"><tr><td align="center">
+      <table width="640" cellspacing="0" cellpadding="0" style="max-width:640px;width:100%;background:#fff;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;">
+        <tr><td style="background:#dc2626;color:#fff;padding:22px 24px;">
+          <h1 style="margin:0;font-size:22px;">{{titre_email}}</h1>
+          <p style="margin:8px 0 0;font-size:14px;opacity:.95;">{{sous_titre}}</p>
+        </td></tr>
+        <tr><td style="padding:24px;line-height:1.6;">
+          <p>Bonjour {{destinataire_prenom}},</p>
+          <p>{{demandeur_nom}} a soumis une demande de <strong>{{type_action}}</strong> pour son congé validé. {{message_role}}</p>
+          <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+            <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;width:40%;color:#6b7280;font-size:14px;">Collaborateur</td>
+                <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:600;">{{demandeur_nom}}</td></tr>
+            <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280;font-size:14px;">Type de congé</td>
+                <td style="padding:8px 12px;border:1px solid #e5e7eb;">{{type_conge}}</td></tr>
+            <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280;font-size:14px;">Période actuelle</td>
+                <td style="padding:8px 12px;border:1px solid #e5e7eb;">{{date_debut}} au {{date_fin}}</td></tr>
+            {{nouvelle_periode_row}}
+            <tr><td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280;font-size:14px;">Motif du collaborateur</td>
+                <td style="padding:8px 12px;border:1px solid #e5e7eb;font-style:italic;">{{commentaire_employe}}</td></tr>
+          </table>
+          {{bouton_action}}
+          <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;" />
+          <p style="margin:0;">Cordialement,<br/><strong>{{signature}}</strong></p>
+        </td></tr>
+        <tr><td style="padding:0 24px 20px;color:#6b7280;font-size:12px;">© {{year}} {{app_name}} - Email automatique</td></tr>
+      </table>
+    </td></tr></table>
+  </body>
+</html>

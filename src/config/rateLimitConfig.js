@@ -44,6 +44,13 @@ module.exports = {
       burst: 1000,
       blockDuration: 5,
     },
+    profileUpdate: {
+      key: 'profileUpdate',
+      points: 30,        // 30 sauvegardes / min par user — permissif pour auto-save
+      duration: 60,
+      burst: 40,
+      blockDuration: 10, // blocage court : pas une route de sécurité
+    },
     default: {
       key: 'default',
       points: 300,       // 300 req / min par user pour les autres routes
@@ -53,5 +60,4 @@ module.exports = {
     },
   },
   whitelistRoles: ['super_admin'],
-  whitelistHeader: 'x-internal-script',
 };

@@ -5,11 +5,16 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const emailService = require('./emailService');
 const systemSettingsService = require('./systemSettingsService');
+const { auditAuth } = require('./auditHelper');
 require('dotenv').config();
+
+// OWASP recommande cost ≥ 12 pour bcrypt (2024).
+// Les hash existants en cost 10 restent vérifiables — bcrypt lit le cost dans le hash.
+const BCRYPT_COST = 12;
 
 const DEFAULT_LEAVE_POLICY = {
   approval_workflow: 'manager_admin',
-  overlap_policy: 'block',
+  overlap_behavior: 'block',
   minimum_notice_days: 0,
   max_consecutive_days: 365,
   include_holidays_in_count: false,
@@ -19,7 +24,6 @@ const DEFAULT_LEAVE_POLICY = {
   blocked_days: [],
   service_policies: {},
   max_employees_on_leave: {
-    global: 0,
     by_service: {},
   },
 };
@@ -33,7 +37,7 @@ async function getRuntimeSecuritySettings() {
     const settings = await systemSettingsService.getSettings();
     return {
       maxLoginAttempts: Number(settings?.maxLoginAttempts ?? 5),
-      sessionTimeout: Number(settings?.sessionTimeout ?? 60),
+      sessionTimeout: Number(settings?.sessionTimeout ?? 15),
       passwordMinLength: Number(settings?.passwordMinLength ?? 8),
       requireSpecialChars: Boolean(settings?.requireSpecialChars ?? true),
     };
@@ -41,7 +45,7 @@ async function getRuntimeSecuritySettings() {
     logger.error('Impossible de charger les paramètres système, fallback par défaut:', error.message);
     return {
       maxLoginAttempts: Number(systemSettingsService.DEFAULT_SETTINGS?.maxLoginAttempts ?? 5),
-      sessionTimeout: Number(systemSettingsService.DEFAULT_SETTINGS?.sessionTimeout ?? 60),
+      sessionTimeout: Number(systemSettingsService.DEFAULT_SETTINGS?.sessionTimeout ?? 15),
       passwordMinLength: Number(systemSettingsService.DEFAULT_SETTINGS?.passwordMinLength ?? 8),
       requireSpecialChars: Boolean(systemSettingsService.DEFAULT_SETTINGS?.requireSpecialChars ?? true),
     };
@@ -68,7 +72,7 @@ const DUMMY_HASH = '$2b$10$CwTycUXWue0Thq9StjUM0uJ8e2Q1rQy4u9n2pV0Xl1yZ9XKp1JfG2
 // ---------------------------
 // Login utilisateur
 // ---------------------------
-async function loginUtilisateur({ email, password, entreprise_id }) {
+async function loginUtilisateur({ email, password, entreprise_id }, reqContext = {}) {
   const { maxLoginAttempts, sessionTimeout } = await getRuntimeSecuritySettings();
 
   const whereClause = entreprise_id ? { email, entreprise_id } : { email };
@@ -88,6 +92,9 @@ async function loginUtilisateur({ email, password, entreprise_id }) {
       if (newAttempts >= maxLoginAttempts) {
         updates.locked_until = new Date(Date.now() + 30 * 60 * 1000);
         await user.update(updates);
+        auditAuth.accountLocked(user, newAttempts, updates.locked_until, reqContext).catch((e) =>
+          logger.error('auditAuth.accountLocked error', { error: e.message })
+        );
         emailService.sendAccountLocked(user, newAttempts).catch((e) =>
           logger.error('sendAccountLocked error', { error: e.message })
         );
@@ -147,7 +154,8 @@ async function loginUtilisateur({ email, password, entreprise_id }) {
       email: user.email,
       role: user.role,
       entreprise_id: user.entreprise_id,
-      entreprise_nom: entreprise.nom
+      entreprise_nom: entreprise.nom,
+      totp_enabled: user.totp_enabled ?? false,
     }
   };
 }
@@ -185,7 +193,7 @@ async function registerEntreprise(payload) {
     throw new Error('Un utilisateur existe déjà avec cet email');
   }
 
-  const passwordHash = await bcrypt.hash(admin_password, 10);
+  const passwordHash = await bcrypt.hash(admin_password, BCRYPT_COST);
 
   const result = await sequelize.transaction(async (transaction) => {
     const entreprise = await Entreprise.create({
@@ -271,7 +279,7 @@ async function resetPassword(token, newPassword) {
 
   await validatePasswordPolicy(newPassword);
 
-  const hashed = await bcrypt.hash(newPassword, 10);
+  const hashed = await bcrypt.hash(newPassword, BCRYPT_COST);
   user.password_hash = hashed;
   await user.save();
 
@@ -291,7 +299,7 @@ async function changePassword(userId, currentPassword, newPassword) {
 
     await validatePasswordPolicy(newPassword);
 
-    const hashed = await bcrypt.hash(newPassword, 10);
+    const hashed = await bcrypt.hash(newPassword, BCRYPT_COST);
     user.password_hash = hashed;
     await user.save();
 
@@ -327,7 +335,7 @@ async function setPassword(token, password, confirmPassword) {
 
   await validatePasswordPolicy(password);
 
-  user.password_hash = await bcrypt.hash(password, 10);
+  user.password_hash = await bcrypt.hash(password, BCRYPT_COST);
   if (user.statut !== 'inactif') user.statut = 'actif';
   await user.save();
   await user.update({ invite_token_hash: null });
@@ -339,7 +347,7 @@ async function setPassword(token, password, confirmPassword) {
   return user;
 }
 
-function generateAccessToken(user, expiresInMinutes = 60) {
+function generateAccessToken(user, expiresInMinutes = 15) {
   return jwt.sign(
     { id: user.id, role: user.role, entreprise_id: user.entreprise_id },
     process.env.JWT_SECRET,
@@ -348,6 +356,7 @@ function generateAccessToken(user, expiresInMinutes = 60) {
 }
 
 module.exports = {
+  BCRYPT_COST,
   loginUtilisateur,
   registerEntreprise,
   logoutUtilisateur,

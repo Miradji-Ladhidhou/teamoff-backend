@@ -39,27 +39,32 @@ module.exports = async (req, res, next) => {
       });
     }
 
-    // Gestion du statut de l'entreprise
-    const entreprise = await Entreprise.findByPk(user.entreprise_id);
+    // Gestion du statut de l'entreprise.
+    // Le super_admin a un accès global à la plateforme : le bloquer sur
+    // la suspension de son propre entreprise_id créerait un deadlock
+    // (il ne pourrait plus ré-activer l'entreprise depuis l'interface).
+    if (user.role !== 'super_admin') {
+      const entreprise = await Entreprise.findByPk(user.entreprise_id);
 
-    if (!entreprise) {
-      return res.status(403).json({ message: 'Entreprise introuvable' });
-    }
+      if (!entreprise) {
+        return res.status(403).json({ message: 'Entreprise introuvable' });
+      }
 
-    if (entreprise.statut === 'inactive') {
-      return res.status(402).json({
-        error: 'ENTREPRISE_INACTIVE',
-        message: 'Votre abonnement est inactif.',
-        entreprise_statut: entreprise.statut
-      });
-    }
+      if (entreprise.statut === 'inactive') {
+        return res.status(402).json({
+          error: 'ENTREPRISE_INACTIVE',
+          message: 'Votre abonnement est inactif.',
+          entreprise_statut: entreprise.statut
+        });
+      }
 
-    if (entreprise.statut === 'suspendue') {
-      return res.status(403).json({
-        error: 'ENTREPRISE_SUSPENDUE',
-        message: 'Votre compte entreprise est suspendu.',
-        entreprise_statut: entreprise.statut
-      });
+      if (entreprise.statut === 'suspendue') {
+        return res.status(403).json({
+          error: 'ENTREPRISE_SUSPENDUE',
+          message: 'Votre compte entreprise est suspendu.',
+          entreprise_statut: entreprise.statut
+        });
+      }
     }
 
     // Attacher l'utilisateur à la requête
@@ -67,7 +72,9 @@ module.exports = async (req, res, next) => {
       id: user.id,
       role: user.role,
       entreprise_id: user.entreprise_id,
-      statut: user.statut
+      statut: user.statut,
+      prenom: user.prenom || null,
+      nom: user.nom || null,
     };
 
     next();

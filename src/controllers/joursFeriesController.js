@@ -4,6 +4,8 @@ const { Op } = require('sequelize');
 const { auditFerie } = require('../services/auditHelper');
 const { Parser } = require('json2csv');
 
+const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
 function getTargetEntrepriseId(req, { allowBody = false } = {}) {
   if (req.user?.role === 'super_admin') {
     if (allowBody && req.body?.entreprise_id) {
@@ -84,6 +86,12 @@ function parseHolidayCsv(csvContent = '') {
   }).filter((item) => item.date && item.libelle);
 }
 
+// Cap défensif : le volume par entreprise est structurellement borné par la
+// contrainte unique (entreprise_id, date) ≈ 1 ligne/jour max, mais un import
+// pathologique sur N années pourrait dépasser quelques centaines de lignes.
+// 500 couvre largement 10 ans × 50 fériés/an sans casser le frontend.
+const JOURS_FERIES_MAX = 500;
+
 // ----------------------------
 // Lister tous les jours fériés
 // ----------------------------
@@ -94,9 +102,24 @@ async function listerJoursFeries(req, res, next) {
       return res.status(400).json({ message: 'entreprise_id est requis pour ce profil.' });
     }
 
+    const where = { entreprise_id: entrepriseId };
+
+    // Filtre optionnel par année — cohérent avec GET /jours-feries/:year/:month
+    const rawYear = req.query.year;
+    if (rawYear !== undefined) {
+      const year = parseInt(rawYear, 10);
+      if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+        return res.status(400).json({ message: 'Paramètre year invalide (entier entre 2000 et 2100)' });
+      }
+      const start = `${year}-01-01`;
+      const end   = `${year}-12-31`;
+      where.date  = { [Op.between]: [start, end] };
+    }
+
     const joursFeries = await JoursFeries.findAll({
-      where: { entreprise_id: entrepriseId },
-      order: [['date', 'ASC']]
+      where,
+      order: [['date', 'ASC']],
+      limit: JOURS_FERIES_MAX,
     });
     res.json(joursFeries);
   } catch (err) {
@@ -115,6 +138,11 @@ async function creerJourFerie(req, res, next) {
     if (!entrepriseId) {
       await t.rollback();
       return res.status(400).json({ message: 'entreprise_id est requis pour ce profil.' });
+    }
+
+    if (!date || !DATE_REGEX.test(date) || isNaN(new Date(date).getTime())) {
+      await t.rollback();
+      return res.status(400).json({ message: 'Le champ date est requis et doit être au format YYYY-MM-DD valide' });
     }
 
     const jourFerie = await JoursFeries.create({
@@ -169,6 +197,11 @@ async function updateJourFerie(req, res, next) {
     if (!entrepriseId) {
       await t.rollback();
       return res.status(400).json({ message: 'entreprise_id est requis pour ce profil.' });
+    }
+
+    if (!date || !DATE_REGEX.test(date) || isNaN(new Date(date).getTime())) {
+      await t.rollback();
+      return res.status(400).json({ message: 'Le champ date est requis et doit être au format YYYY-MM-DD valide' });
     }
 
     const jourFerie = await JoursFeries.findOne({
@@ -263,6 +296,12 @@ async function importerJoursFeriesNationaux(req, res, next) {
       return res.status(400).json({ message: 'Année invalide.' });
     }
 
+    const COUNTRY_CODE_RE = /^[A-Z]{2,3}$/;
+    if (!COUNTRY_CODE_RE.test(countryCode)) {
+      await t.rollback();
+      return res.status(400).json({ message: 'Code pays invalide (2-3 lettres ISO attendu).' });
+    }
+
     const nagerBase = process.env.NAGER_API_URL || 'https://date.nager.at/api/v3';
     const response = await fetch(`${nagerBase}/PublicHolidays/${year}/${countryCode}`);
     if (!response.ok) {
@@ -325,13 +364,30 @@ async function listerModelesJoursFeries(req, res, next) {
     const search = req.query.search;
 
     const where = {};
+
+    // Isolation par entreprise : un admin_entreprise ne voit que ses propres
+    // templates + les templates globaux (source_entreprise_id null).
+    // Le super_admin voit tout.
+    if (req.user?.role !== 'super_admin') {
+      const entrepriseId = req.user?.entreprise_id || null;
+      where[Op.or] = [
+        { source_entreprise_id: entrepriseId },
+        { source_entreprise_id: null },
+      ];
+    }
+
     if (region) {
       where.region = region;
     }
     if (search) {
-      where[Op.or] = [
-        { name: { [Op.iLike]: `%${search}%` } },
-        { region: { [Op.iLike]: `%${search}%` } },
+      where[Op.and] = [
+        ...(where[Op.and] || []),
+        {
+          [Op.or]: [
+            { name: { [Op.iLike]: `%${search}%` } },
+            { region: { [Op.iLike]: `%${search}%` } },
+          ],
+        },
       ];
     }
 
@@ -518,6 +574,16 @@ async function appliquerModeleJoursFeries(req, res, next) {
       return res.status(404).json({ message: 'Modèle introuvable.' });
     }
 
+    // C-4: IDOR — un admin_entreprise ne peut appliquer que des templates globaux
+    // (source_entreprise_id null) ou ses propres templates
+    if (req.user?.role !== 'super_admin') {
+      if (template.source_entreprise_id !== null &&
+          template.source_entreprise_id !== req.user?.entreprise_id) {
+        await t.rollback();
+        return res.status(403).json({ message: 'Accès interdit à ce modèle.' });
+      }
+    }
+
     const targetEntrepriseId = getTargetEntrepriseId(req, { allowBody: true });
     if (!targetEntrepriseId) {
       await t.rollback();
@@ -605,8 +671,8 @@ async function getJoursFeriesByMonth(req, res, next) {
       return res.status(400).json({ message: 'entreprise_id est requis.' });
     }
 
-    const startDate = new Date(yearNum, monthNum - 1, 1);
-    const endDate   = new Date(yearNum, monthNum, 0); // dernier jour du mois
+    const startDate = new Date(Date.UTC(yearNum, monthNum - 1, 1));
+    const endDate   = new Date(Date.UTC(yearNum, monthNum, 0));
 
     const { Op } = require('sequelize');
     const joursFeries = await JoursFeries.findAll({
