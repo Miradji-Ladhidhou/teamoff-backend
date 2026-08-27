@@ -179,7 +179,7 @@ async function listAbsences({ role, id: userId, entreprise_id }, query) {
 
   const rows = await Absence.findAll({
     where,
-    include: [{ model: Utilisateur, as: 'utilisateur', attributes: ['id', 'prenom', 'nom', 'role'] }],
+    include: [{ model: Utilisateur, as: 'utilisateur', attributes: ['id', 'prenom', 'nom', 'role', 'service'] }],
     order: [['date_debut', 'DESC']],
   });
 
