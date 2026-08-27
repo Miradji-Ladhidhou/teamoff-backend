@@ -741,6 +741,82 @@ async function getJoursFeriesByMonth(req, res, next) {
   }
 }
 
+// ----------------------------
+// Réparation rétroactive du flag recurrent
+// ----------------------------
+async function repairerRecurrence(req, res, next) {
+  try {
+    const entrepriseId = getTargetEntrepriseId(req, { allowBody: true });
+    if (!entrepriseId) {
+      return res.status(400).json({ message: 'entreprise_id requis.' });
+    }
+
+    const countryCode = String(req.query.country || req.body?.country || 'FR').toUpperCase();
+
+    const allJoursFeries = await JoursFeries.findAll({
+      where: { entreprise_id: entrepriseId },
+      attributes: ['id', 'date', 'recurrent'],
+    });
+
+    if (allJoursFeries.length === 0) {
+      return res.json({ message: 'Aucun jour férié à corriger.', fixed: 0 });
+    }
+
+    // Étape 1 : heuristique — même MM-DD dans 2+ années différentes → férié fixe
+    const groups = {};
+    for (const jf of allJoursFeries) {
+      const md = String(jf.date).slice(5, 10); // "MM-DD"
+      if (!groups[md]) groups[md] = [];
+      groups[md].push(jf);
+    }
+
+    const toUpdate = new Set();
+    for (const entries of Object.values(groups)) {
+      const years = new Set(entries.map((e) => String(e.date).slice(0, 4)));
+      if (years.size >= 2) {
+        entries.filter((e) => !e.recurrent).forEach((e) => toUpdate.add(e.id));
+      }
+    }
+
+    // Étape 2 : pour chaque année présente en base, interroger Nager API et appliquer h.fixed
+    const uniqueYears = [...new Set(allJoursFeries.map((jf) => String(jf.date).slice(0, 4)))].slice(0, 5);
+    const nagerBase = process.env.NAGER_API_URL || 'https://date.nager.at/api/v3';
+
+    for (const year of uniqueYears) {
+      try {
+        const resp = await fetch(`${nagerBase}/PublicHolidays/${year}/${countryCode}`);
+        if (!resp.ok) continue;
+        const holidays = await resp.json();
+        if (!Array.isArray(holidays)) continue;
+
+        for (const h of holidays) {
+          if (!h?.date || h.fixed !== true) continue;
+          const match = allJoursFeries.find((jf) => String(jf.date).startsWith(h.date));
+          if (match && !match.recurrent) toUpdate.add(match.id);
+        }
+      } catch { /* ignore erreurs réseau pour cette année */ }
+    }
+
+    let fixed = 0;
+    if (toUpdate.size > 0) {
+      await JoursFeries.update(
+        { recurrent: true },
+        { where: { id: { [Op.in]: [...toUpdate] } } }
+      );
+      fixed = toUpdate.size;
+    }
+
+    return res.json({
+      message: fixed > 0
+        ? `${fixed} jour(s) férié(s) marqué(s) comme récurrent(s).`
+        : 'Aucune correction nécessaire — tous les fériés à date fixe sont déjà récurrents.',
+      fixed,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getJoursFeriesByMonth,
   listerJoursFeries,
@@ -749,6 +825,7 @@ module.exports = {
   updateJourFerie,
   supprimerJourFerie,
   importerJoursFeriesNationaux,
+  repairerRecurrence,
   listerModelesJoursFeries,
   creerModeleJoursFeries,
   exporterModeleJoursFeriesCsv,

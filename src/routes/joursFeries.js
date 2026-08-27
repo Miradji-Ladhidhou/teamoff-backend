@@ -10,6 +10,7 @@ const {
 	updateJourFerie,
 	supprimerJourFerie,
 	importerJoursFeriesNationaux,
+	repairerRecurrence,
 	listerModelesJoursFeries,
 	creerModeleJoursFeries,
 	exporterModeleJoursFeriesCsv,
@@ -28,6 +29,9 @@ router.post('/', authorizeRole(['admin_entreprise', 'super_admin']), creerJourFe
 
 // importer les jours fériés nationaux via API externe
 router.post('/import/:year', authorizeRole(['admin_entreprise', 'super_admin']), importerJoursFeriesNationaux);
+
+// réparer rétroactivement le flag recurrent sur les fériés à date fixe
+router.post('/repair-recurrence', authorizeRole(['admin_entreprise', 'super_admin']), repairerRecurrence);
 
 // modèles de jours fériés (copier/coller/export/import)
 router.get('/templates', authorizeRole(['admin_entreprise', 'super_admin']), listerModelesJoursFeries);
