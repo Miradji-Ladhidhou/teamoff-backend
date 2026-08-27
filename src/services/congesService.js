@@ -1654,7 +1654,7 @@ async function getConges(user, query = {}) {
         : null,
       entreprise_nom: plainConge.entreprise?.nom || null,
       conge_type_libelle: plainConge.conge_type?.libelle || null,
-      effective_approval_workflow: effectiveLeaveRules.approval_workflow || null,
+      effective_approval_workflow: plainConge.effective_approval_workflow || effectiveLeaveRules.approval_workflow || null,
       jours_pris: Number.isFinite(joursPrisValue) ? joursPrisValue : null,
       jours_restants: soldeByKey.has(compteurKey) ? soldeByKey.get(compteurKey) : null,
       date_demande: plainConge.created_at || plainConge.createdAt || null
@@ -1733,7 +1733,7 @@ async function getCongeById(id, user) {
       : null,
     entreprise_nom: plainConge.entreprise?.nom || null,
     conge_type_libelle: plainConge.conge_type?.libelle || null,
-    effective_approval_workflow: effectiveApprovalWorkflow,
+    effective_approval_workflow: plainConge.effective_approval_workflow || effectiveApprovalWorkflow,
     calcul_details: leaveBreakdown,
     jours_pris: Number.isFinite(joursPrisValue) ? joursPrisValue : null,
     jours_restants: Number.isFinite(joursRestants) ? joursRestants : null,
