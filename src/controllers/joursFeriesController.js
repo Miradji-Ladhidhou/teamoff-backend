@@ -104,7 +104,7 @@ async function listerJoursFeries(req, res, next) {
 
     const where = { entreprise_id: entrepriseId };
 
-    // Filtre optionnel par année — cohérent avec GET /jours-feries/:year/:month
+    // Filtre optionnel par année — les récurrents sont toujours inclus (ils s'appliquent à toutes les années)
     const rawYear = req.query.year;
     if (rawYear !== undefined) {
       const year = parseInt(rawYear, 10);
@@ -113,7 +113,10 @@ async function listerJoursFeries(req, res, next) {
       }
       const start = `${year}-01-01`;
       const end   = `${year}-12-31`;
-      where.date  = { [Op.between]: [start, end] };
+      where[Op.or] = [
+        { recurrent: true },
+        { date: { [Op.between]: [start, end] } },
+      ];
     }
 
     const joursFeries = await JoursFeries.findAll({
@@ -322,16 +325,29 @@ async function importerJoursFeriesNationaux(req, res, next) {
     const existing = await JoursFeries.findAll({
       where: {
         entreprise_id: entrepriseId,
-        date: {
-          [Op.in]: dates,
-        },
+        date: { [Op.in]: dates },
       },
       transaction: t,
     });
 
     const existingDates = new Set(existing.map((e) => e.date));
+
+    // Les récurrents couvrent déjà leur mois+jour sur toutes les années → éviter les doublons
+    const recurrentJours = await JoursFeries.findAll({
+      where: { entreprise_id: entrepriseId, recurrent: true },
+      attributes: ['date'],
+      transaction: t,
+    });
+    const recurrentMonthDays = new Set(recurrentJours.map((jf) => String(jf.date).slice(5)));
+
     const toCreate = apiHolidays
-      .filter((h) => h?.date && !existingDates.has(h.date))
+      .filter((h) => {
+        if (!h?.date) return false;
+        if (existingDates.has(h.date)) return false;
+        // Ignorer si un récurrent couvre déjà ce mois+jour
+        if (recurrentMonthDays.has(h.date.slice(5))) return false;
+        return true;
+      })
       .map((h) => ({
         entreprise_id: entrepriseId,
         date: h.date,
@@ -346,10 +362,15 @@ async function importerJoursFeriesNationaux(req, res, next) {
 
     await t.commit();
 
+    const skippedExact = existing.length;
+    const skippedRecurrent = apiHolidays.filter((h) => h?.date && !existingDates.has(h.date) && recurrentMonthDays.has(h.date.slice(5))).length;
+
     return res.json({
       message: 'Import des jours fériés terminé.',
       imported: toCreate.length,
       skipped: apiHolidays.length - toCreate.length,
+      skipped_exact: skippedExact,
+      skipped_recurrent: skippedRecurrent,
       total: apiHolidays.length,
     });
   } catch (err) {
