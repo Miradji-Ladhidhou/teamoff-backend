@@ -712,7 +712,8 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       fin_demi_journee: finDemiJournee,
       commentaire_employe: safeCommentaire,
       statut: statutConge,
-      jours_calcules: jours
+      jours_calcules: jours,
+      effective_approval_workflow: approvalWorkflow,
     }, { transaction: t });
 
     // Mouvement de solde
