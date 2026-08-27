@@ -24,10 +24,11 @@ router.post('/demande', authorizeRole(['employe','apprenti','manager']), advance
 router.get('/', authorizeRole(['employe','apprenti','manager','admin_entreprise','super_admin']), congeController.list);
 
 // Demandes de modification/annulation — avant /:id pour éviter les conflits de route
-router.get('/action-requests', authorizeRole(['admin_entreprise','super_admin']), actionRequestController.list);
-router.get('/action-requests/:requestId', authorizeRole(['admin_entreprise','super_admin']), validateUUIDParam('requestId'), actionRequestController.getOne);
-router.post('/action-requests/:requestId/approve', authorizeRole(['admin_entreprise','super_admin']), validateUUIDParam('requestId'), advancedRateLimiter('conges'), actionRequestController.approve);
-router.post('/action-requests/:requestId/reject', authorizeRole(['admin_entreprise','super_admin']), validateUUIDParam('requestId'), advancedRateLimiter('conges'), actionRequestController.reject);
+// manager autorisé : l'approbation/refus vérifie le workflow figé en amont dans le service
+router.get('/action-requests', authorizeRole(['manager','admin_entreprise','super_admin']), actionRequestController.list);
+router.get('/action-requests/:requestId', authorizeRole(['manager','admin_entreprise','super_admin']), validateUUIDParam('requestId'), actionRequestController.getOne);
+router.post('/action-requests/:requestId/approve', authorizeRole(['manager','admin_entreprise','super_admin']), validateUUIDParam('requestId'), advancedRateLimiter('conges'), actionRequestController.approve);
+router.post('/action-requests/:requestId/reject', authorizeRole(['manager','admin_entreprise','super_admin']), validateUUIDParam('requestId'), advancedRateLimiter('conges'), actionRequestController.reject);
 
 router.get('/:id', authorizeRole(['employe','apprenti','manager','admin_entreprise','super_admin']), validateUUIDParam('id'), congeController.get);
 router.put('/:id', authorizeRole(['employe','apprenti','manager','admin_entreprise','super_admin']), validateUUIDParam('id'), advancedRateLimiter('conges'), validate(updateCongeRules), congeController.update);

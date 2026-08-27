@@ -1758,18 +1758,18 @@ async function updateConge(id, data, user, req = null) {
     if (!employe) throw new Error('Employé introuvable');
 
     // Fix #44 : super_admin omis de la liste → 403 sur updateConge.
-    if (!['admin_entreprise', 'super_admin'].includes(user?.role) && user?.id !== conge.utilisateur_id) {
+    if (!['admin_entreprise', 'super_admin', 'manager'].includes(user?.role) && user?.id !== conge.utilisateur_id) {
       throw new Error('Modification non autorisée');
     }
 
-    if (user?.role === 'admin_entreprise' && user?.entreprise_id !== conge.entreprise_id) {
+    if (['admin_entreprise', 'manager'].includes(user?.role) && user?.entreprise_id !== conge.entreprise_id) {
       throw new Error('Accès interdit: entreprise différente');
     }
 
     const isPending = conge.statut === 'en_attente_manager';
     const isFinalValidated = conge.statut === 'valide_final';
     const isManagerValidated = conge.statut === 'valide_manager';
-    const isAdminRole = ['admin_entreprise', 'super_admin'].includes(user?.role);
+    const isAdminRole = ['admin_entreprise', 'super_admin', 'manager'].includes(user?.role);
     const previousDateDebut = conge.date_debut;
     const previousDateFin = conge.date_fin;
     const previousCommentaireEmploye = conge.commentaire_employe || '';
@@ -2300,13 +2300,13 @@ async function deleteConge(id, user, options = {}) {
     });
     if (!employe) throw new Error('Employé introuvable');
 
-    const isAdminLevel = user?.role === 'admin_entreprise' || user?.role === 'super_admin';
+    const isAdminLevel = ['admin_entreprise', 'super_admin', 'manager'].includes(user?.role);
 
     if (!isAdminLevel && user?.id !== conge.utilisateur_id) {
       throw new Error('Suppression non autorisée');
     }
 
-    if (user?.role === 'admin_entreprise' && user?.entreprise_id !== conge.entreprise_id) {
+    if (['admin_entreprise', 'manager'].includes(user?.role) && user?.entreprise_id !== conge.entreprise_id) {
       throw new Error('Accès interdit: entreprise différente');
     }
     // super_admin : pas de restriction entreprise (déjà protégé par authorizeRole)
