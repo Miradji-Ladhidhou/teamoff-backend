@@ -85,7 +85,8 @@ router.get('/me', authJwt, async (req, res) => {
   try {
     const { Utilisateur, Entreprise } = require('../models');
     const user = await Utilisateur.findByPk(req.user.id, {
-      attributes: ['id', 'nom', 'prenom', 'email', 'role', 'entreprise_id', 'statut', 'service', 'date_embauche', 'totp_enabled'],
+      attributes: ['id', 'nom', 'prenom', 'email', 'role', 'entreprise_id', 'statut', 'service', 'date_embauche', 'totp_enabled', 'delegue_id'],
+      include: [{ model: Utilisateur, as: 'delegue', attributes: ['id', 'prenom', 'nom'], required: false }],
     });
     if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
     const entreprise = await Entreprise.findByPk(user.entreprise_id, { attributes: ['id', 'nom'] });
@@ -101,6 +102,8 @@ router.get('/me', authJwt, async (req, res) => {
       service: user.service,
       date_embauche: user.date_embauche,
       totp_enabled: user.totp_enabled ?? false,
+      delegue_id: user.delegue_id || null,
+      delegue: user.delegue ? { id: user.delegue.id, prenom: user.delegue.prenom, nom: user.delegue.nom } : null,
     });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur' });
@@ -108,6 +111,42 @@ router.get('/me', authJwt, async (req, res) => {
 });
 
 router.put('/me', authJwt, require('../middlewares/advancedRateLimiter').advancedRateLimiter('profileUpdate'), usersController.updateOwnProfile);
+
+router.put('/me/delegate', authJwt, require('../middlewares/advancedRateLimiter').advancedRateLimiter('profileUpdate'), async (req, res) => {
+  try {
+    const { Utilisateur } = require('../models');
+    const { delegue_id } = req.body;
+
+    const utilisateur = await Utilisateur.findByPk(req.user.id);
+    if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable.' });
+
+    if (!delegue_id) {
+      await utilisateur.update({ delegue_id: null });
+      return res.json({ message: 'Délégation supprimée.', delegue_id: null, delegue: null });
+    }
+
+    if (delegue_id === req.user.id) {
+      return res.status(400).json({ message: 'Vous ne pouvez pas vous déléguer à vous-même.' });
+    }
+
+    const delegue = await Utilisateur.findByPk(delegue_id, { attributes: ['id', 'prenom', 'nom', 'entreprise_id', 'statut'] });
+    if (!delegue || delegue.entreprise_id !== utilisateur.entreprise_id) {
+      return res.status(404).json({ message: 'Collaborateur introuvable.' });
+    }
+    if (delegue.statut !== 'actif') {
+      return res.status(400).json({ message: 'Le collaborateur doit être actif.' });
+    }
+
+    await utilisateur.update({ delegue_id });
+    res.json({
+      message: 'Délégation mise à jour.',
+      delegue_id,
+      delegue: { id: delegue.id, prenom: delegue.prenom, nom: delegue.nom },
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur.' });
+  }
+});
 
 // ------------------------------
 // Métriques (super_admin uniquement)

@@ -52,6 +52,7 @@ Entreprise.hasMany(HolidayTemplate, { foreignKey: 'source_entreprise_id', as: 'h
 // Utilisateur relations
 // ----------------------
 Utilisateur.belongsTo(Entreprise, { foreignKey: 'entreprise_id', as: 'entreprise' });
+Utilisateur.belongsTo(Utilisateur, { foreignKey: 'delegue_id', as: 'delegue' });
 Utilisateur.hasMany(Conge, { foreignKey: 'utilisateur_id', as: 'conges' });
 Utilisateur.hasMany(CompteurConges, { foreignKey: 'utilisateur_id', as: 'compteurs_conges' });
 Utilisateur.hasMany(AuditLog, { foreignKey: 'user_id', as: 'audit_logs' });
