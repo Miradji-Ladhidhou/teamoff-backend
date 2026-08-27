@@ -331,6 +331,8 @@ async function importerJoursFeriesNationaux(req, res, next) {
     });
 
     const existingDates = new Set(existing.map((e) => e.date));
+    // Index des entrées existantes pour mise à jour rétroactive du flag recurrent
+    const existingByDate = Object.fromEntries(existing.map((e) => [e.date, e]));
 
     // Les récurrents couvrent déjà leur mois+jour sur toutes les années → éviter les doublons
     const recurrentJours = await JoursFeries.findAll({
@@ -340,21 +342,43 @@ async function importerJoursFeriesNationaux(req, res, next) {
     });
     const recurrentMonthDays = new Set(recurrentJours.map((jf) => String(jf.date).slice(5)));
 
-    const toCreate = apiHolidays
-      .filter((h) => {
-        if (!h?.date) return false;
-        if (existingDates.has(h.date)) return false;
-        // Ignorer si un récurrent couvre déjà ce mois+jour
-        if (recurrentMonthDays.has(h.date.slice(5))) return false;
-        return true;
-      })
-      .map((h) => ({
+    // Séparer nouvelles entrées et corrections rétroactives
+    const toCreate = [];
+    let updatedRecurrent = 0;
+
+    for (const h of apiHolidays) {
+      if (!h?.date) continue;
+
+      // h.fixed = true → date fixe chaque année (Noël, Jour de l'An…)
+      // h.fixed = false → date mobile (Pâques, Pentecôte…)
+      const isFixed = h.fixed === true;
+      const monthDay = h.date.slice(5);
+
+      if (existingDates.has(h.date)) {
+        // Entrée déjà en base : corriger rétroactivement recurrent si h.fixed et pas encore marquée
+        const entry = existingByDate[h.date];
+        if (isFixed && entry && !entry.recurrent) {
+          await entry.update({ recurrent: true }, { transaction: t });
+          recurrentMonthDays.add(monthDay);
+          updatedRecurrent += 1;
+        }
+        continue;
+      }
+
+      // Ignorer si un récurrent couvre déjà ce mois+jour (sauf si on vient juste de mettre à jour)
+      if (recurrentMonthDays.has(monthDay)) continue;
+
+      toCreate.push({
         entreprise_id: entrepriseId,
         date: h.date,
         libelle: h.localName || h.name || `Jour férié ${h.date}`,
-        recurrent: false,
+        recurrent: isFixed,
         est_travail: false,
-      }));
+      });
+
+      // Si ce nouveau férié est récurrent, l'ajouter au set pour les suivants dans la même boucle
+      if (isFixed) recurrentMonthDays.add(monthDay);
+    }
 
     if (toCreate.length > 0) {
       await JoursFeries.bulkCreate(toCreate, { transaction: t });
@@ -362,16 +386,14 @@ async function importerJoursFeriesNationaux(req, res, next) {
 
     await t.commit();
 
-    const skippedExact = existing.length;
-    const skippedRecurrent = apiHolidays.filter((h) => h?.date && !existingDates.has(h.date) && recurrentMonthDays.has(h.date.slice(5))).length;
+    const skippedTotal = apiHolidays.filter((h) => h?.date).length - toCreate.length - updatedRecurrent;
 
     return res.json({
       message: 'Import des jours fériés terminé.',
       imported: toCreate.length,
-      skipped: apiHolidays.length - toCreate.length,
-      skipped_exact: skippedExact,
-      skipped_recurrent: skippedRecurrent,
-      total: apiHolidays.length,
+      updated_recurrent: updatedRecurrent,
+      skipped: skippedTotal,
+      total: apiHolidays.filter((h) => h?.date).length,
     });
   } catch (err) {
     await t.rollback();
