@@ -6,7 +6,7 @@ const { logMouvement, descriptionConge } = require('./mouvementSoldeService');
 const { ensureCounter } = require('./quotasService');
 const LeavePolicyService = require('./leavePolicyService');
 const joursFeriesService = require('./joursFeriesService');
-const { getLeaveRules, getEffectiveLeaveRules } = require('./politiqueConges');
+const { getLeaveRules, getEffectiveLeaveRules, getRequiredNotice } = require('./politiqueConges');
 const { Op } = require('sequelize');
 const dayjs = require('dayjs');
 const isSameOrBefore = require('dayjs/plugin/isSameOrBefore');
@@ -574,12 +574,11 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     const baseLeaveRules = await getEntrepriseLeaveRules(utilisateur.entreprise_id, t);
     const leaveRules = getEffectiveLeaveRules(baseLeaveRules, utilisateur.service || null);
 
+    const calendarDays = dayjs(date_fin).diff(dayjs(date_debut), 'day') + 1;
     const daysUntilStart = dayjs(date_debut).startOf('day').diff(dayjs().startOf('day'), 'day');
-    const minNoticeDays = Number.isFinite(Number(leaveRules.minimum_notice_days))
-      ? Number(leaveRules.minimum_notice_days)
-      : 0;
+    const minNoticeDays = getRequiredNotice(leaveRules, calendarDays);
     if (daysUntilStart < minNoticeDays) {
-      throw new Error(`Délai minimum non respecté: ${minNoticeDays} jour(s) minimum`);
+      throw new Error(`Délai de préavis non respecté : ${minNoticeDays} jour(s) requis pour un congé de ${calendarDays} jour(s) (départ dans ${daysUntilStart} jour(s))`);
     }
 
     // Verrouiller le compteur en premier pour sérialiser les requêtes concurrentes du même utilisateur
@@ -1872,12 +1871,11 @@ async function updateConge(id, data, user, req = null) {
     if (isPending && user?.role !== 'admin_entreprise' && user?.role !== 'super_admin') {
       const baseLeaveRulesForUpdate = await getEntrepriseLeaveRules(conge.entreprise_id, t);
       const leaveRulesForUpdate = getEffectiveLeaveRules(baseLeaveRulesForUpdate, employe?.service || null);
-      const minNotice = Number.isFinite(Number(leaveRulesForUpdate.minimum_notice_days))
-        ? Number(leaveRulesForUpdate.minimum_notice_days)
-        : 0;
+      const calendarDaysUpdate = dayjs(nextDateFin).diff(dayjs(nextDateDebut), 'day') + 1;
+      const minNotice = getRequiredNotice(leaveRulesForUpdate, calendarDaysUpdate);
       const daysUntilStart = dayjs(nextDateDebut).startOf('day').diff(dayjs().startOf('day'), 'day');
       if (daysUntilStart < minNotice) {
-        throw new Error(`Délai minimum non respecté: ${minNotice} jour(s) minimum`);
+        throw new Error(`Délai de préavis non respecté : ${minNotice} jour(s) requis pour un congé de ${calendarDaysUpdate} jour(s) calendaires`);
       }
     }
 
@@ -2601,6 +2599,10 @@ async function calculateDaysPreview({ date_debut, date_fin, debut_demi_journee, 
   const leaveRules = await getEntrepriseLeaveRules(entrepriseId);
   const blockedDays = leaveRules.blocked_days || {};
 
+  const calendarDaysPreview = dayjs(date_fin).diff(dayjs(date_debut), 'day') + 1;
+  const daysUntilStartPreview = dayjs(date_debut).startOf('day').diff(dayjs().startOf('day'), 'day');
+  const preavisRequis = getRequiredNotice(leaveRules, calendarDaysPreview);
+
   return {
     jours,
     politique: {
@@ -2609,6 +2611,8 @@ async function calculateDaysPreview({ date_debut, date_fin, debut_demi_journee, 
       count_saturday: blockedDays.count_saturday === true,
       count_sunday: blockedDays.count_sunday === true,
       autoriser_reservation_sans_solde: leaveRules.autoriser_reservation_sans_solde !== false,
+      preavis_requis: preavisRequis,
+      jours_avant_depart: daysUntilStartPreview,
     },
   };
 }

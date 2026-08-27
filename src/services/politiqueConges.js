@@ -17,6 +17,7 @@ const DEFAULT_LEAVE_POLICY = {
   service_policies: {},
   approval_workflow: 'manager_admin',
   minimum_notice_days: 0,
+  notice_period_tiers: [],
   max_consecutive_days: 365,
   notification_settings: {
     on_create: true,
@@ -82,6 +83,47 @@ function normalizeNotificationSettings(settings = {}) {
   };
 }
 
+function normalizeNoticeTiers(tiers) {
+  if (!Array.isArray(tiers)) return [];
+  return tiers
+    .filter((t) => typeof t === 'object' && t !== null && Number.isFinite(Number(t.preavis_jours)) && Number(t.preavis_jours) >= 0)
+    .map((t) => {
+      const tier = { preavis_jours: Math.max(0, Math.round(Number(t.preavis_jours))) };
+      const max = Number(t.max_jours);
+      if (Number.isFinite(max) && max >= 1) tier.max_jours = Math.round(max);
+      return tier;
+    })
+    .sort((a, b) => {
+      const aMax = a.max_jours !== undefined ? a.max_jours : Infinity;
+      const bMax = b.max_jours !== undefined ? b.max_jours : Infinity;
+      return aMax - bMax;
+    });
+}
+
+/**
+ * Retourne le nombre de jours de préavis requis pour une durée de congé donnée.
+ * Si des paliers sont configurés ils priment sur minimum_notice_days.
+ * @param {Object} leaveRules - règles normalisées
+ * @param {number} calendarDays - durée calendaire du congé demandé (date_fin - date_debut + 1)
+ */
+function getRequiredNotice(leaveRules, calendarDays) {
+  const tiers = Array.isArray(leaveRules?.notice_period_tiers) ? leaveRules.notice_period_tiers : [];
+  if (tiers.length > 0) {
+    const sorted = [...tiers].sort((a, b) => {
+      const aMax = a.max_jours !== undefined ? a.max_jours : Infinity;
+      const bMax = b.max_jours !== undefined ? b.max_jours : Infinity;
+      return aMax - bMax;
+    });
+    for (const tier of sorted) {
+      if (tier.max_jours === undefined || calendarDays <= tier.max_jours) {
+        return tier.preavis_jours;
+      }
+    }
+    return sorted[sorted.length - 1].preavis_jours;
+  }
+  return Number.isFinite(Number(leaveRules?.minimum_notice_days)) ? Number(leaveRules.minimum_notice_days) : 0;
+}
+
 function normalizeLeavePolicy(rawPolicy = {}) {
   const approvalWorkflow = normalizeApprovalWorkflow(rawPolicy?.approval_workflow);
   const overlapBehavior = ['block', 'warning'].includes(rawPolicy?.overlap_behavior)
@@ -99,6 +141,7 @@ function normalizeLeavePolicy(rawPolicy = {}) {
     service_policies: rawPolicy?.service_policies || {},
     approval_workflow: approvalWorkflow,
     minimum_notice_days: Math.max(0, Number(rawPolicy?.minimum_notice_days) || 0),
+    notice_period_tiers: normalizeNoticeTiers(rawPolicy?.notice_period_tiers),
     max_consecutive_days: Math.max(1, Number(rawPolicy?.max_consecutive_days) || DEFAULT_LEAVE_POLICY.max_consecutive_days),
     notification_settings: normalizeNotificationSettings(rawPolicy?.notification_settings),
     report_autorise: rawPolicy?.report_autorise === true,
@@ -211,4 +254,5 @@ module.exports = {
   getToutesPolitiques,
   getLeaveRules,
   getEffectiveLeaveRules,
+  getRequiredNotice,
 };
