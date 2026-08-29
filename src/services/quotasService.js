@@ -448,10 +448,12 @@ async function getSoldesUtilisateur(utilisateur_id, annee) {
     solde_conges: c.jours_acquis,
     jours_pris: c.jours_pris,
     jours_reportes: c.jours_reportes,
+    jours_reportes_consommes: c.jours_reportes_consommes,
     jours_reserves: c.jours_reserves,
     jours_annules: c.jours_annules,
     dernier_credit_mensuel: c.dernier_credit_mensuel,
-    solde_disponible: c.getSoldeDisponible()
+    solde_disponible: c.getSoldeDisponible(),
+    ...computeN1Display(c),
   }));
 }
 
