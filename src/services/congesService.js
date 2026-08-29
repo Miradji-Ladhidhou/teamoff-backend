@@ -405,6 +405,18 @@ async function checkOverlapConge({ utilisateur_id, conge_type_id, date_debut, da
     userService: utilisateur.service || null,
   });
 
+  // Vérification directe SQL pour l'overlap propre (plus fiable que le filtre JS)
+  const selfOverlapDirect = await Conge.findOne({
+    where: {
+      utilisateur_id: utilisateurId,
+      statut: { [Op.in]: ['reserve', 'en_attente_manager', 'valide_manager', 'valide_final'] },
+      date_debut: { [Op.lte]: date_fin },
+      date_fin:   { [Op.gte]: date_debut },
+    },
+    attributes: ['id'],
+  });
+  const overlapWithSelf = Boolean(selfOverlapDirect) || overlapContext.overlapWithSameUser;
+
   const userService = utilisateur.service || null;
   const serviceLimit = Number(userService ? leaveRules.max_employees_on_leave.by_service?.[userService] : null);
   const projectedServiceOnLeaveCount = overlapContext.overlappingCountByService + 1;
@@ -412,23 +424,23 @@ async function checkOverlapConge({ utilisateur_id, conge_type_id, date_debut, da
     userService && Number.isFinite(serviceLimit) && serviceLimit > 0 && projectedServiceOnLeaveCount > serviceLimit
   );
 
-  if (overlapContext.overlapWithSameUser || serviceLimitReached) {
+  if (overlapWithSelf || serviceLimitReached) {
     const conflictPeriod = serviceLimitReached
       ? computeConflictPeriod(overlapContext.overlappingConges, userService, date_debut, date_fin)
       : null;
     const message = buildOverlapMessage({
-      overlapWithSameUser: overlapContext.overlapWithSameUser,
+      overlapWithSameUser: overlapWithSelf,
       serviceLimitReached,
       userService,
       projectedServiceOnLeaveCount,
       serviceLimit,
       conflictPeriod,
     });
-    const behavior = overlapContext.overlapWithSameUser ? 'block' : (leaveRules.overlap_behavior || 'block');
+    const behavior = overlapWithSelf ? 'block' : (leaveRules.overlap_behavior || 'block');
     return {
       action: behavior,
       message: message || 'Capacité du service atteinte pour cette période.',
-      overlapWithSameUser: overlapContext.overlapWithSameUser,
+      overlapWithSameUser: overlapWithSelf,
       serviceLimitReached,
       projectedServiceOnLeaveCount,
       serviceLimit: Number.isFinite(serviceLimit) ? serviceLimit : null,
@@ -633,7 +645,18 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       ? projectedServiceOnLeaveCount > serviceLimit
       : false;
 
-    if (overlapContext.overlapWithSameUser) {
+    // Vérification directe SQL (plus fiable que le filtre JS de computeOverlapContext)
+    const selfOverlapDirect = await Conge.findOne({
+      where: {
+        utilisateur_id: utilisateurId,
+        statut: { [Op.in]: ['reserve', 'en_attente_manager', 'valide_manager', 'valide_final'] },
+        date_debut: { [Op.lte]: date_fin },
+        date_fin:   { [Op.gte]: date_debut },
+      },
+      attributes: ['id'],
+      transaction: t,
+    });
+    if (selfOverlapDirect || overlapContext.overlapWithSameUser) {
       throw new Error('Chevauchement : vous avez déjà un congé sur cette période');
     }
 
