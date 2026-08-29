@@ -2617,7 +2617,9 @@ async function calculateDaysPreview({ date_debut, date_fin, debut_demi_journee, 
     fin_demi_journee || 'apres_midi'
   );
 
-  const leaveRules = await getEntrepriseLeaveRules(entrepriseId);
+  const baseLeaveRules = await getEntrepriseLeaveRules(entrepriseId);
+  const utilisateurPreview = await Utilisateur.findByPk(reqUser.id, { attributes: ['service'] });
+  const leaveRules = getEffectiveLeaveRules(baseLeaveRules, utilisateurPreview?.service || null);
   const blockedDays = leaveRules.blocked_days || {};
 
   const calendarDaysPreview = dayjs(date_fin).diff(dayjs(date_debut), 'day') + 1;
