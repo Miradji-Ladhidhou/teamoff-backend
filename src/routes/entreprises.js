@@ -50,8 +50,10 @@ router.put('/:id/politique', authorizeRole(['super_admin', 'admin_entreprise'], 
   entreprisesController.updatePolitiqueConges
 );
 
-// gestion des paramètres généraux d'une entreprise (super_admin et admin_entreprise de l'entreprise concernée)
-router.get('/:id/parametres', authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id), validateUUIDParam('id'), entreprisesController.getParametres);
+// gestion des paramètres généraux d'une entreprise
+// GET : accessible à tous les rôles de l'entreprise (logo affiché dans le Layout pour tous)
+// PUT : réservé aux admins
+router.get('/:id/parametres', authorizeRole(['super_admin', 'admin_entreprise', 'manager', 'employe'], req => req.params.id), validateUUIDParam('id'), entreprisesController.getParametres);
 router.put('/:id/parametres', authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id), validateUUIDParam('id'), entreprisesController.updateParametres);
 
 // gestion des services d'une entreprise (super_admin et admin_entreprise de l'entreprise concernée)
