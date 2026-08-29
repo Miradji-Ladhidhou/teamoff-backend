@@ -1864,7 +1864,10 @@ async function updateConge(id, data, user, req = null) {
     );
 
     if (!Number.isFinite(newDays) || newDays <= 0) {
-      throw new Error('Nombre de jours de congé invalide');
+      throw new Error(
+        `Les nouvelles dates (${formatDateFR(nextDateDebut)} → ${formatDateFR(nextDateFin)}) ne contiennent aucun jour ouvré. ` +
+        `Vérifiez qu'elles ne tombent pas uniquement sur des week-ends, jours fériés ou jours bloqués par la politique de l'entreprise.`
+      );
     }
 
     // Vérification chevauchement sur les nouvelles dates.

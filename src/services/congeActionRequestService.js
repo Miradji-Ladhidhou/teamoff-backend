@@ -325,6 +325,25 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
       commentaire: commentaire || request.commentaire_employe || 'Annulation approuvée',
     });
   } else {
+    // Pré-vérification des jours ouvrés pour un message d'erreur précis
+    const previewDays = await congesService.calcJoursConges(
+      conge.entreprise_id,
+      request.date_debut_demandee,
+      request.date_fin_demandee,
+      request.debut_demi_journee_demandee || 'matin',
+      request.fin_demi_journee_demandee || 'apres_midi'
+    );
+    if (!Number.isFinite(previewDays) || previewDays <= 0) {
+      const debut = formatDateFR(request.date_debut_demandee);
+      const fin = formatDateFR(request.date_fin_demandee);
+      const err = new Error(
+        `Les nouvelles dates demandées (${debut} → ${fin}) ne contiennent aucun jour ouvré. ` +
+        `Ces dates tombent probablement sur des week-ends, jours fériés ou jours bloqués par la politique de l'entreprise. ` +
+        `Refusez cette demande et invitez l'employé à soumettre de nouvelles dates valides.`
+      );
+      err.statusCode = 422; throw err;
+    }
+
     try {
       await congesService.updateConge(conge.id, {
         date_debut: request.date_debut_demandee,
