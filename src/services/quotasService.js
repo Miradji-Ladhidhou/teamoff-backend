@@ -51,8 +51,25 @@ function normalizeCounterPayload(payload = {}) {
     jours_acquis: toNumber(sourceAcquired, 0),
     jours_pris: Math.max(0, toNumber(payload.jours_pris, 0)),
     jours_reportes: Math.max(0, toNumber(payload.jours_reportes, 0)),
+    // Réinitialiser la consommation N-1 lors d'un ajustement admin (nouveau crédit N-1 de référence)
+    jours_reportes_consommes: 0,
     jours_reserves: Math.max(0, toNumber(payload.jours_reserves, 0)),
   };
+}
+
+// Calcule les champs N-1 / N disponibles pour l'affichage (consommation N-1 en premier)
+function computeN1Display(c) {
+  const reportesTotal = toNumber(c.jours_reportes, 0);
+  const reportesConsommes = toNumber(c.jours_reportes_consommes, 0);
+  const jours_reserves = toNumber(c.jours_reserves, 0);
+  const solde_dispo = toNumber(c.getSoldeDisponible ? c.getSoldeDisponible() : (toNumber(c.jours_acquis, 0) - jours_reserves), 0);
+
+  const n1_restant_brut = Math.max(0, reportesTotal - reportesConsommes);
+  const n1_from_reserves = Math.min(jours_reserves, n1_restant_brut);
+  const n1_disponible = Math.max(0, n1_restant_brut - n1_from_reserves);
+  const n_disponible = Math.max(0, solde_dispo - n1_disponible);
+
+  return { n1_disponible, n_disponible };
 }
 
 function computeProratedAcquiredDays({ annualQuota }) {
@@ -462,6 +479,8 @@ async function listCountersForUser(entrepriseId, utilisateurId, annee) {
     solde_conges: toNumber(c.jours_acquis, 0),
     jours_pris: toNumber(c.jours_pris, 0),
     jours_reportes: toNumber(c.jours_reportes, 0),
+    jours_reportes_consommes: toNumber(c.jours_reportes_consommes, 0),
+    ...computeN1Display(c),
     jours_reserves: toNumber(c.jours_reserves, 0),
     jours_annules: toNumber(c.jours_annules, 0),
     dernier_credit_mensuel: c.dernier_credit_mensuel || null,

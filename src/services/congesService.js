@@ -38,6 +38,21 @@ function buildDateKey(dateValue) {
   return dayjs(dateValue).format('YYYY-MM-DD');
 }
 
+// Consomme N-1 en premier : incrémente jours_reportes_consommes du minimum(joursConge, N-1 restant).
+function consumeN1First(compteur, joursConge) {
+  const n1Dispo = Math.max(0, safeNumber(compteur.jours_reportes) - safeNumber(compteur.jours_reportes_consommes));
+  const fromN1 = Math.min(joursConge, n1Dispo);
+  compteur.jours_reportes_consommes = Number((safeNumber(compteur.jours_reportes_consommes) + fromN1).toFixed(2));
+}
+
+// LIFO : lors d'une annulation on rembourse N d'abord, puis N-1 (inverse de la consommation).
+function refundLIFO(compteur, joursConge) {
+  const nConsumed = Math.max(0, safeNumber(compteur.jours_pris) - safeNumber(compteur.jours_reportes_consommes));
+  const nRefund = Math.min(joursConge, nConsumed);
+  const n1Refund = Math.max(0, joursConge - nRefund);
+  compteur.jours_reportes_consommes = Number(Math.max(0, safeNumber(compteur.jours_reportes_consommes) - n1Refund).toFixed(2));
+}
+
 // Construit un objet de lookup à partir du tableau brut de JoursFeries.
 // Les fériés récurrents sont indexés par 'MM-DD' (comparaison mois/jour uniquement).
 // Les fériés non récurrents sont indexés par 'YYYY-MM-DD' (année exacte).
@@ -684,6 +699,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     } else if (approvalWorkflow === 'auto' || (isManagerOwnLeave && approvalWorkflow === 'manager_only')) {
       // auto OU manager_only sur son propre congé (personne d'autre pour valider)
       statutConge = 'valide_final';
+      consumeN1First(compteur, jours);
       compteur.jours_acquis = Math.max(0, safeNumber(compteur.jours_acquis) - safeNumber(jours));
       compteur.jours_pris = safeNumber(compteur.jours_pris) + safeNumber(jours);
     } else if (isManagerOwnLeave && approvalWorkflow === 'manager_admin') {
@@ -1063,6 +1079,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
           });
         }
 
+        consumeN1First(compteur, joursConge);
         compteur.jours_acquis = Math.max(0, safeNumber(compteur.jours_acquis) - safeNumber(joursConge));
         compteur.jours_pris = safeNumber(compteur.jours_pris) + safeNumber(joursConge);
         compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
@@ -1257,6 +1274,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         });
       }
 
+      consumeN1First(compteur, joursConge);
       compteur.jours_acquis = Math.max(0, safeNumber(compteur.jours_acquis) - safeNumber(joursConge));
       compteur.jours_pris = safeNumber(compteur.jours_pris) + safeNumber(joursConge);
       compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
@@ -2364,6 +2382,7 @@ async function deleteConge(id, user, options = {}) {
         compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - safeNumber(joursConge));
         compteur.jours_annules = safeNumber(compteur.jours_annules) + safeNumber(joursConge);
       } else {
+        refundLIFO(compteur, joursConge);
         compteur.jours_acquis = safeNumber(compteur.jours_acquis) + safeNumber(joursConge);
         compteur.jours_pris = Math.max(0, safeNumber(compteur.jours_pris) - safeNumber(joursConge));
         compteur.jours_annules = safeNumber(compteur.jours_annules) + safeNumber(joursConge);
@@ -2717,6 +2736,7 @@ async function activerReservation(congeId, reqUser) {
 
     if (leaveRules.approval_workflow === 'auto') {
       conge.statut = 'valide_final';
+      consumeN1First(compteur, joursConge);
       compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - joursConge);
       compteur.jours_acquis   = Math.max(0, safeNumber(compteur.jours_acquis)   - joursConge);
       compteur.jours_pris     = safeNumber(compteur.jours_pris) + joursConge;
@@ -2955,6 +2975,7 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
         if (leaveRules.approval_workflow === 'auto') {
           newStatut = 'valide_final';
           // Consommer définitivement les jours
+          consumeN1First(compteur, jours);
           compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - jours);
           compteur.jours_acquis   = Math.max(0, safeNumber(compteur.jours_acquis)   - jours);
           compteur.jours_pris     = safeNumber(compteur.jours_pris) + jours;

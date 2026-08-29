@@ -50,6 +50,12 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 0
     },
 
+    jours_reportes_consommes: {
+      type: DataTypes.DECIMAL(5,2),
+      allowNull: false,
+      defaultValue: 0
+    },
+
     jours_reserves: {
       type: DataTypes.DECIMAL(5,2),
       allowNull: false,
