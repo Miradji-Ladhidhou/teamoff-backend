@@ -177,13 +177,11 @@ function getEffectiveLeaveRules(baseRules, service) {
     effective.approval_workflow = normalizeApprovalWorkflow(servicePolicy.approval_workflow, effective.approval_workflow);
   }
 
-  // Préavis global de service (legacy — remplacé par la config 2-paliers si threshold > 0)
-  const svcNotice = Number(servicePolicy.minimum_notice_days);
-  if (Number.isFinite(svcNotice) && svcNotice > 0) {
-    effective.minimum_notice_days = svcNotice;
-  }
+  // Règle absolue : dès qu'un service a sa propre politique, le préavis global ne s'applique plus.
+  // Seuls les tiers du service comptent (threshold > 0 → paliers urgence/normal, sinon 0 jour).
+  effective.minimum_notice_days = 0;
+  effective.notice_period_tiers = [];
 
-  // Config 2-paliers par service : congé < threshold = urgent, congé >= threshold = normal
   const threshold = Number(servicePolicy.notice_urgency_threshold);
   if (Number.isFinite(threshold) && threshold > 0) {
     const urgentDays = Math.max(0, Number(servicePolicy.notice_urgent_days) || 0);
@@ -192,7 +190,6 @@ function getEffectiveLeaveRules(baseRules, service) {
       { max_jours: threshold - 1, preavis_jours: urgentDays },
       { preavis_jours: normalDays },
     ];
-    effective.minimum_notice_days = 0;
   }
 
   const svcMaxConsec = Number(servicePolicy.max_consecutive_days);
