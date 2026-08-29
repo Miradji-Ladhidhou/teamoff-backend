@@ -107,7 +107,7 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
       where: {
         utilisateur_id: conge.utilisateur_id,
         id: { [Op.ne]: congeId },
-        statut: { [Op.notIn]: ['rejete', 'annule'] },
+        statut: { [Op.in]: ['reserve', 'en_attente_manager', 'valide_manager', 'valide_final'] },
         date_debut: { [Op.lte]: date_fin_demandee },
         date_fin: { [Op.gte]: date_debut_demandee },
       },
