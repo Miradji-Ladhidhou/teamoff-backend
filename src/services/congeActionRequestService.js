@@ -1,6 +1,7 @@
 'use strict';
 
 const { CongeActionRequest, Conge, Utilisateur, CongeType, Entreprise, sequelize } = require('../models');
+const { Op } = require('sequelize');
 const congesService = require('./congesService');
 const notificationService = require('./notificationService');
 const { formatDateFR } = require('../utils/dateFormatter');
@@ -95,11 +96,26 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
 
   // Pour une modification : vérifier que les nouvelles dates contiennent au moins un jour ouvré
   if (type === 'modify') {
-    const congesService = require('./congesService');
     const newDays = await congesService.calcJoursConges(conge.entreprise_id, date_debut_demandee, date_fin_demandee, debut_demi_journee_demandee || 'matin', fin_demi_journee_demandee || 'apres_midi');
     if (!Number.isFinite(newDays) || newDays <= 0) {
       const err = new Error('La nouvelle période ne contient aucun jour ouvré. Vérifiez les dates (week-ends, jours fériés ou jours bloqués).');
       err.statusCode = 400; throw err;
+    }
+
+    // Vérifier chevauchement avec d'autres congés (exclut le congé en cours de modification)
+    const overlappingConge = await Conge.findOne({
+      where: {
+        utilisateur_id: conge.utilisateur_id,
+        id: { [Op.ne]: congeId },
+        statut: { [Op.notIn]: ['rejete', 'annule'] },
+        date_debut: { [Op.lte]: date_fin_demandee },
+        date_fin: { [Op.gte]: date_debut_demandee },
+      },
+    });
+    if (overlappingConge) {
+      const { formatDateFR: fmt } = require('../utils/dateFormatter');
+      const err = new Error(`Ces dates chevauchent un autre congé existant (${fmt(overlappingConge.date_debut)} → ${fmt(overlappingConge.date_fin)}).`);
+      err.statusCode = 409; throw err;
     }
   }
 
