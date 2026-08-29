@@ -736,7 +736,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     const managers = await Utilisateur.findAll({
       where: { entreprise_id: utilisateur.entreprise_id, role: 'manager', statut: 'actif' }
     });
-    const admin = await Utilisateur.findOne({
+    const admins = await Utilisateur.findAll({
       where: { entreprise_id: utilisateur.entreprise_id, role: 'admin_entreprise' }
     });
 
@@ -744,14 +744,15 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
 
     const utilisateurNomComplet = `${utilisateur.prenom || ''} ${utilisateur.nom || ''}`.trim() || utilisateur.nom;
 
-    if (shouldNotifyOnCreate && !isReservation && managers.length > 0) {
-      for (const manager of managers) {
+    if (shouldNotifyOnCreate && !isReservation) {
+      for (const recipient of [...managers, ...admins]) {
+        if (!recipient.email) continue;
         emailQueue.push({
-          to: manager.email,
+          to: recipient.email,
           subject: `Nouvelle demande de conge - ${utilisateurNomComplet}`,
           templateName: 'leave-new-request-manager',
           data: {
-            destinataire_prenom: manager.prenom || 'Manager',
+            destinataire_prenom: recipient.prenom || (recipient.role === 'admin_entreprise' ? 'Administrateur' : 'Manager'),
             demandeur_nom: utilisateurNomComplet,
             date_debut: formatDateFR(date_debut),
             date_fin: formatDateFR(date_fin),
@@ -765,41 +766,13 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
         });
         await notificationService.creerNotification({
           entreprise_id: utilisateur.entreprise_id,
-          utilisateur_id: manager.id,
+          utilisateur_id: recipient.id,
           type: 'conge_demande',
           message: `Nouvelle demande de congé de ${utilisateurNomComplet} (${formatDateFR(date_debut)} - ${formatDateFR(date_fin)})`,
           url: `/conges/${conge.id}`,
           transaction: t
         });
       }
-    }
-
-    if (shouldNotifyOnCreate && !isReservation && admin) {
-      emailQueue.push({
-        to: admin.email,
-        subject: `Nouvelle demande de conge - ${utilisateurNomComplet}`,
-        templateName: 'leave-new-request-manager',
-        data: {
-          destinataire_prenom: admin.prenom || 'Administrateur',
-          demandeur_nom: utilisateurNomComplet,
-          date_debut: formatDateFR(date_debut),
-          date_fin: formatDateFR(date_fin),
-          type_conge: congeType.libelle || 'Type non renseigne',
-          commentaire_employe: safeCommentaire || 'Aucun',
-          overlap_warning_html: overlapWarningPayload
-            ? `<div style="margin-top:12px;padding:12px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;color:#92400e;"><strong>⚠ Alerte chevauchement :</strong><br/>${overlapWarningPayload.message}</div>`
-            : '',
-          action_url: buildCongeUrl(conge.id),
-        }
-      });
-      await notificationService.creerNotification({
-        entreprise_id: utilisateur.entreprise_id,
-        utilisateur_id: admin.id,
-        type: 'conge_demande',
-        message: `Nouvelle demande de congé de ${utilisateurNomComplet} (${formatDateFR(date_debut)} - ${formatDateFR(date_fin)})`,
-        url: `/conges/${conge.id}`,
-        transaction: t
-      });
     }
 
     // Notification à l'employé : congé créé ou réservé
@@ -1012,13 +985,14 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
       conge.commentaire_manager = managerComment;
       await conge.save({ transaction: t });
 
-      // Notification admin entreprise
-      const admin = await Utilisateur.findOne({
+      // Notification à tous les admins entreprise
+      const adminsEntreprise = await Utilisateur.findAll({
         where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise' }
       });
       const managerNom = `${reqUser?.prenom || ''} ${reqUser?.nom || ''}`.trim() || 'Votre manager';
 
-      if (admin) {
+      for (const admin of adminsEntreprise) {
+        if (!admin.email) continue;
         emailQueue.push({
           to: admin.email,
           subject: hasOverlapAtValidation
@@ -2121,7 +2095,7 @@ async function updateConge(id, data, user, req = null) {
         where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
         transaction: t,
       });
-      const admin = await Utilisateur.findOne({
+      const admins = await Utilisateur.findAll({
         where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise' },
         transaction: t,
       });
@@ -2131,7 +2105,7 @@ async function updateConge(id, data, user, req = null) {
       const nextPeriod = `${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)}`;
       const nextCommentaireEmploye = (updates.commentaire_employe ?? conge.commentaire_employe ?? '').toString().trim();
 
-      const recipients = [...managers, admin].filter((recipient) => recipient?.email);
+      const recipients = [...managers, ...admins].filter((recipient) => recipient?.email);
 
       for (const recipient of recipients) {
         fireEmail({
@@ -2246,11 +2220,11 @@ async function updateConge(id, data, user, req = null) {
         where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
         transaction: t,
       });
-      const admin = await Utilisateur.findOne({
+      const adminsValide = await Utilisateur.findAll({
         where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise' },
         transaction: t,
       });
-      const recipients = [...managers, admin].filter((recipient) => recipient?.email);
+      const recipients = [...managers, ...adminsValide].filter((recipient) => recipient?.email);
 
       for (const recipient of recipients) {
         fireEmail({
@@ -2411,11 +2385,11 @@ async function deleteConge(id, user, options = {}) {
         where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
         attributes: ['id', 'prenom', 'nom', 'email'],
       });
-      const admin = await Utilisateur.findOne({
+      const adminsPending = await Utilisateur.findAll({
         where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise', statut: 'actif' },
         attributes: ['id', 'prenom', 'nom', 'email'],
       });
-      const recipients = [...managers, ...(admin ? [admin] : [])];
+      const recipients = [...managers, ...adminsPending];
       for (const recipient of recipients) {
         if (recipient.email) {
           fireEmail({
@@ -2489,11 +2463,11 @@ async function deleteConge(id, user, options = {}) {
         where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
         attributes: ['id', 'prenom', 'nom', 'email'],
       });
-      const admin = await Utilisateur.findOne({
+      const adminsValidated = await Utilisateur.findAll({
         where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise', statut: 'actif' },
         attributes: ['id', 'prenom', 'nom', 'email'],
       });
-      const recipients = [...managers, ...(admin ? [admin] : [])];
+      const recipients = [...managers, ...adminsValidated];
       for (const recipient of recipients) {
         if (recipient.email) {
           fireEmail({
@@ -2799,11 +2773,11 @@ async function activerReservation(congeId, reqUser) {
         where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
         transaction: t,
       });
-      const admin = await Utilisateur.findOne({
+      const adminsReserve = await Utilisateur.findAll({
         where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise' },
         transaction: t,
       });
-      for (const recipient of [...managers, ...(admin ? [admin] : [])]) {
+      for (const recipient of [...managers, ...adminsReserve]) {
         await notificationService.creerNotification({
           entreprise_id: conge.entreprise_id,
           utilisateur_id: recipient.id,
@@ -3029,11 +3003,11 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
             where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
             transaction: t,
           });
-          const admin = await Utilisateur.findOne({
+          const adminsTryActivate = await Utilisateur.findAll({
             where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise' },
             transaction: t,
           });
-          for (const recipient of [...managers, ...(admin ? [admin] : [])]) {
+          for (const recipient of [...managers, ...adminsTryActivate]) {
             await notificationService.creerNotification({
               entreprise_id: conge.entreprise_id,
               utilisateur_id: recipient.id,
