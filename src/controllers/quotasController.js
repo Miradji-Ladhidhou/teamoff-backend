@@ -4,7 +4,7 @@ const { tryActivateReservations } = require('../services/congesService');
 const logger = require('../utils/logger');
 const UsageService = require('../services/usageService');
 const emailService = require('../services/emailService');
-const { Utilisateur, MouvementSolde, CongeType } = require('../models');
+const { Utilisateur, MouvementSolde, CongeType, Conge } = require('../models');
 const { Op } = require('sequelize');
 
 async function ensureUserAccess(req, utilisateurId) {
@@ -40,6 +40,26 @@ async function ensureUserAccess(req, utilisateurId) {
   return utilisateur;
 }
 
+async function tryActivateCompanyReservations(entrepriseId) {
+  const pending = await Conge.findAll({
+    attributes: ['utilisateur_id', 'conge_type_id', 'date_debut'],
+    where: { entreprise_id: entrepriseId, statut: 'reserve' },
+    raw: true,
+  });
+  const seen = new Set();
+  for (const row of pending) {
+    const annee = new Date(row.date_debut).getFullYear();
+    const key = `${row.utilisateur_id}::${row.conge_type_id}::${annee}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    try {
+      await tryActivateReservations(row.utilisateur_id, row.conge_type_id, annee);
+    } catch (e) {
+      logger.error('tryActivateReservations error after initQuota', { error: e.message });
+    }
+  }
+}
+
 async function initQuota(req, res, next) {
   try {
     const entrepriseId = req.user.role === 'super_admin'
@@ -51,6 +71,8 @@ async function initQuota(req, res, next) {
     }
 
     await quotasService.initQuotaAnnuel(entrepriseId, new Date().getFullYear());
+    // Tenter d'activer les réservations N+1 couvertes par le report N-1
+    await tryActivateCompanyReservations(entrepriseId);
     res.json({ message: 'Quotas annuels initialisés avec succès' });
   } catch (err) {
     next(err);
