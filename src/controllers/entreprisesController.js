@@ -34,12 +34,17 @@ function normalizeServicePolicy(policy = {}) {
     ? policy.overlap_behavior
     : DEFAULT_SERVICE_POLICY.overlap_behavior;
 
+  const threshold = Math.max(0, Number(policy.notice_urgency_threshold) || 0);
+
   return {
     overlap_behavior: overlapBehavior,
     minimum_notice_days: Number(policy.minimum_notice_days || 0),
     max_consecutive_days: Number(policy.max_consecutive_days || DEFAULT_SERVICE_POLICY.max_consecutive_days),
     approval_workflow: approvalWorkflow,
     max_employees_on_leave: Number(policy.max_employees_on_leave || 0),
+    notice_urgency_threshold: threshold,
+    notice_urgent_days: Math.max(0, Number(policy.notice_urgent_days) || 0),
+    notice_normal_days: Math.max(0, Number(policy.notice_normal_days) || 0),
   };
 }
 
@@ -366,10 +371,15 @@ async function updatePolitiqueConges(req, res, next) {
     // M-2: whitelist des clés acceptées — évite l'injection de clés fantômes dans le JSONB.
     const POLITIQUE_ALLOWED_KEYS = new Set([
       'overlap_behavior', 'approval_workflow', 'max_consecutive_days', 'min_notice_days',
-      'minimum_notice_days', 'blocked_days', 'max_employees_on_leave',
+      'minimum_notice_days', 'notice_period_tiers',
+      'blocked_days', 'max_employees_on_leave',
       'allow_employee_cancel_own_pending', 'allow_manager_cancel_own_pending',
       'manager_can_view_employee_history', 'manager_can_export_team_leaves',
       'service_policies',
+      'report_autorise', 'report_max_jours', 'autoriser_reservation_sans_solde',
+      'afficher_historique_employe',
+      'accrual_by_type', 'notification_settings',
+      'conges_payes_annuels', 'rtt_annuels',
     ]);
     const incomingPolitique = req.body.politique_conges || {};
     const safePolitique = {};
