@@ -93,6 +93,16 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
     const err = new Error(policyResult?.reason || 'Non autorisé selon la politique'); err.statusCode = 403; throw err;
   }
 
+  // Pour une modification : vérifier que les nouvelles dates contiennent au moins un jour ouvré
+  if (type === 'modify') {
+    const congesService = require('./congesService');
+    const newDays = await congesService.calcJoursConges(conge.entreprise_id, date_debut_demandee, date_fin_demandee, debut_demi_journee_demandee || 'matin', fin_demi_journee_demandee || 'apres_midi');
+    if (!Number.isFinite(newDays) || newDays <= 0) {
+      const err = new Error('La nouvelle période ne contient aucun jour ouvré. Vérifiez les dates (week-ends, jours fériés ou jours bloqués).');
+      err.statusCode = 400; throw err;
+    }
+  }
+
   // Bloquer si une demande pending existe déjà pour ce congé
   const existing = await CongeActionRequest.findOne({
     where: { conge_id: congeId, statut: 'pending' },
@@ -314,12 +324,21 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
       commentaire: commentaire || request.commentaire_employe || 'Annulation approuvée',
     });
   } else {
-    await congesService.updateConge(conge.id, {
-      date_debut: request.date_debut_demandee,
-      date_fin: request.date_fin_demandee,
-      debut_demi_journee: request.debut_demi_journee_demandee || 'matin',
-      fin_demi_journee: request.fin_demi_journee_demandee || 'apres_midi',
-    }, actingUser);
+    try {
+      await congesService.updateConge(conge.id, {
+        date_debut: request.date_debut_demandee,
+        date_fin: request.date_fin_demandee,
+        debut_demi_journee: request.debut_demi_journee_demandee || 'matin',
+        fin_demi_journee: request.fin_demi_journee_demandee || 'apres_midi',
+      }, actingUser);
+    } catch (err) {
+      // Enrichir le message pour les erreurs de validation sans statusCode
+      if (!err.statusCode) {
+        const enriched = new Error(`Impossible d'approuver la modification : ${err.message}`);
+        enriched.statusCode = 422; throw enriched;
+      }
+      throw err;
+    }
   }
 
   // Marquer la demande comme approuvée
