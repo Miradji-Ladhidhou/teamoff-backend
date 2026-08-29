@@ -96,6 +96,28 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
     const err = new Error(policyResult?.reason || 'Non autorisé selon la politique'); err.statusCode = 403; throw err;
   }
 
+  // Vérification du préavis via la config unifiée (politiqueConges.getRequiredNotice)
+  if (!['admin_entreprise', 'super_admin'].includes(user.role)) {
+    const { getLeaveRules, getEffectiveLeaveRules, getRequiredNotice } = require('./politiqueConges');
+    const entreprise = await Entreprise.findByPk(conge.entreprise_id, { attributes: ['politique_conges'] });
+    if (entreprise) {
+      const baseRules = getLeaveRules(entreprise);
+      const effectiveRules = getEffectiveLeaveRules(baseRules, user.service || null);
+      const startDate = type === 'modify' && date_debut_demandee ? date_debut_demandee : conge.date_debut;
+      const endDate = type === 'modify' && date_fin_demandee ? date_fin_demandee : conge.date_fin;
+      const start = new Date(startDate); start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate); end.setHours(0, 0, 0, 0);
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const calendarDays = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
+      const daysUntilStart = Math.round((start - today) / (1000 * 60 * 60 * 24));
+      const requiredNotice = getRequiredNotice(effectiveRules, calendarDays);
+      if (requiredNotice > 0 && daysUntilStart < requiredNotice) {
+        const err = new Error(`Préavis insuffisant : ${requiredNotice} jour(s) requis avant la date de début, ${Math.max(0, daysUntilStart)} disponible(s).`);
+        err.statusCode = 403; throw err;
+      }
+    }
+  }
+
   // Pour une modification : vérifier que les nouvelles dates contiennent au moins un jour ouvré
   if (type === 'modify') {
     const newDays = await congesService.calcJoursConges(conge.entreprise_id, date_debut_demandee, date_fin_demandee, debut_demi_journee_demandee || 'matin', fin_demi_journee_demandee || 'apres_midi');

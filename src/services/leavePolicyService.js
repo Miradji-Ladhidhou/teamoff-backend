@@ -77,25 +77,6 @@ class LeavePolicyService {
       };
     }
 
-    // Vérifier le préavis minimum
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const startDate = new Date(congeStartDate);
-    startDate.setHours(0, 0, 0, 0);
-
-    const daysUntilStart = Math.floor((startDate - today) / (1000 * 60 * 60 * 24));
-
-    if (daysUntilStart < policy.min_notice_days) {
-      return {
-        allowed: false,
-        reason: `Préavis minimum non respecté. Minimum requis: ${policy.min_notice_days} jour(s), disponible: ${daysUntilStart} jour(s)`,
-        code: 'POLICY_NOTICE_PERIOD_INSUFFICIENT',
-        daysRequired: policy.min_notice_days,
-        daysAvailable: daysUntilStart,
-      };
-    }
-
     return { allowed: true };
   }
 
@@ -135,25 +116,6 @@ class LeavePolicyService {
         allowed: false,
         reason: 'Annulation non autorisée pour un congé validé selon la politique de l\'entreprise',
         code: 'POLICY_CANCEL_VALIDATED_DISABLED',
-      };
-    }
-
-    // Vérifier le préavis minimum pour annulation
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const startDate = new Date(congeStartDate);
-    startDate.setHours(0, 0, 0, 0);
-
-    const daysUntilStart = Math.floor((startDate - today) / (1000 * 60 * 60 * 24));
-
-    if (daysUntilStart < policy.min_notice_days) {
-      return {
-        allowed: false,
-        reason: `Préavis minimum non respecté pour l'annulation. Minimum requis: ${policy.min_notice_days} jour(s), disponible: ${daysUntilStart} jour(s)`,
-        code: 'POLICY_NOTICE_PERIOD_INSUFFICIENT',
-        daysRequired: policy.min_notice_days,
-        daysAvailable: daysUntilStart,
       };
     }
 
