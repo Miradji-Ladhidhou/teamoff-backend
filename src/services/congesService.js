@@ -1780,6 +1780,7 @@ async function updateConge(id, data, user, req = null) {
       throw new Error('Accès interdit: entreprise différente');
     }
 
+    let updateOverlapWarning = null;
     const isPending = conge.statut === 'en_attente_manager';
     const isFinalValidated = conge.statut === 'valide_final';
     const isManagerValidated = conge.statut === 'valide_manager';
@@ -1935,7 +1936,19 @@ async function updateConge(id, data, user, req = null) {
         excludeCongeId: conge.id,
       });
 
-      if (overlapCtx.overlapWithSameUser) {
+      // Bug 2 fix: backup SQL direct (mirrors createConge) pour fiabiliser le self-overlap
+      const selfOverlapDirectUpdate = await Conge.findOne({
+        where: {
+          utilisateur_id: conge.utilisateur_id,
+          statut: { [Op.in]: ['reserve', 'en_attente_manager', 'valide_manager', 'valide_final'] },
+          date_debut: { [Op.lte]: nextDateFin },
+          date_fin:   { [Op.gte]: nextDateDebut },
+          id: { [Op.ne]: conge.id },
+        },
+        attributes: ['id'],
+        transaction: t,
+      });
+      if (selfOverlapDirectUpdate || overlapCtx.overlapWithSameUser) {
         const err = new Error('Modification rejetée : chevauchement avec un autre congé existant.');
         err.statusCode = 409;
         throw err;
@@ -1951,7 +1964,8 @@ async function updateConge(id, data, user, req = null) {
         && projectedServiceOv > serviceLimitOv
       );
 
-      if (serviceLimitReachedOv && (leaveRulesOv.overlap_behavior || 'block') === 'block') {
+      // Bug 4 fix: construire le warning plutôt que de passer silencieusement
+      if (serviceLimitReachedOv) {
         const conflictPeriodOv = computeConflictPeriod(overlapCtx.overlappingConges, uService, nextDateDebut, nextDateFin);
         const msg = buildOverlapMessage({
           overlapWithSameUser: false,
@@ -1961,9 +1975,12 @@ async function updateConge(id, data, user, req = null) {
           serviceLimit: serviceLimitOv,
           conflictPeriod: conflictPeriodOv,
         });
-        const err = new Error(msg || 'Modification rejetée : capacité du service atteinte.');
-        err.statusCode = 409;
-        throw err;
+        if ((leaveRulesOv.overlap_behavior || 'block') === 'block') {
+          const err = new Error(msg || 'Modification rejetée : capacité du service atteinte.');
+          err.statusCode = 409;
+          throw err;
+        }
+        updateOverlapWarning = { message: msg, conflictPeriod: conflictPeriodOv };
       }
     }
 
@@ -2299,7 +2316,9 @@ async function updateConge(id, data, user, req = null) {
       });
     }
 
-    return conge;
+    const congeResult = conge.toJSON ? conge.toJSON() : { ...conge };
+    if (updateOverlapWarning) congeResult.overlap_warning = updateOverlapWarning;
+    return congeResult;
   });
 }
 
@@ -2707,7 +2726,7 @@ async function activerReservation(congeId, reqUser) {
         );
       }
 
-      // 2b. Capacité service
+      // 2b. Capacité service — même statuts qu'à la création (symétrie Bug 3 fix)
       const serviceLimit = employeService
         ? Number(leaveRules.max_employees_on_leave?.by_service?.[employeService])
         : NaN;
@@ -2715,7 +2734,7 @@ async function activerReservation(congeId, reqUser) {
         const serviceRows = await Conge.findAll({
           where: {
             entreprise_id: conge.entreprise_id,
-            statut: { [Op.in]: ['valide_manager', 'valide_final'] },
+            statut: { [Op.in]: ['en_attente_manager', 'valide_manager', 'valide_final'] },
             date_debut: { [Op.lte]: conge.date_fin },
             date_fin:   { [Op.gte]: conge.date_debut },
             id: { [Op.ne]: conge.id },
@@ -2735,13 +2754,13 @@ async function activerReservation(congeId, reqUser) {
         }
       }
 
-      // 2c. Capacité globale
+      // 2c. Capacité globale — même statuts qu'à la création (symétrie Bug 3 fix)
       const globalLimit = Number(leaveRules.max_employees_on_leave?.global);
       if (Number.isFinite(globalLimit) && globalLimit > 0) {
         const globalRows = await Conge.findAll({
           where: {
             entreprise_id: conge.entreprise_id,
-            statut: { [Op.in]: ['valide_manager', 'valide_final'] },
+            statut: { [Op.in]: ['en_attente_manager', 'valide_manager', 'valide_final'] },
             date_debut: { [Op.lte]: conge.date_fin },
             date_fin:   { [Op.gte]: conge.date_debut },
             id: { [Op.ne]: conge.id },
@@ -2964,7 +2983,7 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
         // Capacité service/globale — vérifiée pour tous les workflows (symétrique avec activerReservation).
         if (leaveRules.overlap_behavior !== 'warning') {
           const employeService = employe?.service || null;
-          const overlapStatuts = { [Op.in]: ['valide_manager', 'valide_final'] };
+          const overlapStatuts = { [Op.in]: ['en_attente_manager', 'valide_manager', 'valide_final'] };
           const overlapPeriod = { date_debut: { [Op.lte]: conge.date_fin }, date_fin: { [Op.gte]: conge.date_debut } };
           const baseWhere = { entreprise_id: conge.entreprise_id, statut: overlapStatuts, ...overlapPeriod, id: { [Op.ne]: conge.id } };
 
