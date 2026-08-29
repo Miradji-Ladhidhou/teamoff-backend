@@ -1841,8 +1841,8 @@ async function updateConge(id, data, user, req = null) {
       throw new Error('Demi-journée incohérente sur une seule journée');
     }
 
-    // Vérifier le délai de préavis sur les nouvelles dates (employe uniquement)
-    if (isPending && user?.role !== 'admin_entreprise' && user?.role !== 'super_admin') {
+    // Vérifier le délai de préavis sur les nouvelles dates (non-admin uniquement)
+    if (!['admin_entreprise', 'super_admin'].includes(user?.role)) {
       const baseLeaveRulesForUpdate = await getEntrepriseLeaveRules(conge.entreprise_id, t);
       const leaveRulesForUpdate = getEffectiveLeaveRules(baseLeaveRulesForUpdate, employe?.service || null);
       const calendarDaysUpdate = dayjs(nextDateFin).diff(dayjs(nextDateDebut), 'day') + 1;

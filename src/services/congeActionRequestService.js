@@ -84,10 +84,12 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
   // Vérifier la politique
   const LeavePolicyService = require('./leavePolicyService');
   const validator = type === 'cancel' ? 'validateCancellation' : 'validateModification';
+  // Pour modify : le préavis s'applique aux NOUVELLES dates (pas aux dates actuelles du congé)
+  const policyStartDate = type === 'modify' && date_debut_demandee ? date_debut_demandee : conge.date_debut;
   const policyResult = await LeavePolicyService[validator]({
     entrepriseId: conge.entreprise_id,
     congeStatus: conge.statut,
-    congeStartDate: conge.date_debut,
+    congeStartDate: policyStartDate,
     initiatorRole: user.role,
   });
   if (!policyResult?.allowed) {
