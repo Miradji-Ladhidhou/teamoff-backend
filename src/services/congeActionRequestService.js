@@ -306,9 +306,10 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
   }
 
   // Vérifier que le manager est autorisé par le workflow figé
+  // null = congé créé avant l'introduction du champ → on autorise par défaut (fallback permissif)
   if (actingUser.role === 'manager') {
     const effectiveWorkflow = conge?.effective_approval_workflow;
-    if (!MANAGER_ALLOWED_WORKFLOWS.includes(effectiveWorkflow)) {
+    if (effectiveWorkflow && !MANAGER_ALLOWED_WORKFLOWS.includes(effectiveWorkflow)) {
       const err = new Error('Le workflow de ce congé ne permet pas au manager de traiter cette demande');
       err.statusCode = 403; throw err;
     }
@@ -480,9 +481,10 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
   }
 
   // Vérifier que le manager est autorisé par le workflow figé
+  // null = congé créé avant l'introduction du champ → on autorise par défaut (fallback permissif)
   if (actingUser.role === 'manager') {
     const effectiveWorkflow = conge?.effective_approval_workflow;
-    if (!MANAGER_ALLOWED_WORKFLOWS.includes(effectiveWorkflow)) {
+    if (effectiveWorkflow && !MANAGER_ALLOWED_WORKFLOWS.includes(effectiveWorkflow)) {
       const err = new Error('Le workflow de ce congé ne permet pas au manager de traiter cette demande');
       err.statusCode = 403; throw err;
     }
