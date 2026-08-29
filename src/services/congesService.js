@@ -800,7 +800,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
           transaction: t
         });
         // Notifier aussi admins et managers de la réservation
-        const allRecipients = [...managers, ...(admin ? [admin] : [])];
+        const allRecipients = [...managers, ...admins];
         for (const recipient of allRecipients) {
           emailQueue.push({
             to: recipient.email,
@@ -2290,8 +2290,10 @@ async function deleteConge(id, user, options = {}) {
 
     if (!isReserved && !isPending && !isManagerValidated && !isFinalValidated) throw new Error('Impossible de supprimer');
 
-    // Vérifier la politique d'auto-annulation pour les demandes en attente
-    if (isPending && !isAdminLevel && user?.id === conge.utilisateur_id) {
+    // Vérifier la politique d'auto-annulation pour les demandes en attente.
+    // Les managers sont soumis à la politique pour leur propre congé (isAdminLevel les inclut
+    // mais seuls admin_entreprise/super_admin en sont exempts ici).
+    if (isPending && user?.id === conge.utilisateur_id && !['admin_entreprise', 'super_admin'].includes(user?.role)) {
       const entreprise = await Entreprise.findByPk(conge.entreprise_id, {
         attributes: ['politique_conges'],
         transaction: t,

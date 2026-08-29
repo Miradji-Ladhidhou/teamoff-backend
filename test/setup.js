@@ -6,6 +6,11 @@
  * - Expose un helper global `truncateTables()` pour nettoyer entre suites
  */
 
+// sanitize-html v2.13+ dépend de htmlparser2 v12 (ESM-only), incompatible avec
+// le runner Jest CommonJS. En test, on n'a pas besoin de l'assainissement HTML :
+// on mocke par un pass-through transparent.
+jest.mock('sanitize-html', () => (html) => html);
+
 const { sequelize } = require('../src/models');
 
 // Connexion DB disponible pour tous les tests du fichier

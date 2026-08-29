@@ -392,9 +392,10 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
       }
     }
   } else {
-    // Admin a agi → notifier les managers pour information (si workflow les implique)
+    // Admin a agi → notifier les managers pour information (si workflow les implique ou inconnu)
     const effectiveWorkflow = conge?.effective_approval_workflow;
-    if (MANAGER_ALLOWED_WORKFLOWS.includes(effectiveWorkflow)) {
+    // null = congé créé avant que le champ existe → on notifie par défaut (plus sûr)
+    if (!effectiveWorkflow || MANAGER_ALLOWED_WORKFLOWS.includes(effectiveWorkflow)) {
       const managers = await Utilisateur.findAll({ where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' } });
       for (const mgr of managers) {
         if (mgr.email) {
@@ -525,9 +526,10 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
       }
     }
   } else {
-    // Admin a agi → notifier les managers pour information (si workflow les implique)
+    // Admin a agi → notifier les managers pour information (si workflow les implique ou inconnu)
     const effectiveWorkflow = conge?.effective_approval_workflow;
-    if (MANAGER_ALLOWED_WORKFLOWS.includes(effectiveWorkflow)) {
+    // null = congé créé avant que le champ existe → on notifie par défaut (plus sûr)
+    if (!effectiveWorkflow || MANAGER_ALLOWED_WORKFLOWS.includes(effectiveWorkflow)) {
       const managers = await Utilisateur.findAll({ where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' } });
       for (const mgr of managers) {
         if (mgr.email) {
