@@ -2663,11 +2663,11 @@ async function activerReservation(congeId, reqUser) {
       const overlapBehavior = leaveRules.overlap_behavior || 'block';
       const employeService = employe?.service || null;
 
-      // 2a. Chevauchement propre (valide_final uniquement — statut définitif)
+      // 2a. Chevauchement propre — même règle que creerConge : tout statut actif bloque.
       const selfOverlap = await Conge.findOne({
         where: {
           utilisateur_id: conge.utilisateur_id,
-          statut: 'valide_final',
+          statut: { [Op.in]: ['en_attente_manager', 'valide_manager', 'valide_final'] },
           date_debut: { [Op.lte]: conge.date_fin },
           date_fin:   { [Op.gte]: conge.date_debut },
           id: { [Op.ne]: conge.id },
@@ -2677,7 +2677,7 @@ async function activerReservation(congeId, reqUser) {
       });
       if (selfOverlap) {
         throw Object.assign(
-          new Error(`Activation impossible : ${employeNom} a déjà un congé approuvé sur cette période.`),
+          new Error(`Activation impossible : ${employeNom} a déjà un congé actif ou en cours de validation sur cette période.`),
           { statusCode: 409 }
         );
       }
@@ -2911,12 +2911,11 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
         const leaveRules = getEffectiveLeaveRules(baseLeaveRules, employe?.service || null);
         const employeNom = `${employe?.prenom || ''} ${employe?.nom || ''}`.trim();
 
-        // M-2 : vérification de chevauchement avant activation automatique.
-        // Chevauchement propre — skip si l'employé a déjà un valide_final sur la période.
+        // M-2 : chevauchement propre — même règle que creerConge : tout statut actif bloque.
         const selfOverlapAuto = await Conge.findOne({
           where: {
             utilisateur_id: conge.utilisateur_id,
-            statut: 'valide_final',
+            statut: { [Op.in]: ['en_attente_manager', 'valide_manager', 'valide_final'] },
             date_debut: { [Op.lte]: conge.date_fin },
             date_fin:   { [Op.gte]: conge.date_debut },
             id: { [Op.ne]: conge.id },
@@ -2927,13 +2926,13 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
         if (selfOverlapAuto) {
           budget += jours; // Restituer le budget — cette réservation ne sera pas activée
           results.still_pending.push({ conge_id: conge.id, date_debut: formatDateFR(conge.date_debut), date_fin: formatDateFR(conge.date_fin), jours, reason: 'overlap' });
-          logger.warn(`[try-activate] ${conge.id} — chevauchement valide_final détecté, skippé`);
+          logger.warn(`[try-activate] ${conge.id} — chevauchement avec congé actif détecté, skippé`);
           await auditConge.skipped(conge, { jours, reason: 'self_overlap', annee: Number(annee) });
           continue;
         }
 
-        // Capacité service/globale — vérifiée seulement pour 'auto' (sinon validerConge le fera).
-        if (leaveRules.approval_workflow === 'auto' && leaveRules.overlap_behavior !== 'warning') {
+        // Capacité service/globale — vérifiée pour tous les workflows (symétrique avec activerReservation).
+        if (leaveRules.overlap_behavior !== 'warning') {
           const employeService = employe?.service || null;
           const overlapStatuts = { [Op.in]: ['valide_manager', 'valide_final'] };
           const overlapPeriod = { date_debut: { [Op.lte]: conge.date_fin }, date_fin: { [Op.gte]: conge.date_debut } };
