@@ -291,6 +291,9 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
   if (!request) { const err = new Error('Demande introuvable ou déjà traitée'); err.statusCode = 404; throw err; }
 
   const conge = request.conge;
+  if (!conge) {
+    const err = new Error('Le congé associé à cette demande n\'existe plus'); err.statusCode = 422; throw err;
+  }
 
   // Vérifier que le manager est autorisé par le workflow figé
   if (actingUser.role === 'manager') {
@@ -307,7 +310,9 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
 
   // Exécuter l'action réelle
   if (request.type === 'cancel') {
-    await congesService.deleteConge(conge.id, actingUser, { commentaire: commentaire || request.commentaire_employe });
+    await congesService.deleteConge(conge.id, actingUser, {
+      commentaire: commentaire || request.commentaire_employe || 'Annulation approuvée',
+    });
   } else {
     await congesService.updateConge(conge.id, {
       date_debut: request.date_debut_demandee,
@@ -451,6 +456,9 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
   if (!request) { const err = new Error('Demande introuvable ou déjà traitée'); err.statusCode = 404; throw err; }
 
   const conge = request.conge;
+  if (!conge) {
+    const err = new Error('Le congé associé à cette demande n\'existe plus'); err.statusCode = 422; throw err;
+  }
 
   // Vérifier que le manager est autorisé par le workflow figé
   if (actingUser.role === 'manager') {
