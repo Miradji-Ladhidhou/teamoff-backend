@@ -60,11 +60,13 @@ function normalizeCounterPayload(payload = {}) {
 // Calcule les champs N-1 / N disponibles pour l'affichage (consommation N-1 en premier)
 function computeN1Display(c) {
   const reportesTotal = toNumber(c.jours_reportes, 0);
-  const reportesConsommes = toNumber(c.jours_reportes_consommes, 0);
+  const jours_pris    = toNumber(c.jours_pris, 0);
   const jours_reserves = toNumber(c.jours_reserves, 0);
   const solde_dispo = toNumber(c.getSoldeDisponible ? c.getSoldeDisponible() : (toNumber(c.jours_acquis, 0) - jours_reserves), 0);
 
-  const n1_restant_brut = Math.max(0, reportesTotal - reportesConsommes);
+  // N-1 restant = crédit reporté moins les jours déjà pris (N-1 est consommé en premier).
+  const n1_restant_brut = Math.max(0, reportesTotal - jours_pris);
+  // Les réservations en attente sont imputées sur N-1 en priorité (affichage préventif).
   const n1_from_reserves = Math.min(jours_reserves, n1_restant_brut);
   const n1_disponible = Math.max(0, n1_restant_brut - n1_from_reserves);
   const n_disponible = Math.max(0, solde_dispo - n1_disponible);
