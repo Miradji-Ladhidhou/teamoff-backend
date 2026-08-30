@@ -854,6 +854,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
               date_fin: formatDateFR(date_fin),
               type_conge: congeType.libelle || 'Congé',
               jours_calcules: jours,
+              jours_avant_depart: dayjs(date_debut).startOf('day').diff(dayjs().startOf('day'), 'day'),
               action_url: buildCongeUrl(conge.id),
             }
           });
@@ -2860,14 +2861,15 @@ async function activerReservation(congeId, reqUser) {
         emailQueue.push({
           to: recipient.email,
           subject: `Nouvelle demande de congé – ${employeNom}`,
-          templateName: 'leave-reservation-admin',
+          templateName: 'leave-new-request-manager',
           data: {
             destinataire_prenom: recipient.prenom || 'Responsable',
             demandeur_nom: employeNom,
             date_debut: formatDateFR(conge.date_debut),
             date_fin: formatDateFR(conge.date_fin),
             type_conge: congeType?.libelle || 'Congé',
-            jours_calcules: joursConge,
+            commentaire_employe: conge.commentaire_employe || 'Aucun',
+            overlap_warning_html: '',
             action_url: buildCongeUrl(conge.id),
           },
         });
