@@ -9,13 +9,13 @@
         </td></tr>
         <tr><td style="padding:24px;line-height:1.6;">
           <p>Bonjour {{destinataire_prenom}},</p>
-          <p>Bonne nouvelle ! Votre réservation de congé vient d'être convertie en demande officielle et est désormais en attente de validation par votre manager ou administrateur.</p>
+          <p>Bonne nouvelle ! Votre réservation de congé vient d'être convertie en demande officielle — elle est désormais <strong>{{statut_label}}</strong>.</p>
           <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;">
             <tr><td style="padding:8px 12px;background:#eff6ff;border:1px solid #dbeafe;border-radius:6px 0 0 0;font-weight:bold;width:40%;">Type de congé</td><td style="padding:8px 12px;border:1px solid #dbeafe;">{{type_conge}}</td></tr>
             <tr><td style="padding:8px 12px;background:#eff6ff;border:1px solid #dbeafe;border-radius:0 0 0 6px;font-weight:bold;">Période</td><td style="padding:8px 12px;border:1px solid #dbeafe;">{{date_debut}} au {{date_fin}}</td></tr>
           </table>
           <div style="margin:16px 0;padding:14px 16px;background:#eff6ff;border-left:4px solid #2563eb;border-radius:4px;color:#1e40af;font-size:14px;">
-            <strong>Prochaine étape :</strong> Votre demande va être examinée par votre manager ou administrateur. Vous recevrez une notification dès qu'une décision sera prise.
+            <strong>Prochaine étape :</strong> {{statut_label_detail}}
           </div>
           <p><a href="{{action_url}}" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:bold;">Voir ma demande</a></p>
           <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;" />

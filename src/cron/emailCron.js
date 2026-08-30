@@ -22,7 +22,7 @@ async function runLeaveReminders() {
     const conges = await Conge.findAll({
       where: {
         date_debut: targetDate,
-        statut: 'valide',
+        statut: 'valide_final',
       },
       include: [
         { model: Utilisateur, as: 'utilisateur', attributes: ['id', 'email', 'prenom', 'nom'] },
@@ -74,26 +74,35 @@ async function runPendingLeaveReminders() {
     if (!conge.utilisateur) continue;
     const joursAttente = dayjs().diff(dayjs(conge.created_at), 'day');
 
-    // Trouver le manager du même service
-    const managers = await Utilisateur.findAll({
-      where: {
-        entreprise_id: conge.utilisateur.entreprise_id,
-        role: 'manager',
-        service: conge.utilisateur.service || null,
-        statut: 'actif',
-      },
-      attributes: ['id', 'email', 'prenom', 'nom'],
-    });
-
-    // Fallback : tous les managers de l'entreprise
-    const recipients = managers.length > 0 ? managers : await Utilisateur.findAll({
-      where: {
-        entreprise_id: conge.utilisateur.entreprise_id,
-        role: { [Op.in]: ['manager', 'admin_entreprise'] },
-        statut: 'actif',
-      },
-      attributes: ['id', 'email', 'prenom', 'nom'],
-    });
+    // admin_only : seuls les admins doivent être relancés
+    const pendingWorkflow = conge.effective_approval_workflow || 'manager_admin';
+    let recipients;
+    if (pendingWorkflow === 'admin_only') {
+      recipients = await Utilisateur.findAll({
+        where: { entreprise_id: conge.utilisateur.entreprise_id, role: 'admin_entreprise', statut: 'actif' },
+        attributes: ['id', 'email', 'prenom', 'nom'],
+      });
+    } else {
+      // Trouver le manager du même service
+      const managers = await Utilisateur.findAll({
+        where: {
+          entreprise_id: conge.utilisateur.entreprise_id,
+          role: 'manager',
+          service: conge.utilisateur.service || null,
+          statut: 'actif',
+        },
+        attributes: ['id', 'email', 'prenom', 'nom'],
+      });
+      // Fallback : tous les managers + admins si aucun manager de service
+      recipients = managers.length > 0 ? managers : await Utilisateur.findAll({
+        where: {
+          entreprise_id: conge.utilisateur.entreprise_id,
+          role: { [Op.in]: ['manager', 'admin_entreprise'] },
+          statut: 'actif',
+        },
+        attributes: ['id', 'email', 'prenom', 'nom'],
+      });
+    }
 
     for (const manager of recipients) {
       try {
@@ -222,18 +231,21 @@ async function runWeeklyManagerSummary() {
 
   for (const manager of managers) {
     try {
-      const conges = await Conge.findAll({
+      const allConges = await Conge.findAll({
         where: {
           entreprise_id: manager.entreprise_id,
           statut: 'valide_final',
           date_debut: { [Op.between]: [startOfWeek, endOfWeek] },
-          ...(manager.service ? {} : {}),
         },
         include: [
           { model: Utilisateur, as: 'utilisateur', attributes: ['prenom', 'nom', 'service'] },
           { model: CongeType, as: 'conge_type', attributes: ['libelle'] },
         ],
       });
+      // Filtrer par service du manager (un manager ne voit que son service)
+      const conges = manager.service
+        ? allConges.filter(c => c.utilisateur?.service === manager.service)
+        : allConges;
 
       if (conges.length === 0) continue;
 
@@ -282,10 +294,13 @@ async function runReservationReminders() {
       );
       if (rowsClaimed === 0) continue;
 
+      const reservationWorkflow = conge.effective_approval_workflow || 'manager_admin';
       const admins = await Utilisateur.findAll({
         where: {
           entreprise_id: conge.utilisateur.entreprise_id,
-          role: { [Op.in]: ['admin_entreprise', 'manager'] },
+          role: reservationWorkflow === 'admin_only'
+            ? 'admin_entreprise'
+            : { [Op.in]: ['admin_entreprise', 'manager'] },
           statut: 'actif',
         },
         attributes: ['id', 'email', 'prenom', 'nom'],
