@@ -555,7 +555,7 @@ async function calcJoursConges(entrepriseId, dateDebut, dateFin, debut_demi, fin
 // ----------------------------
 // Créer un congé
 // ----------------------------
-async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin, debut_demi_journee, fin_demi_journee, commentaire_employe, reqUser, req }) {
+async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin, debut_demi_journee, fin_demi_journee, commentaire_employe, annee_compteur, reqUser, req }) {
   const sanitizeHtml = require('sanitize-html');
   const emailQueue = [];
   const congeResult = await sequelize.transaction(async (t) => {
@@ -608,10 +608,19 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       throw new Error(`Délai de préavis non respecté : ${minNoticeDays} jour(s) requis pour un congé de ${calendarDays} jour(s) (départ dans ${daysUntilStart} jour(s))`);
     }
 
+    // annee_compteur permet d'imputer un congé N+1 sur le solde N (choix explicite du salarié)
+    const anneeCongeStart = dayjs(date_debut).year();
+    const anneeActuelleCreate = dayjs().year();
+    const anneeCompteurEffective = (
+      annee_compteur &&
+      Number(annee_compteur) === anneeActuelleCreate &&
+      anneeCongeStart === anneeActuelleCreate + 1
+    ) ? anneeActuelleCreate : anneeCongeStart;
+
     // Verrouiller le compteur en premier pour sérialiser les requêtes concurrentes du même utilisateur
     // et garantir que computeOverlapContext voit les congés déjà validés par d'autres transactions
     let compteur = await CompteurConges.findOne({
-      where: { utilisateur_id: utilisateurId, conge_type_id, annee: dayjs(date_debut).year() },
+      where: { utilisateur_id: utilisateurId, conge_type_id, annee: anneeCompteurEffective },
       transaction: t,
       lock: t.LOCK.UPDATE
     });
@@ -620,7 +629,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
         entrepriseId: utilisateur.entreprise_id,
         utilisateurId,
         congeTypeId: conge_type_id,
-        annee: dayjs(date_debut).year(),
+        annee: anneeCompteurEffective,
         transaction: t,
       });
     }
@@ -690,13 +699,21 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     const soldeInsuffisant = jours > soldeDisponible;
 
     // Réservation prévisionnelle — uniquement pour l'année N+1, pas N+2 ou au-delà.
-    const anneeConge = dayjs(date_debut).year();
-    const anneeActuelle = dayjs().year();
+    const anneeConge = anneeCongeStart; // alias pour lisibilité
+    const anneeActuelle = anneeActuelleCreate;
+    const usingCurrentYearBalance = anneeCompteurEffective === anneeActuelle && anneeConge === anneeActuelle + 1;
     const canReserveWithoutBalance = leaveRules.autoriser_reservation_sans_solde !== false;
     const isNextYear = anneeConge === anneeActuelle + 1;
-    const isReservation = soldeInsuffisant && isNextYear && canReserveWithoutBalance;
+    // Pas de réservation si le salarié a choisi d'imputer sur N → on veut un vrai congé ou une erreur franche
+    const isReservation = soldeInsuffisant && isNextYear && canReserveWithoutBalance && !usingCurrentYearBalance;
 
     if (soldeInsuffisant && !isReservation) {
+      if (usingCurrentYearBalance) {
+        throw Object.assign(
+          new Error(`Solde insuffisant pour débiter sur ${anneeActuelle} : ${soldeDisponible} j disponible(s), ${jours} j demandé(s).`),
+          { status: 422 }
+        );
+      }
       if (anneeConge > anneeActuelle + 1) {
         throw Object.assign(
           new Error(`Les réservations ne sont possibles que pour l'année suivante (${anneeActuelle + 1}). Les congés pour ${anneeConge} ne peuvent pas encore être posés.`),
