@@ -122,8 +122,12 @@ async function getAttestationData(req, res, next) {
     if (!conge) return res.status(404).json({ message: 'Congé introuvable' });
 
     const user = req.user;
-    if (user.role !== 'super_admin' && user.entreprise_id !== conge.entreprise_id && user.id !== conge.utilisateur_id)
-      return res.status(403).json({ message: 'Accès interdit' });
+    if (user.role !== 'super_admin') {
+      if (user.entreprise_id !== conge.entreprise_id)
+        return res.status(403).json({ message: 'Accès interdit' });
+      if (['employe', 'apprenti'].includes(user.role) && user.id !== conge.utilisateur_id)
+        return res.status(403).json({ message: 'Accès interdit' });
+    }
 
     if (conge.statut !== 'valide_final')
       return res.status(422).json({ message: 'L\'attestation ne peut être générée que pour un congé validé (statut valide_final).' });
@@ -229,8 +233,12 @@ async function sendAttestationEmail(req, res, next) {
     if (!conge) return res.status(404).json({ message: 'Congé introuvable' });
 
     const user = req.user;
-    if (user.role !== 'super_admin' && user.entreprise_id !== conge.entreprise_id && user.id !== conge.utilisateur_id)
-      return res.status(403).json({ message: 'Accès interdit' });
+    if (user.role !== 'super_admin') {
+      if (user.entreprise_id !== conge.entreprise_id)
+        return res.status(403).json({ message: 'Accès interdit' });
+      if (['employe', 'apprenti'].includes(user.role) && user.id !== conge.utilisateur_id)
+        return res.status(403).json({ message: 'Accès interdit' });
+    }
 
     const recipientEmail = conge.utilisateur?.email;
     if (!recipientEmail) return res.status(400).json({ message: 'Adresse email de l\'employé introuvable' });

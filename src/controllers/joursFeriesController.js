@@ -535,6 +535,13 @@ async function exporterModeleJoursFeriesCsv(req, res, next) {
       return res.status(404).json({ message: 'Modèle introuvable.' });
     }
 
+    if (req.user?.role !== 'super_admin') {
+      if (template.source_entreprise_id !== null &&
+          template.source_entreprise_id !== req.user?.entreprise_id) {
+        return res.status(403).json({ message: 'Accès interdit à ce modèle.' });
+      }
+    }
+
     const rows = (template.items || []).map((item) => ({
       date: item.date,
       libelle: item.libelle,

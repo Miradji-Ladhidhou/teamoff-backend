@@ -27,6 +27,12 @@ async function getCalendrier(req, res, next) {
     const { year, month } = req.params;
     const { entrepriseId, statut, utilisateurId } = req.query;
 
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (entrepriseId && !UUID_RE.test(entrepriseId))
+      return res.status(400).json({ message: 'entrepriseId invalide' });
+    if (utilisateurId && utilisateurId !== 'all' && !UUID_RE.test(utilisateurId))
+      return res.status(400).json({ message: 'utilisateurId invalide' });
+
     // ─── filtrage par entreprise ─────────────────────────────────────────────
     let targetEntrepriseId;
     if (req.user.role === 'super_admin') {

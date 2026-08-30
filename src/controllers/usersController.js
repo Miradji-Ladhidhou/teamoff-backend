@@ -257,12 +257,20 @@ async function getUserById(req, res, next) {
     const utilisateur = await Utilisateur.findByPk(req.params.id, { attributes: EXCLUDED_FIELDS });
     if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
-    if (
-      ['admin_entreprise', 'manager', 'employe', 'apprenti'].includes(req.user.role) &&
-      req.user.role !== 'super_admin' &&
-      utilisateur.entreprise_id !== req.user.entreprise_id
-    ) {
+    if (req.user.role !== 'super_admin' &&
+        utilisateur.entreprise_id !== req.user.entreprise_id) {
       return res.status(403).json({ message: 'Accès interdit : entreprise différente' });
+    }
+
+    // Employe/apprenti consultant un collègue : retourner seulement l'identité minimale
+    if (['employe', 'apprenti'].includes(req.user.role) && utilisateur.id !== req.user.id) {
+      return res.json({
+        id: utilisateur.id,
+        prenom: utilisateur.prenom,
+        nom: utilisateur.nom,
+        email: utilisateur.email,
+        statut: utilisateur.statut,
+      });
     }
 
     res.json(utilisateur);

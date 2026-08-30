@@ -69,6 +69,8 @@ async function importCongesCSV(req, res, next) {
 
     const entreprise_id = String(req.body.entreprise_id || '').trim();
     if (!entreprise_id) return res.status(400).json({ message: 'entreprise_id requis' });
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entreprise_id))
+      return res.status(400).json({ message: 'entreprise_id invalide (UUID attendu)' });
 
     const entreprise = await Entreprise.findByPk(entreprise_id);
     if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
@@ -181,6 +183,8 @@ async function getCongesImportTemplate(req, res, next) {
   try {
     const entreprise_id = String(req.query.entreprise_id || '').trim();
     if (!entreprise_id) return res.status(400).json({ message: 'entreprise_id requis' });
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entreprise_id))
+      return res.status(400).json({ message: 'entreprise_id invalide (UUID attendu)' });
 
     const [congeTypes, utilisateurs] = await Promise.all([
       CongeType.findAll({ where: { entreprise_id }, order: [['libelle', 'ASC']] }),
