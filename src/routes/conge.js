@@ -18,9 +18,9 @@ const csvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 
 router.get('/import/csv/template', authorizeRole(['super_admin']), getCongesImportTemplate);
 router.post('/import/csv', authorizeRole(['super_admin']), csvUpload.single('file'), importCongesCSV);
 
-router.post('/check-overlap', authorizeRole(['employe','apprenti','manager']), advancedRateLimiter('conges'), validate(checkOverlapRules), congeController.checkOverlap);
+router.post('/check-overlap', authorizeRole(['employe','apprenti','manager','super_admin']), advancedRateLimiter('conges'), validate(checkOverlapRules), congeController.checkOverlap);
 router.post('/calculate-days', authorizeRole(['employe','apprenti','manager','admin_entreprise','super_admin']), advancedRateLimiter('conges'), congeController.calculateDays);
-router.post('/demande', authorizeRole(['employe','apprenti','manager']), advancedRateLimiter('conges'), checkUsageLimit('create_conge'), validate(createCongeRules), congeController.create);
+router.post('/demande', authorizeRole(['employe','apprenti','manager','super_admin']), advancedRateLimiter('conges'), checkUsageLimit('create_conge'), validate(createCongeRules), congeController.create);
 router.get('/', authorizeRole(['employe','apprenti','manager','admin_entreprise','super_admin']), congeController.list);
 
 // Demandes de modification/annulation — avant /:id pour éviter les conflits de route
