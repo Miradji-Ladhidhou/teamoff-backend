@@ -816,6 +816,9 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
             date_fin: formatDateFR(date_fin),
             type_conge: congeType.libelle || 'Type non renseigne',
             commentaire_employe: safeCommentaire || 'Aucun',
+            annee_compteur_note_html: usingCurrentYearBalance
+              ? `<div style="margin:12px 0;padding:12px 14px;background:#eff6ff;border-left:4px solid #2563eb;border-radius:4px;color:#1e40af;font-size:13px;"><strong>ℹ Imputation inter-années :</strong> Ce congé est posé pour des dates en ${anneeCongeStart} mais sera débité sur le solde ${anneeActuelleCreate} à la demande du collaborateur.</div>`
+              : '',
             overlap_warning_html: overlapWarningPayload
               ? `<div style="margin-top:12px;padding:12px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;color:#92400e;"><strong>⚠ Alerte chevauchement :</strong><br/>${overlapWarningPayload.message}</div>`
               : '',
@@ -886,6 +889,9 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
             date_debut: formatDateFR(date_debut),
             date_fin: formatDateFR(date_fin),
             statut_label: approvalWorkflow === 'auto' ? 'Validee automatiquement' : approvalWorkflow === 'admin_only' ? 'En attente de validation par l\'administrateur' : 'En attente de validation',
+            annee_compteur_note_html: usingCurrentYearBalance
+              ? `<div style="margin:12px 0;padding:12px 14px;background:#eff6ff;border-left:4px solid #2563eb;border-radius:4px;color:#1e40af;font-size:13px;"><strong>ℹ Solde imputé :</strong> Conformément à votre choix, ce congé sera débité sur votre solde ${anneeActuelleCreate} (et non sur le solde ${anneeCongeStart}).</div>`
+              : '',
             overlap_warning_html: '',
             action_url: buildCongeUrl(conge.id),
           }
