@@ -784,7 +784,9 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     const utilisateurNomComplet = `${utilisateur.prenom || ''} ${utilisateur.nom || ''}`.trim() || utilisateur.nom;
 
     if (shouldNotifyOnCreate && !isReservation) {
-      for (const recipient of [...managers, ...admins]) {
+      // admin_only : seuls les admins reçoivent la demande, les managers ne sont pas concernés
+      const createRecipients = approvalWorkflow === 'admin_only' ? admins : [...managers, ...admins];
+      for (const recipient of createRecipients) {
         if (!recipient.email) continue;
         emailQueue.push({
           to: recipient.email,
@@ -865,7 +867,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
             destinataire_prenom: utilisateur.prenom || 'Collaborateur',
             date_debut: formatDateFR(date_debut),
             date_fin: formatDateFR(date_fin),
-            statut_label: approvalWorkflow === 'auto' ? 'Validee automatiquement' : 'En attente de validation',
+            statut_label: approvalWorkflow === 'auto' ? 'Validee automatiquement' : approvalWorkflow === 'admin_only' ? 'En attente de validation par l\'administrateur' : 'En attente de validation',
             overlap_warning_html: '',
             action_url: buildCongeUrl(conge.id),
           }
@@ -874,7 +876,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
           entreprise_id: utilisateur.entreprise_id,
           utilisateur_id: utilisateur.id,
           type: 'conge_cree',
-          message: `Votre congé du ${formatDateFR(date_debut)} au ${formatDateFR(date_fin)} ${approvalWorkflow === 'auto' ? 'a été validé automatiquement' : 'est en attente de validation'}`,
+          message: `Votre congé du ${formatDateFR(date_debut)} au ${formatDateFR(date_fin)} ${approvalWorkflow === 'auto' ? 'a été validé automatiquement' : approvalWorkflow === 'admin_only' ? 'est en attente de validation par l\'administrateur' : 'est en attente de validation'}`,
           url: `/conges/${conge.id}`,
           transaction: t
         });
