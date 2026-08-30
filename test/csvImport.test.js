@@ -23,7 +23,7 @@ const { generateToken } = require('./helpers/auth');
 const { seed }   = require('./helpers/seed');
 
 jest.mock('../src/services/emailService', () => ({
-  sendWelcomeEmail: jest.fn().mockResolvedValue(undefined),
+  sendSetPasswordEmail: jest.fn().mockResolvedValue(undefined),
 }));
 
 let ctx;

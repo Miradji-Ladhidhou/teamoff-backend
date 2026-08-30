@@ -1,6 +1,7 @@
 'use strict';
 
 const { parse } = require('csv-parse/sync');
+const { Op } = require('sequelize');
 const { Utilisateur, Entreprise, CongeType, Conge, CompteurConges, sequelize } = require('../models');
 const { calcJoursConges } = require('../services/congesService');
 const safeNum = (v) => parseFloat(v || 0);
@@ -181,22 +182,30 @@ async function getCongesImportTemplate(req, res, next) {
     const entreprise_id = String(req.query.entreprise_id || '').trim();
     if (!entreprise_id) return res.status(400).json({ message: 'entreprise_id requis' });
 
-    const congeTypes = await CongeType.findAll({ where: { entreprise_id } });
+    const [congeTypes, utilisateurs] = await Promise.all([
+      CongeType.findAll({ where: { entreprise_id }, order: [['libelle', 'ASC']] }),
+      Utilisateur.findAll({
+        where: { entreprise_id, statut: { [Op.ne]: 'inactif' } },
+        attributes: ['email', 'nom', 'prenom'],
+        order: [['nom', 'ASC'], ['prenom', 'ASC']],
+      }),
+    ]);
 
-    const csvField = (v) => (v.includes(',') || v.includes('"') || v.includes('\n'))
+    const csvField = (v) => (v.includes(',') || v.includes(';') || v.includes('"') || v.includes('\n'))
       ? `"${v.replace(/"/g, '""')}"` : v;
 
     const lines = ['email,type_conge,date_debut,debut_demi_journee,date_fin,fin_demi_journee,statut,commentaire'];
-    const exempleStatuts = ['valide_final', 'refuse_final', 'en_attente_manager'];
+    const defaultType = congeTypes.length > 0 ? congeTypes[0].libelle : 'Congés payés';
 
-    if (congeTypes.length === 0) {
-      lines.push('marie.dupont@exemple.fr,Congés payés,2026-01-06,,2026-01-10,,valide_final,Congé annuel');
-      lines.push('paul.martin@exemple.fr,Congés payés,2026-03-10,après-midi,2026-03-12,matin,valide_final,Demi-journées');
+    if (utilisateurs.length === 0) {
+      // Aucun salarié encore importé : lignes d'exemple génériques
+      lines.push(`marie.dupont@exemple.fr,${csvField(defaultType)},AAAA-MM-JJ,,AAAA-MM-JJ,,valide_final,`);
+      lines.push(`paul.martin@exemple.fr,${csvField(defaultType)},AAAA-MM-JJ,après-midi,AAAA-MM-JJ,matin,valide_final,`);
     } else {
-      congeTypes.forEach((ct, i) => {
-        const statut = exempleStatuts[i % exempleStatuts.length];
-        lines.push(`marie.dupont@exemple.fr,${csvField(ct.libelle)},2026-01-06,,2026-01-10,,${statut},Congé annuel`);
-      });
+      // Une ligne pré-remplie par salarié actif de l'entreprise
+      for (const u of utilisateurs) {
+        lines.push(`${csvField(u.email)},${csvField(defaultType)},AAAA-MM-JJ,,AAAA-MM-JJ,,valide_final,`);
+      }
     }
 
     const csv = ['sep=,', ...lines].join('\r\n') + '\r\n';

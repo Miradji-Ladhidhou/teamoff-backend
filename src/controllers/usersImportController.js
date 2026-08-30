@@ -1,13 +1,15 @@
 'use strict';
 
-const bcrypt = require('bcrypt');
 const crypto = require('crypto');
+const jwt    = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
 const { parse } = require('csv-parse/sync');
 const { Utilisateur, Entreprise, CongeType, CompteurConges, sequelize } = require('../models');
 const emailService = require('../services/emailService');
 const quotasService = require('../services/quotasService');
 const logger = require('../utils/logger');
-const { BCRYPT_COST } = require('../services/authService');
+
+const BCRYPT_COST = 12;
 
 const ALLOWED_ROLES = ['employe', 'apprenti', 'manager', 'admin_entreprise'];
 const MAX_ROWS = 300;
@@ -121,12 +123,19 @@ async function importUsersCSV(req, res, next) {
       emailsSeen.add(row.email);
     }
 
-    // Pré-calcul des mots de passe hors transaction (bcrypt est CPU-intensif)
-    const newUserPasswords = new Map();
+    // Pré-calcul des tokens d'invitation hors transaction
+    // Un seul placeholder hash partagé : satisfait la contrainte NOT NULL ; l'utilisateur
+    // ne peut pas se connecter tant que statut='en_attente' et qu'il n'a pas défini son mot de passe.
+    const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_COST);
+    const inviteTokens = new Map();
     for (const row of normalized) {
-      const tempPassword = crypto.randomBytes(6).toString('hex').slice(0, 8) + 'A1!';
-      const hash = await bcrypt.hash(tempPassword, BCRYPT_COST);
-      newUserPasswords.set(row.email, { tempPassword, hash });
+      const inviteToken = jwt.sign(
+        { email: row.email, type: 'set_password' },
+        process.env.JWT_SECRET,
+        { expiresIn: '48h' }
+      );
+      const inviteHash = crypto.createHash('sha256').update(inviteToken).digest('hex');
+      inviteTokens.set(row.email, { inviteToken, inviteHash });
     }
 
     const created = [];
@@ -145,17 +154,18 @@ async function importUsersCSV(req, res, next) {
           }
           skipped.push({ email: row.email, reason: 'email déjà utilisé (soldes mis à jour)' });
         } else {
-          const { tempPassword, hash } = newUserPasswords.get(row.email);
+          const { inviteHash } = inviteTokens.get(row.email);
           user = await Utilisateur.create({
-            nom:            row.nom,
-            prenom:         row.prenom,
-            email:          row.email,
-            role:           row.role,
-            service:        row.service,
+            nom:               row.nom,
+            prenom:            row.prenom,
+            email:             row.email,
+            role:              row.role,
+            service:           row.service,
             entreprise_id,
-            date_embauche:  row.date_embauche,
-            password_hash:  hash,
-            statut:         'en_attente',
+            date_embauche:     row.date_embauche,
+            password_hash:     placeholderHash,
+            invite_token_hash: inviteHash,
+            statut:            'en_attente',
           }, { transaction: t });
 
           await quotasService.initializeUserCounters({
@@ -165,7 +175,7 @@ async function importUsersCSV(req, res, next) {
             transaction: t,
           });
           created.push({ id: user.id, email: user.email, nom: user.nom, prenom: user.prenom });
-          usersToNotify.push({ user, tempPassword });
+          usersToNotify.push({ user, inviteToken: inviteTokens.get(row.email).inviteToken });
         }
 
         // Poser les soldes pour tous les types × années présents dans le fichier
@@ -186,10 +196,10 @@ async function importUsersCSV(req, res, next) {
       }
     });
 
-    // Emails de bienvenue hors transaction
-    for (const { user, tempPassword } of usersToNotify) {
-      emailService.sendWelcomeEmail(user, entreprise, tempPassword)
-        .catch(e => logger.error('Erreur email bienvenue import CSV', { email: user.email, error: e.message }));
+    // Emails d'invitation hors transaction — lien valide 48h pour définir le mot de passe
+    for (const { user, inviteToken } of usersToNotify) {
+      emailService.sendSetPasswordEmail(user, entreprise, inviteToken)
+        .catch(e => logger.error('Erreur email invitation import CSV', { email: user.email, error: e.message }));
     }
 
     res.status(created.length > 0 ? 201 : 200).json({
