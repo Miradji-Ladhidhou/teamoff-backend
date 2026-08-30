@@ -1,3 +1,5 @@
+'use strict';
+
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const { parse } = require('csv-parse/sync');
@@ -10,32 +12,64 @@ const { BCRYPT_COST } = require('../services/authService');
 const ALLOWED_ROLES = ['employe', 'apprenti', 'manager', 'admin_entreprise'];
 const MAX_ROWS = 300;
 
-function normalizeRow(raw) {
-  const nom = String(raw.nom || '').trim();
-  const prenom = String(raw.prenom || '').trim();
-  const email = String(raw.email || '').trim().toLowerCase();
-  const role = String(raw.role || 'employe').trim().toLowerCase();
-  const service = String(raw.service || '').trim() || null;
+// Détecte les colonnes de solde dans les en-têtes CSV.
+// Format attendu : "{libelle du type} (N)" et "{libelle du type} (N-1)"
+function detectBalanceColumns(headers, congeTypes, currentYear) {
+  const typeByNorm = new Map(congeTypes.map(t => [t.libelle.trim().toLowerCase(), t]));
+  const cols = [];
+  for (const header of headers) {
+    const mN  = header.match(/^(.+)\s+\(N\)$/i);
+    const mN1 = header.match(/^(.+)\s+\(N-1\)$/i);
+    if (mN) {
+      const ct = typeByNorm.get(mN[1].trim().toLowerCase());
+      if (ct) cols.push({ header, congeTypeId: ct.id, annee: currentYear });
+    } else if (mN1) {
+      const ct = typeByNorm.get(mN1[1].trim().toLowerCase());
+      if (ct) cols.push({ header, congeTypeId: ct.id, annee: currentYear - 1 });
+    }
+  }
+  return cols;
+}
+
+function normalizeRow(raw, balanceCols) {
+  const nom           = String(raw.nom           || '').trim();
+  const prenom        = String(raw.prenom        || '').trim();
+  const email         = String(raw.email         || '').trim().toLowerCase();
+  const role          = String(raw.role          || 'employe').trim().toLowerCase();
+  const service       = String(raw.service       || '').trim() || null;
   const date_embauche = String(raw.date_embauche || '').trim() || null;
-  const type_conge = String(raw.type_conge || '').trim() || null;
-  const jours_acquis = (raw.jours_acquis !== undefined && raw.jours_acquis !== '')
-    ? parseFloat(raw.jours_acquis) : null;
-  const jours_pris = (raw.jours_pris !== undefined && raw.jours_pris !== '')
-    ? parseFloat(raw.jours_pris) : null;
 
   const errors = [];
-  if (!nom) errors.push('nom requis');
+  if (!nom)    errors.push('nom requis');
   if (!prenom) errors.push('prenom requis');
   if (!email || !/\S+@\S+\.\S+/.test(email)) errors.push('email invalide');
   if (!ALLOWED_ROLES.includes(role)) errors.push(`role invalide (${ALLOWED_ROLES.join('/')})`);
-  if (date_embauche && !/^\d{4}-\d{2}-\d{2}$/.test(date_embauche)) errors.push('date_embauche invalide (format YYYY-MM-DD)');
-  if (type_conge) {
-    if (jours_acquis === null || isNaN(jours_acquis) || jours_acquis < 0) errors.push('jours_acquis invalide (≥ 0 requis)');
-    if (jours_pris === null || isNaN(jours_pris) || jours_pris < 0) errors.push('jours_pris invalide (≥ 0 requis)');
-    if (!isNaN(jours_acquis) && !isNaN(jours_pris) && jours_pris > jours_acquis) errors.push('jours_pris supérieur à jours_acquis');
+  if (date_embauche && !/^\d{4}-\d{2}-\d{2}$/.test(date_embauche))
+    errors.push('date_embauche invalide (format YYYY-MM-DD)');
+
+  const balances = [];
+  for (const col of balanceCols) {
+    const raw_val = raw[col.header];
+    if (raw_val === undefined || raw_val === '') continue; // colonne optionnelle
+    const val = parseFloat(String(raw_val).replace(',', '.'));
+    if (isNaN(val) || val < 0) {
+      errors.push(`"${col.header}" : nombre ≥ 0 requis`);
+    } else {
+      balances.push({ congeTypeId: col.congeTypeId, annee: col.annee, jours_acquis: val });
+    }
   }
 
-  return { nom, prenom, email, role, service, date_embauche, type_conge, jours_acquis, jours_pris, errors };
+  return { nom, prenom, email, role, service, date_embauche, balances, errors };
+}
+
+function parseContent(buffer) {
+  let content = buffer.toString('utf8');
+  if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
+  const allLines = content.split(/\r?\n/);
+  const fromLine = /^sep=/i.test((allLines[0] || '').trim()) ? 2 : 1;
+  const headerLine = allLines[fromLine - 1] || '';
+  const delimiter = headerLine.includes(';') && !headerLine.includes(',') ? ';' : ',';
+  return { content, fromLine, delimiter };
 }
 
 async function importUsersCSV(req, res, next) {
@@ -50,18 +84,7 @@ async function importUsersCSV(req, res, next) {
 
     let rows;
     try {
-      // Convertit le buffer en texte en retirant le BOM UTF-8 si présent
-      let content = req.file.buffer.toString('utf8');
-      if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
-
-      // Ignore la ligne sep=X qu'Excel Windows ajoute parfois en tête
-      const allLines = content.split(/\r?\n/);
-      const fromLine = /^sep=/i.test((allLines[0] || '').trim()) ? 2 : 1;
-
-      // Auto-détecte le délimiteur : Excel FR sauvegarde avec ";" par défaut
-      const headerLine = allLines[fromLine - 1] || '';
-      const delimiter = headerLine.includes(';') && !headerLine.includes(',') ? ';' : ',';
-
+      const { content, fromLine, delimiter } = parseContent(req.file.buffer);
       rows = parse(content, { columns: true, skip_empty_lines: true, trim: true, delimiter, from_line: fromLine });
     } catch {
       return res.status(400).json({ message: 'Fichier CSV invalide ou mal formaté' });
@@ -70,115 +93,100 @@ async function importUsersCSV(req, res, next) {
     if (rows.length === 0) return res.status(400).json({ message: 'Le fichier est vide' });
     if (rows.length > MAX_ROWS) return res.status(400).json({ message: `Maximum ${MAX_ROWS} lignes par import` });
 
-    const normalized = rows.map((raw, i) => ({ line: i + 2, ...normalizeRow(raw) }));
+    const currentYear = new Date().getFullYear();
+    const congeTypes  = await CongeType.findAll({ where: { entreprise_id } });
 
-    // Validation structurelle (toutes les erreurs d'un coup)
-    const validationErrors = normalized.filter(r => r.errors.length > 0).map(r => ({ line: r.line, errors: r.errors }));
-    if (validationErrors.length > 0) return res.status(422).json({ message: 'Erreurs de validation', errors: validationErrors });
+    // Détecter les colonnes de solde depuis les en-têtes du fichier
+    const headers     = Object.keys(rows[0]);
+    const balanceCols = detectBalanceColumns(headers, congeTypes, currentYear);
 
-    // Doublon email + type_conge dans le fichier
-    const balanceKeys = new Set();
+    const normalized = rows.map((raw, i) => ({ line: i + 2, ...normalizeRow(raw, balanceCols) }));
+
+    // Toutes les erreurs de format en une fois
+    const validationErrors = normalized
+      .filter(r => r.errors.length > 0)
+      .map(r => ({ line: r.line, errors: r.errors }));
+    if (validationErrors.length > 0)
+      return res.status(422).json({ message: 'Erreurs de validation', errors: validationErrors });
+
+    // Doublon email dans le fichier
+    const emailsSeen = new Set();
     for (const row of normalized) {
-      if (!row.type_conge) continue;
-      const key = `${row.email}|${row.type_conge.toLowerCase()}`;
-      if (balanceKeys.has(key)) {
+      if (emailsSeen.has(row.email)) {
         return res.status(422).json({
           message: 'Erreurs de validation',
-          errors: [{ line: row.line, errors: [`doublon email + type_conge : "${row.email}" / "${row.type_conge}"`] }],
+          errors: [{ line: row.line, errors: [`email en doublon dans le fichier : "${row.email}"`] }],
         });
       }
-      balanceKeys.add(key);
+      emailsSeen.add(row.email);
     }
 
-    // Charger les types de congé de l'entreprise et valider les libellés
-    const congeTypes = await CongeType.findAll({ where: { entreprise_id } });
-    const typeByLibelle = new Map(congeTypes.map(t => [t.libelle.toLowerCase(), t]));
-
-    const unknownTypes = normalized
-      .filter(r => r.type_conge && !typeByLibelle.has(r.type_conge.toLowerCase()))
-      .map(r => ({ line: r.line, errors: [`type_conge inconnu pour cette entreprise : "${r.type_conge}"`] }));
-    if (unknownTypes.length > 0) return res.status(422).json({ message: 'Types de congé inconnus', errors: unknownTypes });
-
-    // Dédoublonnage des employés par email (première occurrence = référence)
-    const emailToInfo = new Map();
-    for (const row of normalized) {
-      if (!emailToInfo.has(row.email)) {
-        emailToInfo.set(row.email, { nom: row.nom, prenom: row.prenom, email: row.email, role: row.role, service: row.service, date_embauche: row.date_embauche });
-      }
-    }
-
-    // Pré-calcul des mots de passe hors transaction (bcrypt est CPU-intensif, pas de hold de connexion DB)
-    // On génère pour TOUS les emails : si l'utilisateur existe déjà à l'intérieur de la transaction,
-    // le mot de passe sera simplement ignoré — ce qui évite un crash si un utilisateur est créé/supprimé
-    // entre ce point et le début de la transaction.
+    // Pré-calcul des mots de passe hors transaction (bcrypt est CPU-intensif)
     const newUserPasswords = new Map();
-    for (const [email] of emailToInfo) {
+    for (const row of normalized) {
       const tempPassword = crypto.randomBytes(6).toString('hex').slice(0, 8) + 'A1!';
       const hash = await bcrypt.hash(tempPassword, BCRYPT_COST);
-      newUserPasswords.set(email, { tempPassword, hash });
+      newUserPasswords.set(row.email, { tempPassword, hash });
     }
 
-    const annee = new Date().getFullYear();
     const created = [];
     const skipped = [];
     const balancesSet = [];
     const usersToNotify = [];
 
     await sequelize.transaction(async (t) => {
-      const userByEmail = new Map();
-
-      // Étape 1 : créer ou récupérer les utilisateurs
-      for (const [email, info] of emailToInfo) {
-        let user = await Utilisateur.findOne({ where: { email }, transaction: t });
+      for (const row of normalized) {
+        let user = await Utilisateur.findOne({ where: { email: row.email }, transaction: t });
 
         if (user) {
           if (user.entreprise_id !== entreprise_id) {
-            skipped.push({ email, reason: 'utilisateur appartient à une autre entreprise' });
-          } else {
-            skipped.push({ email, reason: 'email déjà utilisé (soldes mis à jour)' });
-            userByEmail.set(email, user);
+            skipped.push({ email: row.email, reason: 'appartient à une autre entreprise' });
+            continue;
           }
-          continue;
+          skipped.push({ email: row.email, reason: 'email déjà utilisé (soldes mis à jour)' });
+        } else {
+          const { tempPassword, hash } = newUserPasswords.get(row.email);
+          user = await Utilisateur.create({
+            nom:            row.nom,
+            prenom:         row.prenom,
+            email:          row.email,
+            role:           row.role,
+            service:        row.service,
+            entreprise_id,
+            date_embauche:  row.date_embauche,
+            password_hash:  hash,
+            statut:         'en_attente',
+          }, { transaction: t });
+
+          await quotasService.initializeUserCounters({
+            entrepriseId: entreprise_id,
+            utilisateurId: user.id,
+            annee: currentYear,
+            transaction: t,
+          });
+          created.push({ id: user.id, email: user.email, nom: user.nom, prenom: user.prenom });
+          usersToNotify.push({ user, tempPassword });
         }
 
-        const { tempPassword, hash } = newUserPasswords.get(email);
-        user = await Utilisateur.create({
-          nom: info.nom,
-          prenom: info.prenom,
-          email: info.email,
-          role: info.role,
-          service: info.service,
-          entreprise_id,
-          date_embauche: info.date_embauche,
-          password_hash: hash,
-          statut: 'en_attente',
-        }, { transaction: t });
-
-        await quotasService.initializeUserCounters({ entrepriseId: entreprise_id, utilisateurId: user.id, annee, transaction: t });
-        created.push({ id: user.id, email: user.email, nom: user.nom, prenom: user.prenom });
-        usersToNotify.push({ user, tempPassword });
-        userByEmail.set(email, user);
-      }
-
-      // Étape 2 : poser les soldes pour toutes les lignes avec type_conge
-      for (const row of normalized) {
-        if (!row.type_conge) continue;
-        const user = userByEmail.get(row.email);
-        if (!user) continue;
-        const congeType = typeByLibelle.get(row.type_conge.toLowerCase());
-
-        const [counter] = await CompteurConges.findOrCreate({
-          where: { entreprise_id, utilisateur_id: user.id, conge_type_id: congeType.id, annee },
-          defaults: { jours_acquis: 0, jours_pris: 0, jours_reserves: 0, jours_reportes: 0, jours_annules: 0 },
-          transaction: t,
-        });
-
-        await counter.update({ jours_acquis: row.jours_acquis, jours_pris: row.jours_pris }, { transaction: t });
-        balancesSet.push({ email: row.email, type_conge: row.type_conge, jours_acquis: row.jours_acquis, jours_pris: row.jours_pris });
+        // Poser les soldes pour tous les types × années présents dans le fichier
+        for (const bal of row.balances) {
+          const [counter] = await CompteurConges.findOrCreate({
+            where: {
+              entreprise_id,
+              utilisateur_id: user.id,
+              conge_type_id:  bal.congeTypeId,
+              annee:          bal.annee,
+            },
+            defaults: { jours_acquis: 0, jours_pris: 0, jours_reserves: 0, jours_reportes: 0, jours_annules: 0 },
+            transaction: t,
+          });
+          await counter.update({ jours_acquis: bal.jours_acquis }, { transaction: t });
+          balancesSet.push({ email: row.email, annee: bal.annee, jours_acquis: bal.jours_acquis });
+        }
       }
     });
 
-    // Emails de bienvenue hors transaction (fire & forget)
+    // Emails de bienvenue hors transaction
     for (const { user, tempPassword } of usersToNotify) {
       emailService.sendWelcomeEmail(user, entreprise, tempPassword)
         .catch(e => logger.error('Erreur email bienvenue import CSV', { email: user.email, error: e.message }));
@@ -201,24 +209,29 @@ async function getImportTemplate(req, res, next) {
     const entreprise_id = String(req.query.entreprise_id || '').trim();
     if (!entreprise_id) return res.status(400).json({ message: 'entreprise_id requis' });
 
-    const congeTypes = await CongeType.findAll({ where: { entreprise_id } });
-    const lines = ['nom,prenom,email,role,service,date_embauche,type_conge,jours_acquis,jours_pris'];
+    const congeTypes  = await CongeType.findAll({ where: { entreprise_id } });
+    const currentYear = new Date().getFullYear();
 
-    const csvField = (v) => (v.includes(',') || v.includes('"') || v.includes('\n'))
-      ? `"${v.replace(/"/g, '""')}"` : v;
+    const csvField = (v) =>
+      (v.includes(',') || v.includes(';') || v.includes('"') || v.includes('\n'))
+        ? `"${v.replace(/"/g, '""')}"` : v;
 
-    if (congeTypes.length === 0) {
-      lines.push('Dupont,Marie,marie.dupont@exemple.fr,employe,RH,2021-03-01,,0,0');
-    } else {
-      for (const ct of congeTypes) {
-        lines.push(`Dupont,Marie,marie.dupont@exemple.fr,employe,RH,2021-03-01,${csvField(ct.libelle)},0,0`);
-      }
-    }
+    // Colonnes : base + une paire (N-1)/(N) par type de congé
+    const balanceCols = congeTypes.flatMap(ct => [
+      `${ct.libelle} (N-1)`,
+      `${ct.libelle} (N)`,
+    ]);
+    const headerCols = ['nom', 'prenom', 'email', 'role', 'service', 'date_embauche', ...balanceCols];
+    const header = headerCols.map(csvField).join(',');
 
-    const csv = ['sep=,', ...lines].join('\r\n') + '\r\n';
+    // Ligne d'exemple : 0 pour N-1, 25 pour N sur chaque type
+    const exBalances = congeTypes.flatMap(() => ['0', '25']);
+    const exRow = ['Dupont', 'Marie', 'marie.dupont@exemple.fr', 'employe', 'RH',
+      `${currentYear - 3}-03-01`, ...exBalances].map(csvField).join(',');
+
+    const csv = ['sep=,', header, exRow].join('\r\n') + '\r\n';
     res.set('Content-Type', 'text/csv; charset=utf-8');
     res.set('Content-Disposition', 'attachment; filename="modele_import_employes.csv"');
-    // BOM UTF-8 + sep=, : Excel Windows détecte l'encodage et le séparateur
     res.send(Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(csv, 'utf8')]));
   } catch (err) {
     logger.error('Template CSV employés', { error: err.message });

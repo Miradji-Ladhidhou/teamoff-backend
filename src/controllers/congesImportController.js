@@ -19,26 +19,47 @@ function parseContent(buffer) {
   return { content, fromLine, delimiter };
 }
 
+// Normalise une valeur de demi-journée saisie librement dans le CSV.
+// field='debut' : valeurs valides → '' (journée entière) | 'apres_midi'
+// field='fin'   : valeurs valides → '' (journée entière) | 'matin'
+function normalizeDemiJournee(raw, field) {
+  const v = String(raw || '').trim().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, ''); // strip accents
+  if (!v || v === 'journee entiere' || v === 'entiere' || v === 'entier' || v === 'journee') return '';
+  if (field === 'debut') {
+    if (v === 'apres-midi' || v === 'apres_midi' || v === 'apres midi' || v === 'pm') return 'apres_midi';
+  }
+  if (field === 'fin') {
+    if (v === 'matin' || v === 'am') return 'matin';
+  }
+  return null; // valeur non reconnue → erreur
+}
+
 function normalizeRow(raw) {
-  const email      = String(raw.email      || '').trim().toLowerCase();
-  const type_conge = String(raw.type_conge || '').trim();
-  const date_debut = String(raw.date_debut || '').trim();
-  const date_fin   = String(raw.date_fin   || '').trim();
-  const statut     = String(raw.statut     || '').trim() || 'valide_final';
-  const commentaire = String(raw.commentaire || '').trim() || null;
+  const email             = String(raw.email             || '').trim().toLowerCase();
+  const type_conge        = String(raw.type_conge        || '').trim();
+  const date_debut        = String(raw.date_debut        || '').trim();
+  const date_fin          = String(raw.date_fin          || '').trim();
+  const statut            = String(raw.statut            || '').trim() || 'valide_final';
+  const commentaire       = String(raw.commentaire       || '').trim() || null;
+  const debut_demi_journee = normalizeDemiJournee(raw.debut_demi_journee, 'debut');
+  const fin_demi_journee   = normalizeDemiJournee(raw.fin_demi_journee,   'fin');
 
   const errors = [];
   if (!email || !/\S+@\S+\.\S+/.test(email)) errors.push('email invalide');
   if (!type_conge) errors.push('type_conge requis');
   if (!date_debut || !/^\d{4}-\d{2}-\d{2}$/.test(date_debut)) errors.push('date_debut invalide (format YYYY-MM-DD)');
   if (!date_fin   || !/^\d{4}-\d{2}-\d{2}$/.test(date_fin))   errors.push('date_fin invalide (format YYYY-MM-DD)');
-  if (date_debut && date_fin && !/^\d{4}-\d{2}-\d{2}$/.test(date_debut) === false
-      && !/^\d{4}-\d{2}-\d{2}$/.test(date_fin) === false && date_fin < date_debut)
+  if (date_debut && date_fin && /^\d{4}-\d{2}-\d{2}$/.test(date_debut) && /^\d{4}-\d{2}-\d{2}$/.test(date_fin) && date_fin < date_debut)
     errors.push('date_fin antérieure à date_debut');
   if (!ALLOWED_STATUTS.includes(statut))
     errors.push(`statut invalide — valeurs acceptées : ${ALLOWED_STATUTS.join(', ')}`);
+  if (debut_demi_journee === null)
+    errors.push('debut_demi_journee invalide — valeurs acceptées : vide (journée entière), apr��s-midi');
+  if (fin_demi_journee === null)
+    errors.push('fin_demi_journee invalide — valeurs acceptées : vide (journée entière), matin');
 
-  return { email, type_conge, date_debut, date_fin, statut, commentaire, errors };
+  return { email, type_conge, date_debut, date_fin, debut_demi_journee: debut_demi_journee || '', fin_demi_journee: fin_demi_journee || '', statut, commentaire, errors };
 }
 
 async function importCongesCSV(req, res, next) {
@@ -102,19 +123,21 @@ async function importCongesCSV(req, res, next) {
           continue;
         }
 
-        const jours = await calcJoursConges(entreprise_id, row.date_debut, row.date_fin, 'matin', 'apres_midi', t);
+        const debutDemi = row.debut_demi_journee || 'matin';
+        const finDemi   = row.fin_demi_journee   || 'apres_midi';
+        const jours = await calcJoursConges(entreprise_id, row.date_debut, row.date_fin, debutDemi, finDemi, t);
 
         const conge = await Conge.create({
           entreprise_id,
-          utilisateur_id:     user.id,
-          conge_type_id:      congeType.id,
-          date_debut:         row.date_debut,
-          date_fin:           row.date_fin,
-          debut_demi_journee: 'matin',
-          fin_demi_journee:   'apres_midi',
-          statut:             row.statut,
+          utilisateur_id:      user.id,
+          conge_type_id:       congeType.id,
+          date_debut:          row.date_debut,
+          date_fin:            row.date_fin,
+          debut_demi_journee:  row.debut_demi_journee || null,
+          fin_demi_journee:    row.fin_demi_journee   || null,
+          statut:              row.statut,
           commentaire_employe: row.commentaire,
-          jours_calcules:     jours,
+          jours_calcules:      jours,
         }, { transaction: t });
 
         // Mise à jour du CompteurConges selon le statut
@@ -163,15 +186,16 @@ async function getCongesImportTemplate(req, res, next) {
     const csvField = (v) => (v.includes(',') || v.includes('"') || v.includes('\n'))
       ? `"${v.replace(/"/g, '""')}"` : v;
 
-    const lines = ['email,type_conge,date_debut,date_fin,statut,commentaire'];
+    const lines = ['email,type_conge,date_debut,debut_demi_journee,date_fin,fin_demi_journee,statut,commentaire'];
     const exempleStatuts = ['valide_final', 'refuse_final', 'en_attente_manager'];
 
     if (congeTypes.length === 0) {
-      lines.push('marie.dupont@exemple.fr,Congés payés,2026-01-06,2026-01-10,valide_final,Congé annuel');
+      lines.push('marie.dupont@exemple.fr,Congés payés,2026-01-06,,2026-01-10,,valide_final,Congé annuel');
+      lines.push('paul.martin@exemple.fr,Congés payés,2026-03-10,après-midi,2026-03-12,matin,valide_final,Demi-journées');
     } else {
       congeTypes.forEach((ct, i) => {
         const statut = exempleStatuts[i % exempleStatuts.length];
-        lines.push(`marie.dupont@exemple.fr,${csvField(ct.libelle)},2026-01-06,2026-01-10,${statut},Congé annuel`);
+        lines.push(`marie.dupont@exemple.fr,${csvField(ct.libelle)},2026-01-06,,2026-01-10,,${statut},Congé annuel`);
       });
     }
 
