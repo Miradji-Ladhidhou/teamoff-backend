@@ -1,96 +1,39 @@
 <!DOCTYPE html>
 <html lang="fr">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Entreprise créée</title>
-    <style>
-      body {
-        margin: 0;
-        padding: 0;
-        background-color: #f8fafc;
-        font-family: Arial, sans-serif;
-        color: #111827;
-      }
-
-      .wrapper {
-        width: 100%;
-        padding: 24px 0;
-      }
-
-      .card {
-        max-width: 620px;
-        margin: 0 auto;
-        background: #ffffff;
-        border-radius: 14px;
-        overflow: hidden;
-        border: 1px solid #e2e8f0;
-      }
-
-      .header {
-        background: linear-gradient(135deg, #0b4f6c, #0ea5e9);
-        color: #ffffff;
-        padding: 26px;
-      }
-
-      .content {
-        padding: 26px;
-      }
-
-      .meta {
-        margin: 20px 0;
-        padding: 16px;
-        border: 1px solid #cbd5e1;
-        border-radius: 10px;
-        background: #f8fafc;
-      }
-
-      .button {
-        display: inline-block;
-        padding: 12px 22px;
-        background: #0b4f6c;
-        color: #ffffff !important;
-        text-decoration: none;
-        border-radius: 8px;
-        font-weight: bold;
-      }
-
-      .footer {
-        color: #64748b;
-        font-size: 12px;
-        padding: 0 26px 24px;
-      }
-
-      p {
-        margin: 0 0 14px;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="wrapper">
-      <div class="card">
-        <div class="header">
-          <h1 style="margin: 0;">Entreprise créée</h1>
-          <p style="margin: 10px 0 0; opacity: 0.95;">Nouvelle entreprise enregistrée sur {{app_name}}</p>
-        </div>
-        <div class="content">
-          <p>Bonjour {{nom_complet}},</p>
-          <p>L'entreprise <strong>{{entreprise_nom}}</strong> a bien été créée.</p>
-
-          <div class="meta">
-            <p><strong>Nom :</strong> {{entreprise_nom}}</p>
-            <p><strong>Statut :</strong> {{entreprise_statut}}</p>
-            <p><strong>Date :</strong> {{created_at}}</p>
-          </div>
-
-          <a class="button" href="{{dashboard_url}}">Ouvrir la gestion des entreprises</a>
-        </div>
-        <div class="footer">
-          <p>Si le bouton ne fonctionne pas, utilisez ce lien : {{dashboard_url}}</p>
-          <p>Cordialement,<br><strong>{{signature}}</strong></p>
-          <p>© {{year}} {{app_name}} - Email automatique</p>
-        </div>
-      </div>
-    </div>
-  </body>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Entreprise créée</title>
+</head>
+<body style="margin:0;padding:0;background:#f8fafc;font-family:Arial,sans-serif;color:#111827;word-break:break-word;">
+  <table width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;"><tr><td align="center">
+    <table width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;width:100%;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e2e8f0;">
+      <tr><td style="background:linear-gradient(135deg,#0b4f6c,#0ea5e9);color:#fff;padding:24px;">
+        <h1 style="margin:0;font-size:22px;">Entreprise créée</h1>
+        <p style="margin:10px 0 0;font-size:14px;opacity:.95;">Nouvelle entreprise enregistrée sur {{app_name}}</p>
+      </td></tr>
+      <tr><td style="padding:24px;line-height:1.6;">
+        <p style="margin:0 0 14px;">Bonjour {{nom_complet}},</p>
+        <p style="margin:0 0 14px;">L'entreprise <strong>{{entreprise_nom}}</strong> a bien été créée.</p>
+        <table width="100%" cellspacing="0" cellpadding="0" style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:10px;margin:18px 0;">
+          <tr><td style="padding:16px;line-height:1.8;">
+            <p style="margin:0 0 8px;"><strong>Nom :</strong> {{entreprise_nom}}</p>
+            <p style="margin:0 0 8px;"><strong>Statut :</strong> {{entreprise_statut}}</p>
+            <p style="margin:0;"><strong>Date :</strong> {{created_at}}</p>
+          </td></tr>
+        </table>
+        <table cellspacing="0" cellpadding="0" style="width:100%;margin:4px 0 8px;">
+          <tr><td style="background:#0b4f6c;border-radius:8px;text-align:center;">
+            <a href="{{dashboard_url}}" style="display:block;padding:12px 22px;color:#fff;font-size:14px;font-weight:bold;text-decoration:none;">Ouvrir la gestion des entreprises</a>
+          </td></tr>
+        </table>
+      </td></tr>
+      <tr><td style="padding:0 24px 24px;color:#64748b;font-size:12px;line-height:1.6;">
+        <p style="margin:0 0 8px;">Si le bouton ne fonctionne pas, copiez ce lien dans votre navigateur :<br/>{{dashboard_url}}</p>
+        <p style="margin:0 0 8px;">Cordialement,<br/><strong>{{signature}}</strong></p>
+        <p style="margin:0;">© {{year}} {{app_name}} - Email automatique</p>
+      </td></tr>
+    </table>
+  </td></tr></table>
+</body>
 </html>

@@ -9,6 +9,7 @@ const emailService = require('../services/emailService');
 const quotasService = require('../services/quotasService');
 const { auditImport } = require('../services/auditHelper');
 const logger = require('../utils/logger');
+const { decodeCsvBuffer } = require('../utils/csvDecoder');
 
 const BCRYPT_COST = 12;
 
@@ -66,8 +67,7 @@ function normalizeRow(raw, balanceCols) {
 }
 
 function parseContent(buffer) {
-  let content = buffer.toString('utf8');
-  if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
+  const content = decodeCsvBuffer(buffer);
   const allLines = content.split(/\r?\n/);
   const fromLine = /^sep=/i.test((allLines[0] || '').trim()) ? 2 : 1;
   const headerLine = allLines[fromLine - 1] || '';

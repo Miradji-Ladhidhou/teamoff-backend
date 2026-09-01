@@ -511,7 +511,7 @@ async function deleteUser(req, res, next) {
         { email: employeEmail, prenom: employePrenom },
         {
           employe_nom,
-          message_principal: `Votre compte TeamOff a été supprimé le <strong>${date_suppression}</strong> par <strong>${adminNom}</strong>. Toutes vos données ont été effacées de notre système.`,
+          message_principal: `Votre compte TeamOff a été supprimé le ${date_suppression} par ${adminNom}. Toutes vos données ont été effacées de notre système.`,
           date_suppression,
         }
       ).catch((e) => logger.error('sendAccountDeleted (employee) error', { error: e.message }));
@@ -522,7 +522,7 @@ async function deleteUser(req, res, next) {
         { email: adminUser.email, prenom: adminUser.prenom },
         {
           employe_nom,
-          message_principal: `Le compte de <strong>${employe_nom}</strong> a été supprimé le <strong>${date_suppression}</strong>. Toutes les données associées ont été effacées de notre système.`,
+          message_principal: `Le compte de ${employe_nom} a été supprimé le ${date_suppression}. Toutes les données associées ont été effacées de notre système.`,
           date_suppression,
         }
       ).catch((e) => logger.error('sendAccountDeleted (admin) error', { error: e.message }));

@@ -1,97 +1,40 @@
 <!DOCTYPE html>
 <html lang="fr">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nouvelle inscription entreprise</title>
-    <style>
-      body {
-        margin: 0;
-        padding: 0;
-        background-color: #f3f6fb;
-        font-family: Arial, sans-serif;
-        color: #0f172a;
-      }
-
-      .wrapper {
-        width: 100%;
-        padding: 24px 0;
-      }
-
-      .card {
-        max-width: 640px;
-        margin: 0 auto;
-        background: #ffffff;
-        border-radius: 16px;
-        overflow: hidden;
-        border: 1px solid #dbe4f0;
-      }
-
-      .header {
-        background: linear-gradient(135deg, #0f3d75, #2563eb);
-        color: #ffffff;
-        padding: 28px;
-      }
-
-      .content {
-        padding: 28px;
-      }
-
-      .meta {
-        background: #f8fbff;
-        border: 1px solid #d7e6fb;
-        border-radius: 12px;
-        padding: 18px;
-        margin: 20px 0 24px;
-      }
-
-      .button {
-        display: inline-block;
-        padding: 13px 22px;
-        background: #0f3d75;
-        color: #ffffff !important;
-        text-decoration: none;
-        border-radius: 9px;
-        font-weight: bold;
-      }
-
-      .footer {
-        color: #64748b;
-        font-size: 12px;
-        padding: 0 28px 24px;
-      }
-
-      p {
-        margin: 0 0 14px;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="wrapper">
-      <div class="card">
-        <div class="header">
-          <h1 style="margin: 0;">Nouvelle inscription entreprise</h1>
-          <p style="margin: 10px 0 0; opacity: 0.95;">Une nouvelle société attend votre suivi.</p>
-        </div>
-        <div class="content">
-          <p>Bonjour,</p>
-          <p>Une nouvelle entreprise vient de s'inscrire sur {{app_name}}.</p>
-
-          <div class="meta">
-            <p><strong>Entreprise :</strong> {{entreprise_nom}}</p>
-            <p><strong>Administrateur :</strong> {{admin_nom}}</p>
-            <p><strong>Email administrateur :</strong> {{admin_email}}</p>
-            <p><strong>Date :</strong> {{created_at}}</p>
-          </div>
-
-          <a class="button" href="{{validation_url}}">Ouvrir la gestion des entreprises</a>
-        </div>
-        <div class="footer">
-          <p>Si le bouton ne fonctionne pas, utilisez ce lien : {{validation_url}}</p>
-          <p>Cordialement,<br><strong>{{signature}}</strong></p>
-          <p>© {{year}} {{app_name}} - Email automatique</p>
-        </div>
-      </div>
-    </div>
-  </body>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Nouvelle inscription entreprise</title>
+</head>
+<body style="margin:0;padding:0;background:#f3f6fb;font-family:Arial,sans-serif;color:#0f172a;word-break:break-word;">
+  <table width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;"><tr><td align="center">
+    <table width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;width:100%;background:#fff;border-radius:16px;overflow:hidden;border:1px solid #dbe4f0;">
+      <tr><td style="background:linear-gradient(135deg,#0f3d75,#2563eb);color:#fff;padding:24px;">
+        <h1 style="margin:0;font-size:22px;">Nouvelle inscription entreprise</h1>
+        <p style="margin:10px 0 0;font-size:14px;opacity:.95;">Une nouvelle société attend votre suivi.</p>
+      </td></tr>
+      <tr><td style="padding:24px;line-height:1.6;">
+        <p style="margin:0 0 14px;">Bonjour,</p>
+        <p style="margin:0 0 14px;">Une nouvelle entreprise vient de s'inscrire sur {{app_name}}.</p>
+        <table width="100%" cellspacing="0" cellpadding="0" style="background:#f8fbff;border:1px solid #d7e6fb;border-radius:12px;margin:18px 0;">
+          <tr><td style="padding:16px;line-height:1.8;">
+            <p style="margin:0 0 8px;"><strong>Entreprise :</strong> {{entreprise_nom}}</p>
+            <p style="margin:0 0 8px;"><strong>Administrateur :</strong> {{admin_nom}}</p>
+            <p style="margin:0 0 8px;"><strong>Email administrateur :</strong> {{admin_email}}</p>
+            <p style="margin:0;"><strong>Date :</strong> {{created_at}}</p>
+          </td></tr>
+        </table>
+        <table cellspacing="0" cellpadding="0" style="width:100%;margin:4px 0 8px;">
+          <tr><td style="background:#0f3d75;border-radius:9px;text-align:center;">
+            <a href="{{validation_url}}" style="display:block;padding:13px 22px;color:#fff;font-size:14px;font-weight:bold;text-decoration:none;">Ouvrir la gestion des entreprises</a>
+          </td></tr>
+        </table>
+      </td></tr>
+      <tr><td style="padding:0 24px 24px;color:#64748b;font-size:12px;line-height:1.6;">
+        <p style="margin:0 0 8px;">Si le bouton ne fonctionne pas, copiez ce lien dans votre navigateur :<br/>{{validation_url}}</p>
+        <p style="margin:0 0 8px;">Cordialement,<br/><strong>{{signature}}</strong></p>
+        <p style="margin:0;">© {{year}} {{app_name}} - Email automatique</p>
+      </td></tr>
+    </table>
+  </td></tr></table>
+</body>
 </html>

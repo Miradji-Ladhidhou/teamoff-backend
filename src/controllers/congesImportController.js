@@ -7,13 +7,13 @@ const { calcJoursConges } = require('../services/congesService');
 const safeNum = (v) => parseFloat(v || 0);
 const logger = require('../utils/logger');
 const { auditImport } = require('../services/auditHelper');
+const { decodeCsvBuffer } = require('../utils/csvDecoder');
 
 const ALLOWED_STATUTS = ['en_attente_manager', 'valide_manager', 'refuse_manager', 'valide_final', 'refuse_final'];
 const MAX_ROWS = 500;
 
 function parseContent(buffer) {
-  let content = buffer.toString('utf8');
-  if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
+  const content = decodeCsvBuffer(buffer);
   const allLines = content.split(/\r?\n/);
   const fromLine = /^sep=/i.test((allLines[0] || '').trim()) ? 2 : 1;
   const headerLine = allLines[fromLine - 1] || '';
@@ -137,8 +137,8 @@ async function importCongesCSV(req, res, next) {
           conge_type_id:       congeType.id,
           date_debut:          row.date_debut,
           date_fin:            row.date_fin,
-          debut_demi_journee:  row.debut_demi_journee || null,
-          fin_demi_journee:    row.fin_demi_journee   || null,
+          debut_demi_journee:  row.debut_demi_journee || 'matin',
+          fin_demi_journee:    row.fin_demi_journee   || 'apres_midi',
           statut:              row.statut,
           commentaire_employe: row.commentaire,
           jours_calcules:      jours,

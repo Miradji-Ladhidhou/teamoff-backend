@@ -330,7 +330,11 @@ async function setPassword(token, password, confirmPassword) {
 
   if (decoded.type !== 'set_password') throw new Error('Lien invalide');
 
-  const user = await Utilisateur.findByPk(decoded.id);
+  // L'import CSV signe le token avec { email, type } avant la création du compte,
+  // donc decoded.id peut être absent — on cherche par email en fallback.
+  const user = decoded.id
+    ? await Utilisateur.findByPk(decoded.id)
+    : await Utilisateur.findOne({ where: { email: decoded.email } });
   if (!user) throw new Error('Utilisateur introuvable');
 
   if (!user.invite_token_hash) throw new Error('Lien déjà utilisé');
