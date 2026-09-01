@@ -181,20 +181,29 @@ async function importUsersCSV(req, res, next) {
           usersToNotify.push({ user, inviteToken: inviteTokens.get(row.email).inviteToken });
         }
 
-        // Poser les soldes pour tous les types × années présents dans le fichier
+        // Poser les soldes : N-1 → jours_reportes dans le compteur N (pas un record séparé)
+        const nMap  = {};
+        const n1Map = {};
         for (const bal of row.balances) {
+          if (bal.annee === currentYear)     nMap[bal.congeTypeId]  = bal.jours_acquis;
+          else if (bal.annee === currentYear - 1) n1Map[bal.congeTypeId] = bal.jours_acquis;
+        }
+        const allTypeIds = [...new Set(row.balances.map(b => b.congeTypeId))];
+        for (const congeTypeId of allTypeIds) {
+          const nVal  = nMap[congeTypeId]  ?? 0;
+          const n1Val = n1Map[congeTypeId] ?? 0;
           const [counter] = await CompteurConges.findOrCreate({
             where: {
               entreprise_id,
               utilisateur_id: user.id,
-              conge_type_id:  bal.congeTypeId,
-              annee:          bal.annee,
+              conge_type_id:  congeTypeId,
+              annee:          currentYear,
             },
             defaults: { jours_acquis: 0, jours_pris: 0, jours_reserves: 0, jours_reportes: 0, jours_annules: 0 },
             transaction: t,
           });
-          await counter.update({ jours_acquis: bal.jours_acquis }, { transaction: t });
-          balancesSet.push({ email: row.email, annee: bal.annee, jours_acquis: bal.jours_acquis });
+          await counter.update({ jours_acquis: nVal + n1Val, jours_reportes: n1Val }, { transaction: t });
+          balancesSet.push({ email: row.email, annee: currentYear, jours_acquis: nVal + n1Val, jours_reportes: n1Val });
         }
       }
     });
