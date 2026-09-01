@@ -30,6 +30,7 @@ const calendrierRoutes = require('./calendrier');
 const exportRoutes = require('./exports');
 const auditRoutes = require('./audit');
 const absencesRoutes = require('./absences');
+const emailLogsRoutes = require('./emailLogs');
 
 // ------------------------------
 // Appliquer les métriques à toutes les routes
@@ -223,6 +224,11 @@ router.use('/exports', authJwt, exportRoutes);
 // Audit logs routes (super_admin uniquement)
 // ------------------------------
 router.use('/audit', authJwt, auditRoutes);
+
+// ------------------------------
+// Email logs routes (super_admin uniquement)
+// ------------------------------
+router.use('/email-logs', authJwt, emailLogsRoutes);
 
 // ------------------------------
 // System settings routes (super_admin uniquement)

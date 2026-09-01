@@ -9,6 +9,30 @@ const { formatDateFR } = require('../utils/dateFormatter');
 
 const isEmailDebug = process.env.EMAIL_DEBUG === 'true';
 
+let EmailLog;
+// Lazy-load pour éviter les imports circulaires au démarrage
+function getEmailLog() {
+  if (!EmailLog) EmailLog = require('../models').EmailLog;
+  return EmailLog;
+}
+
+function extractEmailMeta(data) {
+  const entreprise_id =
+    data?.entreprise_id ||
+    data?.user?.entreprise_id ||
+    data?.employe?.entreprise_id ||
+    data?.manager?.entreprise_id ||
+    data?.admin?.entreprise_id ||
+    null;
+  const utilisateur_id =
+    data?.user?.id ||
+    data?.employe?.id ||
+    data?.manager?.id ||
+    data?.admin?.id ||
+    null;
+  return { entreprise_id, utilisateur_id };
+}
+
 function getFrontendUrl() {
   return (process.env.FRONTEND_URL || 'http://localhost:3001').split(',')[0].trim();
 }
@@ -97,17 +121,19 @@ class EmailService {
   // Méthode générique d'envoi d'email
   // attachments: tableau nodemailer [{ filename, content (Buffer), contentType }]
   async sendEmail(to, subject, templateName, data = {}, attachments = []) {
+    const fromAddr = process.env.EMAIL_FROM || process.env.MAIL_USER || 'noreply@teamoff.app';
+    let logEntry = null;
     try {
       if (!data.signature) data.signature = 'TeamOff SaaS';
 
       if (process.env.MAIL_SIMULATE === 'true') {
         emailLog('Email simule:', { to, subject, data });
+        logEntry = { statut: 'simulated', provider: 'simulate', message_id: null };
         return { success: true, test: true };
       }
 
       const html = await this.buildHtml(templateName, data);
       const fromName = process.env.EMAIL_NAME || 'TeamOff';
-      const fromAddr = process.env.EMAIL_FROM || process.env.MAIL_USER;
 
       // Gmail API HTTP (googleapis) — priorité 1, HTTPS port 443, jamais bloqué
       if (process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN) {
@@ -147,6 +173,7 @@ class EmailService {
         const raw = rawBuffer.toString('base64url');
         const sent = await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
         emailLog(`Email Gmail API envoyé à ${to}: ${sent.data.id}`);
+        logEntry = { statut: 'success', provider: 'gmail', message_id: sent.data.id };
         return { success: true, messageId: sent.data.id };
       }
 
@@ -166,6 +193,7 @@ class EmailService {
         });
         if (error) throw new Error(error.message || JSON.stringify(error));
         emailLog(`Email Resend envoyé à ${to}: ${sent?.id}`);
+        logEntry = { statut: 'success', provider: 'resend', message_id: sent?.id };
         return { success: true, messageId: sent?.id };
       }
 
@@ -187,10 +215,29 @@ class EmailService {
       const transporter = await this.createTransporter(smtpConfig);
       const info = await transporter.sendMail(mailOptions);
       emailLog(`Email SMTP envoyé à ${to}: ${info.messageId}`);
+      logEntry = { statut: 'success', provider: 'smtp', message_id: info.messageId };
       return { success: true, messageId: info.messageId };
     } catch (error) {
       logger.error('email_send_error', { error: error.message });
+      logEntry = { statut: 'failed', provider: null, error_message: error.message };
       throw error;
+    } finally {
+      if (logEntry) {
+        const { entreprise_id, utilisateur_id } = extractEmailMeta(data);
+        const toStr = Array.isArray(to) ? to.join(', ') : (to || '');
+        getEmailLog().create({
+          type: templateName || null,
+          from_address: fromAddr,
+          to_address: toStr.slice(0, 255),
+          subject: (subject || '').slice(0, 500),
+          statut: logEntry.statut,
+          provider: logEntry.provider || null,
+          message_id: logEntry.message_id || null,
+          error_message: logEntry.error_message || null,
+          entreprise_id,
+          utilisateur_id,
+        }).catch(e => logger.error('EmailLog.create failed', { error: e.message }));
+      }
     }
   }
 

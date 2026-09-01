@@ -26,6 +26,7 @@ const HolidayTemplateItem = require('./HolidayTemplateItem')(sequelize, DataType
 const Absence = require('./Absence')(sequelize, DataTypes);
 const MouvementSolde = require('./MouvementSolde')(sequelize, DataTypes);
 const CongeActionRequest = require('./CongeActionRequest')(sequelize, DataTypes);
+const EmailLog = require('./EmailLog')(sequelize, DataTypes);
 
 // ======================
 // Associations
@@ -129,6 +130,14 @@ CongeActionRequest.belongsTo(Entreprise,   { foreignKey: 'entreprise_id',  as: '
 Conge.hasMany(CongeActionRequest,          { foreignKey: 'conge_id',       as: 'action_requests', onDelete: 'SET NULL' });
 Entreprise.hasMany(CongeActionRequest,     { foreignKey: 'entreprise_id',  as: 'conge_action_requests', onDelete: 'CASCADE' });
 
+// ----------------------
+// EmailLog relations
+// ----------------------
+Entreprise.hasMany(EmailLog, { foreignKey: 'entreprise_id', as: 'email_logs', onDelete: 'SET NULL' });
+Utilisateur.hasMany(EmailLog, { foreignKey: 'utilisateur_id', as: 'email_logs', onDelete: 'SET NULL' });
+EmailLog.belongsTo(Entreprise, { foreignKey: 'entreprise_id', as: 'entreprise' });
+EmailLog.belongsTo(Utilisateur, { foreignKey: 'utilisateur_id', as: 'utilisateur' });
+
 // ======================
 // Export
 // ======================
@@ -149,4 +158,5 @@ module.exports = {
   Absence,
   MouvementSolde,
   CongeActionRequest,
+  EmailLog,
 };
