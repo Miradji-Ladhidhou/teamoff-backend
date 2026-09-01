@@ -247,8 +247,9 @@ async function monthlyAccrual(req, res, next) {
       });
 
       const results = [];
-      let totalApplied = 0;
-      let totalSkipped = 0;
+      let totalApplied  = 0;
+      let totalToApply  = 0;
+      let totalSkipped  = 0;
 
       for (const company of companies) {
         try {
@@ -257,8 +258,9 @@ async function monthlyAccrual(req, res, next) {
             previewLimit: 10,
           });
           results.push({ entreprise_id: company.id, nom: company.nom, ...result });
-          totalApplied += result.applied  || 0;
-          totalSkipped += result.skipped  || 0;
+          totalApplied += result.applied   || 0;
+          totalToApply += result.to_apply  || 0;
+          totalSkipped += result.skipped   || 0;
         } catch (err) {
           logger.error(`[monthlyAccrual-all] Erreur ${company.nom}`, { error: err.message });
           results.push({ entreprise_id: company.id, nom: company.nom, error: err.message });
@@ -272,8 +274,9 @@ async function monthlyAccrual(req, res, next) {
         annee,
         mois,
         apply,
-        total_applied: totalApplied,
-        total_skipped: totalSkipped,
+        total_applied:  totalApplied,
+        total_to_apply: totalToApply,
+        total_skipped:  totalSkipped,
         results,
       });
     }
