@@ -105,7 +105,10 @@ async function getSoldes(req, res, next) {
 
 async function getUsageReport(req, res, next) {
   try {
-    const entrepriseId = req.user.entreprise_id;
+    const entrepriseId = req.user.role === 'super_admin'
+      ? (req.query.entreprise_id || null)
+      : req.user.entreprise_id;
+    if (!entrepriseId) return res.status(400).json({ message: 'entreprise_id requis' });
     const report = await UsageService.getUsageReport(entrepriseId);
     res.json({ report });
   } catch (err) {

@@ -6,7 +6,7 @@
 const express = require('express');
 const logger = require('../utils/logger');
 const router = express.Router();
-const { LeavePolicy } = require('../models');
+const { LeavePolicy, Conge } = require('../models');
 const LeavePolicyService = require('../services/leavePolicyService');
 const authorizeRole = require('../middlewares/authorizeRole');
 
@@ -138,8 +138,14 @@ router.post(
         return res.status(400).json({ error: 'conge_start_date invalide' });
       }
 
+      let entrepriseId = req.user.entreprise_id;
+      if (!entrepriseId && conge_id) {
+        const conge = await Conge.findByPk(conge_id, { attributes: ['entreprise_id'] });
+        entrepriseId = conge?.entreprise_id || null;
+      }
+
       const result = await LeavePolicyService.validateModification({
-        entrepriseId: req.user.entreprise_id,
+        entrepriseId,
         congeStatus: conge_status,
         congeStartDate: parsedDate,
         initiatorRole: req.user.role,
@@ -175,8 +181,14 @@ router.post(
         return res.status(400).json({ error: 'conge_start_date invalide' });
       }
 
+      let entrepriseId = req.user.entreprise_id;
+      if (!entrepriseId && conge_id) {
+        const conge = await Conge.findByPk(conge_id, { attributes: ['entreprise_id'] });
+        entrepriseId = conge?.entreprise_id || null;
+      }
+
       const result = await LeavePolicyService.validateCancellation({
-        entrepriseId: req.user.entreprise_id,
+        entrepriseId,
         congeStatus: conge_status,
         congeStartDate: parsedDate,
         initiatorRole: req.user.role,
