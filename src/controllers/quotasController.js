@@ -4,7 +4,7 @@ const { tryActivateReservations } = require('../services/congesService');
 const logger = require('../utils/logger');
 const UsageService = require('../services/usageService');
 const emailService = require('../services/emailService');
-const { Utilisateur, MouvementSolde, CongeType, Conge } = require('../models');
+const { Utilisateur, MouvementSolde, CongeType, Conge, Entreprise } = require('../models');
 const { Op } = require('sequelize');
 
 async function ensureUserAccess(req, utilisateurId) {
@@ -231,15 +231,55 @@ async function recalculateProrata(req, res, next) {
 async function monthlyAccrual(req, res, next) {
   try {
     const annee = Number(req.body?.annee || req.query?.annee || new Date().getFullYear());
-    const mois = Number(req.body?.mois || req.query?.mois || (new Date().getMonth() + 1));
+    const mois  = Number(req.body?.mois  || req.query?.mois  || (new Date().getMonth() + 1));
     const apply = req.body?.apply === true || req.query?.apply === 'true';
 
     const entrepriseId = req.user.role === 'super_admin'
       ? (req.body?.entreprise_id || req.query?.entreprise_id || null)
       : req.user.entreprise_id;
 
+    // Super-admin sans entreprise_id → traite toutes les entreprises actives
+    if (!entrepriseId && req.user.role === 'super_admin') {
+      const companies = await Entreprise.findAll({
+        attributes: ['id', 'nom'],
+        where: { statut: 'active' },
+        order: [['nom', 'ASC']],
+      });
+
+      const results = [];
+      let totalApplied = 0;
+      let totalSkipped = 0;
+
+      for (const company of companies) {
+        try {
+          const result = await quotasService.ajouterAcquisitionMensuelle(company.id, annee, mois, {
+            apply,
+            previewLimit: 10,
+          });
+          results.push({ entreprise_id: company.id, nom: company.nom, ...result });
+          totalApplied += result.applied  || 0;
+          totalSkipped += result.skipped  || 0;
+        } catch (err) {
+          logger.error(`[monthlyAccrual-all] Erreur ${company.nom}`, { error: err.message });
+          results.push({ entreprise_id: company.id, nom: company.nom, error: err.message });
+        }
+      }
+
+      return res.json({
+        message: apply
+          ? `Crédit ${annee}-${String(mois).padStart(2,'0')} appliqué pour ${companies.length} entreprise(s).`
+          : `Simulation ${annee}-${String(mois).padStart(2,'0')} pour ${companies.length} entreprise(s).`,
+        annee,
+        mois,
+        apply,
+        total_applied: totalApplied,
+        total_skipped: totalSkipped,
+        results,
+      });
+    }
+
     if (!entrepriseId) {
-      return res.status(400).json({ message: 'entreprise_id est requis pour super_admin' });
+      return res.status(400).json({ message: 'entreprise_id requis' });
     }
 
     const result = await quotasService.ajouterAcquisitionMensuelle(entrepriseId, annee, mois, {
