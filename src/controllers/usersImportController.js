@@ -10,6 +10,7 @@ const quotasService = require('../services/quotasService');
 const { auditImport } = require('../services/auditHelper');
 const logger = require('../utils/logger');
 const { decodeCsvBuffer } = require('../utils/csvDecoder');
+const { logMouvement } = require('../services/mouvementSoldeService');
 
 const BCRYPT_COST = 12;
 
@@ -202,7 +203,24 @@ async function importUsersCSV(req, res, next) {
             defaults: { jours_acquis: 0, jours_pris: 0, jours_reserves: 0, jours_reportes: 0, jours_annules: 0 },
             transaction: t,
           });
+          const oldAcquis   = parseFloat(counter.jours_acquis   || 0);
+          const oldReserves = parseFloat(counter.jours_reserves || 0);
           await counter.update({ jours_acquis: nVal + n1Val, jours_reportes: n1Val }, { transaction: t });
+          const newSolde = (nVal + n1Val) - oldReserves;
+          const desc = n1Val > 0
+            ? `Import CSV · N : ${nVal}j, N-1 : ${n1Val}j`
+            : `Import CSV · ${nVal}j`;
+          await logMouvement({
+            entreprise_id: entreprise_id,
+            utilisateur_id: user.id,
+            conge_type_id: congeTypeId,
+            annee: currentYear,
+            type: 'import_csv',
+            quantite: Number(((nVal + n1Val) - oldAcquis).toFixed(2)),
+            solde_apres: Number(newSolde.toFixed(2)),
+            description: desc,
+            transaction: t,
+          });
           balancesSet.push({ email: row.email, annee: currentYear, jours_acquis: nVal + n1Val, jours_reportes: n1Val });
         }
       }

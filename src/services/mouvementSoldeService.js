@@ -12,6 +12,7 @@ const LABELS = {
   annulation:            'Congé annulé',
   activation_reservation:'Réservation N+1 activée',
   ajustement_admin:      'Ajustement administratif',
+  import_csv:            'Import CSV',
 };
 
 /**
