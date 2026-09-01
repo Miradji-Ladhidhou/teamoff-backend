@@ -223,20 +223,31 @@ class EmailService {
       throw error;
     } finally {
       if (logEntry) {
-        const { entreprise_id, utilisateur_id } = extractEmailMeta(data);
+        const { entreprise_id: rawEntrepriseId, utilisateur_id } = extractEmailMeta(data);
         const toStr = Array.isArray(to) ? to.join(', ') : (to || '');
-        getEmailLog().create({
-          type: templateName || null,
-          from_address: fromAddr,
-          to_address: toStr.slice(0, 255),
-          subject: (subject || '').slice(0, 500),
-          statut: logEntry.statut,
-          provider: logEntry.provider || null,
-          message_id: logEntry.message_id || null,
-          error_message: logEntry.error_message || null,
-          entreprise_id,
-          utilisateur_id,
-        }).catch(e => logger.error('EmailLog.create failed', { error: e.message }));
+        // Résolution async de l'entreprise si non disponible dans data
+        (async () => {
+          let entreprise_id = rawEntrepriseId;
+          if (!entreprise_id && utilisateur_id) {
+            try {
+              const { Utilisateur } = require('../models');
+              const u = await Utilisateur.findByPk(utilisateur_id, { attributes: ['entreprise_id'] });
+              entreprise_id = u?.entreprise_id || null;
+            } catch { /* non-bloquant */ }
+          }
+          await getEmailLog().create({
+            type: templateName || null,
+            from_address: fromAddr,
+            to_address: toStr.slice(0, 255),
+            subject: (subject || '').slice(0, 500),
+            statut: logEntry.statut,
+            provider: logEntry.provider || null,
+            message_id: logEntry.message_id || null,
+            error_message: logEntry.error_message || null,
+            entreprise_id,
+            utilisateur_id,
+          });
+        })().catch(e => logger.error('EmailLog.create failed', { error: e.message }));
       }
     }
   }
