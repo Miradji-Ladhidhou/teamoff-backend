@@ -264,6 +264,36 @@ const auditCounter = {
     }),
 };
 
+const auditImport = {
+  usersSuccess: (performedBy, req, metadata = {}) =>
+    auditEntity({ action: auditActions.IMPORT_USERS_SUCCESS, entity: 'import', entityId: null, performedBy, req, metadata }),
+  usersFailed: (performedBy, req, metadata = {}) =>
+    auditEntity({ action: auditActions.IMPORT_USERS_FAILED, entity: 'import', entityId: null, performedBy, req, metadata }),
+  congesSuccess: (performedBy, req, metadata = {}) =>
+    auditEntity({ action: auditActions.IMPORT_CONGES_SUCCESS, entity: 'import', entityId: null, performedBy, req, metadata }),
+  congesFailed: (performedBy, req, metadata = {}) =>
+    auditEntity({ action: auditActions.IMPORT_CONGES_FAILED, entity: 'import', entityId: null, performedBy, req, metadata }),
+
+  inviteExpired: async (email, req) => {
+    const entreprise_id = await resolveEntrepriseIdFromEmail(email);
+    return logAudit({
+      action: auditActions.INVITE_EXPIRED,
+      entity: 'auth',
+      entity_id: null,
+      user_id: null,
+      entreprise_id,
+      ip: req?.ip || null,
+      userAgent: req?.get?.('User-Agent') || null,
+      metadata: { email },
+    });
+  },
+};
+
+const auditExport = {
+  csvGenerated: (type, performedBy, req, metadata = {}) =>
+    auditEntity({ action: auditActions.EXPORT_CSV_GENERATED, entity: 'export', entityId: null, performedBy, req, metadata: { type, ...metadata } }),
+};
+
 module.exports = {
   auditEntity,
   auditEntreprise,
@@ -272,4 +302,6 @@ module.exports = {
   auditFerie,
   auditAuth,
   auditCounter,
+  auditImport,
+  auditExport,
 };

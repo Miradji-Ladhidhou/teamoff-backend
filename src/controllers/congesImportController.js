@@ -6,6 +6,7 @@ const { Utilisateur, Entreprise, CongeType, Conge, CompteurConges, sequelize } =
 const { calcJoursConges } = require('../services/congesService');
 const safeNum = (v) => parseFloat(v || 0);
 const logger = require('../utils/logger');
+const { auditImport } = require('../services/auditHelper');
 
 const ALLOWED_STATUTS = ['en_attente_manager', 'valide_manager', 'refuse_manager', 'valide_final', 'refuse_final'];
 const MAX_ROWS = 500;
@@ -168,6 +169,12 @@ async function importCongesCSV(req, res, next) {
       }
     });
 
+    auditImport.congesSuccess(req.user, req, {
+      entreprise_id,
+      nb_created: created.length,
+      nb_skipped: skipped.length,
+    }).catch(() => {});
+
     res.status(created.length > 0 ? 201 : 200).json({
       message: `${created.length} congé(s) créé(s), ${skipped.length} ignoré(s)`,
       created,
@@ -175,6 +182,7 @@ async function importCongesCSV(req, res, next) {
     });
   } catch (err) {
     logger.error('Import CSV congés', { error: err.message });
+    auditImport.congesFailed(req.user, req, { entreprise_id: req.body?.entreprise_id, error: err.message }).catch(() => {});
     next(err);
   }
 }

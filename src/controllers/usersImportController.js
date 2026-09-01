@@ -7,6 +7,7 @@ const { parse } = require('csv-parse/sync');
 const { Utilisateur, Entreprise, CongeType, CompteurConges, sequelize } = require('../models');
 const emailService = require('../services/emailService');
 const quotasService = require('../services/quotasService');
+const { auditImport } = require('../services/auditHelper');
 const logger = require('../utils/logger');
 
 const BCRYPT_COST = 12;
@@ -204,6 +205,13 @@ async function importUsersCSV(req, res, next) {
         .catch(e => logger.error('Erreur email invitation import CSV', { email: user.email, error: e.message }));
     }
 
+    auditImport.usersSuccess(req.user, req, {
+      entreprise_id,
+      nb_created: created.length,
+      nb_skipped: skipped.length,
+      nb_balances: balancesSet.length,
+    }).catch(() => {});
+
     res.status(created.length > 0 ? 201 : 200).json({
       message: `${created.length} employé(s) créé(s), ${skipped.length} ignoré(s), ${balancesSet.length} solde(s) mis à jour`,
       created,
@@ -212,6 +220,7 @@ async function importUsersCSV(req, res, next) {
     });
   } catch (err) {
     logger.error('Import CSV utilisateurs', { error: err.message });
+    auditImport.usersFailed(req.user, req, { entreprise_id: req.body?.entreprise_id, error: err.message }).catch(() => {});
     next(err);
   }
 }

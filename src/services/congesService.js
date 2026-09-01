@@ -1,7 +1,8 @@
 const { Conge, CompteurConges, CongeType, Utilisateur, Entreprise, sequelize } = require('../models');
 const notificationService = require('./notificationService');
 const emailService = require('./emailService');
-const { auditConge } = require('./auditHelper');
+const { auditConge, auditEntity, logAudit: _logAudit } = require('./auditHelper');
+const auditActions = require('./auditActions');
 const { logMouvement, descriptionConge } = require('./mouvementSoldeService');
 const { ensureCounter } = require('./quotasService');
 const LeavePolicyService = require('./leavePolicyService');
@@ -437,6 +438,16 @@ async function checkOverlapConge({ utilisateur_id, conge_type_id, date_debut, da
       conflictPeriod,
     });
     const behavior = overlapWithSelf ? 'block' : (leaveRules.overlap_behavior || 'block');
+    if (behavior === 'block') {
+      auditEntity({
+        action: auditActions.CONGE_OVERLAP_BLOCKED,
+        entity: 'conge',
+        entityId: null,
+        performedBy: reqUser,
+        req,
+        metadata: { utilisateur_id: utilisateurId, date_debut, date_fin, overlapWithSelf, serviceLimitReached, userService },
+      }).catch(() => {});
+    }
     return {
       action: behavior,
       message: message || 'Capacité du service atteinte pour cette période.',
@@ -708,6 +719,14 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     const isReservation = soldeInsuffisant && isNextYear && canReserveWithoutBalance && !usingCurrentYearBalance;
 
     if (soldeInsuffisant && !isReservation) {
+      auditEntity({
+        action: auditActions.QUOTA_INSUFFICIENT,
+        entity: 'conge',
+        entityId: null,
+        performedBy: reqUser,
+        req,
+        metadata: { utilisateur_id: utilisateurId, date_debut, date_fin, conge_type_id, jours, soldeDisponible },
+      }).catch(() => {});
       if (usingCurrentYearBalance) {
         throw Object.assign(
           new Error(`Solde insuffisant pour débiter sur ${anneeActuelle} : ${soldeDisponible} j disponible(s), ${jours} j demandé(s).`),

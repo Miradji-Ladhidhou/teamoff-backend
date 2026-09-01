@@ -1,5 +1,6 @@
 const ExportService = require('../services/exportService');
 const { Entreprise } = require('../models');
+const { auditExport } = require('../services/auditHelper');
 
 async function resolveEntrepriseId(req) {
   if (req.user?.role === 'super_admin') {
@@ -81,6 +82,7 @@ class ExportController {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
       const data = await ExportService.generateCongesCSV(entrepriseId, req.query, req.user.role);
+      auditExport.csvGenerated('conges', req.user, req, { entreprise_id: entrepriseId }).catch(() => {});
       sendCSV(res, data, 'conges.csv');
     } catch (err) { handleExportError(next, err); }
   }
@@ -105,6 +107,7 @@ class ExportController {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
       const data = await ExportService.generateAbsencesCSV(entrepriseId, req.query, req.user.role);
+      auditExport.csvGenerated('absences', req.user, req, { entreprise_id: entrepriseId }).catch(() => {});
       sendCSV(res, data, 'absences.csv');
     } catch (err) { handleExportError(next, err); }
   }
@@ -153,6 +156,7 @@ class ExportController {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
       const data = await ExportService.generateUtilisateursCSV(entrepriseId);
+      auditExport.csvGenerated('utilisateurs', req.user, req, { entreprise_id: entrepriseId }).catch(() => {});
       sendCSV(res, data, 'utilisateurs.csv');
     } catch (err) { handleExportError(next, err); }
   }

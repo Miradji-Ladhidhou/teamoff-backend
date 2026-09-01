@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const emailService = require('./emailService');
 const systemSettingsService = require('./systemSettingsService');
-const { auditAuth } = require('./auditHelper');
+const { auditAuth, auditImport } = require('./auditHelper');
 require('dotenv').config();
 
 // OWASP recommande cost ≥ 12 pour bcrypt (2024).
@@ -319,7 +319,12 @@ async function setPassword(token, password, confirmPassword) {
   let decoded;
   try {
     decoded = jwt.verify(token, process.env.JWT_SECRET);
-  } catch {
+  } catch (jwtErr) {
+    if (jwtErr.name === 'TokenExpiredError') {
+      // Résoudre l'email depuis le token sans vérifier la signature d'expiration
+      const partial = jwt.decode(token);
+      if (partial?.email) auditImport.inviteExpired(partial.email, null).catch(() => {});
+    }
     throw new Error('Lien invalide ou expiré');
   }
 

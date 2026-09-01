@@ -22,6 +22,8 @@ router.get('/', authorizeRole(['super_admin']), async (req, res, next) => {
       search,
       utilisateur_id,
       entreprise_id,
+      sortBy = 'date',
+      sortOrder = 'DESC',
     } = req.query;
 
     const pageNum = Math.max(1, parseInt(page, 10));
@@ -65,6 +67,16 @@ router.get('/', authorizeRole(['super_admin']), async (req, res, next) => {
       ];
     }
 
+    const dir = sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    const SORT_MAP = {
+      date:       [['created_at', dir]],
+      action:     [['action', dir], ['created_at', 'DESC']],
+      entity:     [['entity', dir], ['created_at', 'DESC']],
+      utilisateur: [[{ model: Utilisateur, as: 'utilisateur' }, 'nom', dir], ['created_at', 'DESC']],
+      entreprise:  [[{ model: Entreprise,  as: 'entreprise'  }, 'nom', dir], ['created_at', 'DESC']],
+    };
+    const order = SORT_MAP[sortBy] || SORT_MAP.date;
+
     const { rows: logs, count: total } = await AuditLog.findAndCountAll({
       where,
       include: [
@@ -76,10 +88,11 @@ router.get('/', authorizeRole(['super_admin']), async (req, res, next) => {
           required: false,
         },
       ],
-      order: [['created_at', 'DESC']],
+      order,
       limit: limitNum,
       offset,
       distinct: true,
+      subQuery: false,
     });
 
     res.json({
