@@ -1,7 +1,7 @@
 const express = require('express');
 const logger = require('../utils/logger');
 const router = express.Router();
-const { Op } = require('sequelize');
+const { Op, literal } = require('sequelize');
 const { AuditLog, Utilisateur, Entreprise } = require('../models');
 const authorizeRole = require('../middlewares/authorizeRole');
 
@@ -73,7 +73,7 @@ router.get('/', authorizeRole(['super_admin']), async (req, res, next) => {
       action:     [['action', dir], ['created_at', 'DESC']],
       entity:     [['entity', dir], ['created_at', 'DESC']],
       utilisateur: [[{ model: Utilisateur, as: 'utilisateur' }, 'nom', dir], ['created_at', 'DESC']],
-      entreprise:  [[{ model: Entreprise,  as: 'entreprise'  }, 'nom', dir], ['created_at', 'DESC']],
+      entreprise:  [literal(`"entreprise"."nom" ${dir} NULLS LAST`), ['created_at', 'DESC']],
     };
     const order = SORT_MAP[sortBy] || SORT_MAP.date;
 

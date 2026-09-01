@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { Op } = require('sequelize');
+const { Op, literal } = require('sequelize');
 const { EmailLog, Utilisateur, Entreprise } = require('../models');
 const authorizeRole = require('../middlewares/authorizeRole');
 
@@ -45,7 +45,8 @@ router.get('/', authorizeRole(['super_admin']), async (req, res, next) => {
       type:       [['type', dir], ['created_at', 'DESC']],
       statut:     [['statut', dir], ['created_at', 'DESC']],
       to:         [['to_address', dir], ['created_at', 'DESC']],
-      entreprise: [[{ model: Entreprise, as: 'entreprise' }, 'nom', dir], ['created_at', 'DESC']],
+      // literal évite les ambiguïtés Sequelize 6 avec subQuery:false + association order
+      entreprise: [literal(`"entreprise"."nom" ${dir} NULLS LAST`), ['created_at', 'DESC']],
     };
     const order = SORT_MAP[sortBy] || SORT_MAP.date;
 
