@@ -1,5 +1,5 @@
 // src/services/auditHelper.js
-const { AuditLog, Utilisateur } = require('../models');
+const { AuditLog, Utilisateur, Conge } = require('../models');
 const auditActions = require('./auditActions');
 const logger = require('../utils/logger');
 
@@ -49,16 +49,39 @@ async function logAudit({ action, entity, entity_id, user_id, entreprise_id, ip,
 }
 
 /**
+ * Résout l'entreprise_id depuis l'entité cible quand le performedBy est super_admin (entreprise_id = null).
+ */
+async function resolveEntrepriseIdFromEntity(entity, entityId) {
+  if (!entityId) return null;
+  try {
+    if (entity === 'user' || entity === 'utilisateur') {
+      const u = await Utilisateur.findByPk(entityId, { attributes: ['entreprise_id'] });
+      return u?.entreprise_id || null;
+    }
+    if (entity === 'conge') {
+      const c = await Conge.findByPk(entityId, { attributes: ['entreprise_id'] });
+      return c?.entreprise_id || null;
+    }
+  } catch { /* non-bloquant */ }
+  return null;
+}
+
+/**
  * Helper générique pour auditer une action
  */
 async function auditEntity({ action, entity, entityId, performedBy, req, metadata = {} }) {
   try {
-    const entrepriseId = resolveEntrepriseId({
+    let entrepriseId = resolveEntrepriseId({
       performedBy,
       entity,
       entityId,
       metadata,
     });
+
+    // Fallback : super_admin sans entreprise_id → résoudre depuis l'entité cible
+    if (!entrepriseId && entityId) {
+      entrepriseId = await resolveEntrepriseIdFromEntity(entity, entityId);
+    }
 
     await logAudit({
       action,
