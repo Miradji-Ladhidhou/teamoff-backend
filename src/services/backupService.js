@@ -19,10 +19,11 @@ function buildBackupFilename() {
 function getPgDumpCandidates() {
   const candidates = [
     process.env.PG_DUMP_BIN,
+    '/usr/bin/pg_dump',           // Linux standard (Render, Ubuntu)
+    '/usr/local/bin/pg_dump',
     '/Applications/Postgres.app/Contents/Versions/latest/bin/pg_dump',
     '/Applications/Postgres.app/Contents/Versions/17/bin/pg_dump',
     '/opt/homebrew/bin/pg_dump',
-    '/usr/local/bin/pg_dump',
     'pg_dump',
   ].filter(Boolean);
 
@@ -101,6 +102,13 @@ async function runDatabaseBackup() {
     }
 
     if (lastError) {
+      const notFound = candidates.length === 0 ||
+        (lastError.code === 'ENOENT' || lastError.code === 'EACCES');
+      if (notFound) {
+        const err = new Error('pg_dump introuvable sur le serveur. Définissez la variable d\'environnement PG_DUMP_BIN avec le chemin complet vers pg_dump.');
+        err.statusCode = 500;
+        throw err;
+      }
       throw lastError;
     }
 
