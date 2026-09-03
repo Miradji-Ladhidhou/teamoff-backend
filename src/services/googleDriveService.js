@@ -5,22 +5,39 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-function getDriveClient() {
-  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+async function getDriveClient() {
+  const clientId     = process.env.GOOGLE_OAUTH_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
 
-  if (!clientId || !clientSecret || !refreshToken) {
-    const err = new Error(
-      'Variables Google OAuth manquantes : GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_REFRESH_TOKEN'
-    );
-    err.statusCode = 500;
+  if (!clientId || !clientSecret) {
+    const err = new Error('GOOGLE_OAUTH_CLIENT_ID et GOOGLE_OAUTH_CLIENT_SECRET sont requis.');
+    err.statusCode = 503;
     throw err;
   }
 
-  const auth = new google.auth.OAuth2(clientId, clientSecret);
-  auth.setCredentials({ refresh_token: refreshToken });
+  // 1. Token stocké en DB via le flux OAuth in-app (prioritaire)
+  let refreshToken = null;
+  try {
+    const { SystemSetting } = require('../models');
+    const { decryptTotpSecret } = require('../utils/totpCrypto');
+    const setting = await SystemSetting.findOne({ where: { key: 'google_drive_oauth' } });
+    if (setting?.data?.refresh_token_enc) {
+      refreshToken = decryptTotpSecret(setting.data.refresh_token_enc);
+    }
+  } catch { /* fallback env */ }
 
+  // 2. Fallback : variable d'environnement
+  if (!refreshToken) refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN || null;
+
+  if (!refreshToken) {
+    const err = new Error('Google Drive non configuré. Connectez votre compte depuis Paramètres → Base de données.');
+    err.statusCode = 503;
+    throw err;
+  }
+
+  const callbackUrl = `${(process.env.BACKEND_URL || 'http://localhost:3000').replace(/\/$/, '')}/api/google-drive/callback`;
+  const auth = new google.auth.OAuth2(clientId, clientSecret, callbackUrl);
+  auth.setCredentials({ refresh_token: refreshToken });
   return google.drive({ version: 'v3', auth });
 }
 
@@ -32,7 +49,7 @@ async function uploadBackupToDrive(filePath, filename) {
     throw err;
   }
 
-  const drive = getDriveClient();
+  const drive = await getDriveClient();
 
   const fileMetadata = {
     name: filename,
@@ -63,7 +80,7 @@ async function listDriveBackups(maxResults = 20) {
   const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
   if (!folderId) return [];
 
-  const drive = getDriveClient();
+  const drive = await getDriveClient();
 
   const response = await drive.files.list({
     q: `'${folderId}' in parents and trashed = false`,
@@ -76,7 +93,7 @@ async function listDriveBackups(maxResults = 20) {
 }
 
 async function downloadFromDrive(fileId, filename) {
-  const drive = getDriveClient();
+  const drive = await getDriveClient();
 
   const destPath = path.join(os.tmpdir(), filename || `restore_${Date.now()}.sql`);
   const dest = fs.createWriteStream(destPath);

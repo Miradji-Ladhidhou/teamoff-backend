@@ -31,6 +31,7 @@ const exportRoutes = require('./exports');
 const auditRoutes = require('./audit');
 const absencesRoutes = require('./absences');
 const emailLogsRoutes = require('./emailLogs');
+const googleDriveAuthRoutes = require('./googleDriveAuth');
 
 // ------------------------------
 // Appliquer les métriques à toutes les routes
@@ -243,5 +244,10 @@ router.use('/absences', authJwt, absencesRoutes);
 // Leave Policies routes (auth requis - admin_entreprise, super_admin pour modification)
 // ------------------------------
 router.use('/leave-policies', authJwt, leavePoliciesRoutes);
+
+// ------------------------------
+// Google Drive OAuth (callback sans authJwt, géré en interne)
+// ------------------------------
+router.use('/google-drive', googleDriveAuthRoutes);
 
 module.exports = router;
