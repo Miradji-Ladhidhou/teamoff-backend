@@ -44,13 +44,19 @@ async function uploadBackupToDrive(filePath, filename) {
     body: fs.createReadStream(filePath),
   };
 
-  const response = await drive.files.create({
-    resource: fileMetadata,
-    media,
-    fields: 'id, name, size, webViewLink, createdTime',
-  });
-
-  return response.data;
+  try {
+    const response = await drive.files.create({
+      resource: fileMetadata,
+      media,
+      fields: 'id, name, size, webViewLink, createdTime',
+    });
+    return response.data;
+  } catch (e) {
+    const msg = e.message || 'Erreur Google Drive inconnue';
+    const gErr = new Error(`Google Drive : ${msg}`);
+    gErr.statusCode = 500;
+    throw gErr;
+  }
 }
 
 async function listDriveBackups(maxResults = 20) {
