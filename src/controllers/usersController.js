@@ -465,10 +465,6 @@ async function deleteUser(req, res, next) {
     const utilisateur = await Utilisateur.findByPk(req.params.id);
     if (!utilisateur) return res.status(404).json({ message: 'Utilisateur introuvable' });
 
-    if (req.user.role === 'admin_entreprise' && utilisateur.entreprise_id !== req.user.entreprise_id) {
-      return res.status(403).json({ message: 'Vous ne pouvez supprimer que les utilisateurs de votre entreprise' });
-    }
-
     if (utilisateur.email === PROTECTED_SUPER_ADMIN_EMAIL) {
       return res.status(403).json({ message: 'Ce compte administrateur est protégé et ne peut pas être supprimé' });
     }

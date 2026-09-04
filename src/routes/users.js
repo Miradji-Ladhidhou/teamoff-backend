@@ -68,7 +68,7 @@ router.post(
 
 router.delete(
   '/:id',
-  authorizeRole(['super_admin', 'admin_entreprise']),
+  authorizeRole(['super_admin']),
   validateUUIDParam('id'),
   usersController.deleteUser
 );
