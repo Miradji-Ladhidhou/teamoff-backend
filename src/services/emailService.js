@@ -126,6 +126,17 @@ class EmailService {
     try {
       if (!data.signature) data.signature = 'TeamOff SaaS';
 
+      // Résoudre entreprise_nom depuis l'entreprise_id si absent
+      if (!data.entreprise_nom) {
+        const eid = data.entreprise_id || data.user?.entreprise_id || data.employe?.entreprise_id;
+        if (eid) {
+          try {
+            const ent = await Entreprise.findByPk(eid, { attributes: ['nom'] });
+            if (ent?.nom) data.entreprise_nom = ent.nom;
+          } catch { /* non-bloquant */ }
+        }
+      }
+
       if (process.env.MAIL_SIMULATE === 'true') {
         emailLog('Email simule:', { to, subject, data });
         logEntry = { statut: 'simulated', provider: 'simulate', message_id: null };
@@ -266,6 +277,9 @@ class EmailService {
       year: new Date().getFullYear(),
       app_name: process.env.EMAIL_NAME || 'TeamOff',
       frontend_url: getFrontendUrl(),
+      entreprise_footer: data.entreprise_nom
+        ? `<br/><span style="font-size:11px;color:#94a3b8;">Pour ${escapeHtml(data.entreprise_nom)}</span>`
+        : '',
     };
 
     Object.keys(globals).forEach(key => {
