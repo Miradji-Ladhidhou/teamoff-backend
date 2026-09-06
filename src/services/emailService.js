@@ -124,8 +124,6 @@ class EmailService {
     const fromAddr = process.env.EMAIL_FROM || process.env.MAIL_USER || 'noreply@teamoff.app';
     let logEntry = null;
     try {
-      if (!data.signature) data.signature = 'TeamOff SaaS';
-
       // Résoudre entreprise_nom depuis l'entreprise_id si absent
       if (!data.entreprise_nom) {
         const eid = data.entreprise_id || data.user?.entreprise_id || data.employe?.entreprise_id;
@@ -136,6 +134,9 @@ class EmailService {
           } catch { /* non-bloquant */ }
         }
       }
+
+      // Signature = nom de l'entreprise destinataire (TeamOff SaaS en fallback pour emails système)
+      if (!data.signature) data.signature = data.entreprise_nom || 'TeamOff SaaS';
 
       if (process.env.MAIL_SIMULATE === 'true') {
         emailLog('Email simule:', { to, subject, data });
@@ -278,7 +279,7 @@ class EmailService {
       app_name: process.env.EMAIL_NAME || 'TeamOff',
       frontend_url: getFrontendUrl(),
       entreprise_footer: data.entreprise_nom
-        ? `<br/><span style="font-size:11px;color:#94a3b8;">Pour ${escapeHtml(data.entreprise_nom)}</span>`
+        ? `<br/><span style="font-size:11px;color:#94a3b8;">via ${escapeHtml(process.env.EMAIL_NAME || 'TeamOff')}</span>`
         : '',
     };
 
