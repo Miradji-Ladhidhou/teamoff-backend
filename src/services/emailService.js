@@ -124,7 +124,7 @@ class EmailService {
     const fromAddr = process.env.EMAIL_FROM || process.env.MAIL_USER || 'noreply@teamoff.app';
     let logEntry = null;
     try {
-      // Résoudre entreprise_nom depuis l'entreprise_id si absent
+      // 1. Résoudre entreprise_nom depuis l'entreprise_id si absent
       if (!data.entreprise_nom) {
         const eid = data.entreprise_id || data.user?.entreprise_id || data.employe?.entreprise_id;
         if (eid) {
@@ -135,7 +135,24 @@ class EmailService {
         }
       }
 
-      // Signature = nom de l'entreprise destinataire (TeamOff SaaS en fallback pour emails système)
+      // 2. Dernier recours : résoudre depuis l'email du destinataire
+      if (!data.entreprise_nom) {
+        const recipientEmail = Array.isArray(to) ? to[0] : to;
+        if (recipientEmail) {
+          try {
+            const u = await Utilisateur.findOne({
+              where: { email: recipientEmail },
+              attributes: ['entreprise_id'],
+            });
+            if (u?.entreprise_id) {
+              const ent = await Entreprise.findByPk(u.entreprise_id, { attributes: ['nom'] });
+              if (ent?.nom) data.entreprise_nom = ent.nom;
+            }
+          } catch { /* non-bloquant */ }
+        }
+      }
+
+      // Signature = nom de l'entreprise destinataire sans exception
       if (!data.signature) data.signature = data.entreprise_nom || 'TeamOff SaaS';
 
       if (process.env.MAIL_SIMULATE === 'true') {
