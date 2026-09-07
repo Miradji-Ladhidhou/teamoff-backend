@@ -378,12 +378,27 @@ async function getHistoriqueEntreprise(req, res, next) {
   }
 }
 
+async function getAllCounters(req, res, next) {
+  try {
+    const entrepriseId = req.user.role === 'super_admin'
+      ? req.query.entreprise_id || req.user.entreprise_id
+      : req.user.entreprise_id;
+    if (!entrepriseId) return res.status(400).json({ message: 'entreprise_id requis' });
+    const annee = Number(req.query.annee || new Date().getFullYear());
+    const items = await quotasService.listCountersForEntreprise(entrepriseId, annee);
+    res.json({ items, annee });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   initQuota,
   getSolde,
   getSoldes,
   getUsageReport,
   getUserCounters,
+  getAllCounters,
   upsertUserCounter,
   removeUserCounter,
   recalculateProrata,

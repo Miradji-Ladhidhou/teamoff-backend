@@ -653,7 +653,45 @@ module.exports = {
   getSoldeUtilisateur,
   getSoldesUtilisateur,
   listCountersForUser,
+  listCountersForEntreprise,
   createOrUpdateCounter,
   deleteCounter,
   recalculateCountersProrata,
 };
+
+async function listCountersForEntreprise(entrepriseId, annee) {
+  const compteurs = await CompteurConges.findAll({
+    where: { entreprise_id: entrepriseId, annee },
+    include: [
+      { model: require('../models').CongeType, as: 'conge_type' },
+      { model: Utilisateur, as: 'utilisateur', attributes: ['id', 'prenom', 'nom', 'service', 'role'] },
+    ],
+    order: [
+      [{ model: Utilisateur, as: 'utilisateur' }, 'nom', 'ASC'],
+      [{ model: require('../models').CongeType, as: 'conge_type' }, 'libelle', 'ASC'],
+    ],
+  });
+
+  return compteurs.map((c) => ({
+    id: c.id,
+    utilisateur_id: c.utilisateur_id,
+    utilisateur: c.utilisateur ? {
+      id: c.utilisateur.id,
+      prenom: c.utilisateur.prenom,
+      nom: c.utilisateur.nom,
+      service: c.utilisateur.service,
+      role: c.utilisateur.role,
+    } : null,
+    entreprise_id: c.entreprise_id,
+    annee: c.annee,
+    conge_type_id: c.conge_type_id,
+    conge_type: c.conge_type ? { id: c.conge_type.id, code: c.conge_type.code, libelle: c.conge_type.libelle } : null,
+    jours_acquis: toNumber(c.jours_acquis, 0),
+    jours_pris: toNumber(c.jours_pris, 0),
+    jours_reportes: toNumber(c.jours_reportes, 0),
+    jours_reportes_consommes: toNumber(c.jours_reportes_consommes, 0),
+    ...computeN1Display(c),
+    jours_reserves: toNumber(c.jours_reserves, 0),
+    solde_disponible: toNumber(c.getSoldeDisponible(), 0),
+  }));
+}

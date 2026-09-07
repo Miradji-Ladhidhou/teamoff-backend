@@ -7,6 +7,7 @@ const {
 	getSoldes,
 	getUsageReport,
 	getUserCounters,
+	getAllCounters,
 	upsertUserCounter,
 	removeUserCounter,
 	recalculateProrata,
@@ -22,6 +23,7 @@ router.post('/init', authorizeRole(['admin_entreprise', 'super_admin']), initQuo
 router.get('/solde/:utilisateur_id/:conge_type_id', authorizeRole(['employe', 'apprenti', 'manager', 'admin_entreprise', 'super_admin']), validateUUIDParam('utilisateur_id'), validateUUIDParam('conge_type_id'), getSolde);
 router.get('/soldes/:utilisateur_id', authorizeRole(['employe', 'apprenti', 'manager', 'admin_entreprise', 'super_admin']), validateUUIDParam('utilisateur_id'), getSoldes);
 router.get('/usage', authorizeRole(['admin_entreprise', 'super_admin']), getUsageReport);
+router.get('/counters-all', authorizeRole(['admin_entreprise', 'super_admin']), getAllCounters);
 router.get('/counters/:utilisateur_id', authorizeRole(['admin_entreprise', 'super_admin']), validateUUIDParam('utilisateur_id'), getUserCounters);
 router.post('/counters/:utilisateur_id', authorizeRole(['admin_entreprise', 'super_admin']), validateUUIDParam('utilisateur_id'), validate(upsertCounterRules), upsertUserCounter);
 router.delete('/counters/:counter_id', authorizeRole(['admin_entreprise', 'super_admin']), validateUUIDParam('counter_id'), removeUserCounter);
