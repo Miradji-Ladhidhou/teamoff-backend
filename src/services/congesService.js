@@ -3196,5 +3196,6 @@ module.exports = {
   activerReservation,
   tryActivateReservations,
   calcJoursConges,
-  calculateDaysPreview
+  calculateDaysPreview,
+  consumeN1First,
 };

@@ -3,7 +3,7 @@
 const { parse } = require('csv-parse/sync');
 const { Op } = require('sequelize');
 const { Utilisateur, Entreprise, CongeType, Conge, CompteurConges, sequelize } = require('../models');
-const { calcJoursConges } = require('../services/congesService');
+const { calcJoursConges, consumeN1First } = require('../services/congesService');
 const safeNum = (v) => parseFloat(v || 0);
 const logger = require('../utils/logger');
 const { auditImport } = require('../services/auditHelper');
@@ -152,6 +152,7 @@ async function importCongesCSV(req, res, next) {
         });
         if (compteur) {
           if (row.statut === 'valide_final') {
+            consumeN1First(compteur, jours);
             compteur.jours_acquis = Math.max(0, safeNum(compteur.jours_acquis) - jours);
             compteur.jours_pris   = safeNum(compteur.jours_pris) + jours;
           } else if (['en_attente_manager', 'valide_manager'].includes(row.statut)) {
