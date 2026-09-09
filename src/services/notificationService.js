@@ -74,10 +74,14 @@ function normalizeSubject(subject = '') {
 
 function replaceTemplateVariables(template, data = {}) {
   let rendered = String(template || '');
+  const entrepriseNom = data.entreprise_nom || null;
   const variables = {
     app_name: APP_NAME,
     frontend_url: APP_FRONTEND_URL,
-    signature: DEFAULT_SIGNATURE,
+    signature: entrepriseNom || DEFAULT_SIGNATURE,
+    entreprise_footer: entrepriseNom
+      ? `<br/><span style="font-size:11px;color:#94a3b8;">via ${APP_NAME}</span>`
+      : '',
     year: new Date().getFullYear(),
     ...data,
   };
@@ -95,7 +99,7 @@ async function renderEmailTemplate(templateName, data = {}) {
   return replaceTemplateVariables(template, data);
 }
 
-function wrapProfessionalEmail({ subject, html }) {
+function wrapProfessionalEmail({ subject, html, entreprise_nom }) {
   const safeSubject = String(subject || `${APP_NAME} - Notification`);
   const content = String(html || '').trim() || '<p>Une mise a jour est disponible.</p>';
 
@@ -123,7 +127,8 @@ function wrapProfessionalEmail({ subject, html }) {
                     ${content}
                     <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0 16px;" />
                     <p style="margin:0 0 4px;font-size:14px;">Cordialement,</p>
-                    <p style="margin:0;font-size:14px;font-weight:600;">${DEFAULT_SIGNATURE}</p>
+                    <p style="margin:0;font-size:14px;font-weight:600;">${entreprise_nom || DEFAULT_SIGNATURE}</p>
+                    ${entreprise_nom ? `<p style="margin:2px 0 0;font-size:11px;color:#94a3b8;">via ${APP_NAME}</p>` : ''}
                   </td>
                 </tr>
                 <tr>
@@ -157,10 +162,11 @@ async function sendEmail({ to, subject, html, templateName, data }) {
   const normalizedSubject = normalizeSubject(subject);
   let professionalHtml;
 
+  const entreprise_nom = data?.entreprise_nom || null;
   if (templateName) {
     professionalHtml = await renderEmailTemplate(templateName, data || {});
   } else {
-    professionalHtml = wrapProfessionalEmail({ subject: normalizedSubject, html });
+    professionalHtml = wrapProfessionalEmail({ subject: normalizedSubject, html, entreprise_nom });
   }
 
   const text = htmlToText(professionalHtml);
