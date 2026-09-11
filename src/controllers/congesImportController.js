@@ -4,6 +4,7 @@ const { parse } = require('csv-parse/sync');
 const { Op } = require('sequelize');
 const { Utilisateur, Entreprise, CongeType, Conge, CompteurConges, sequelize } = require('../models');
 const { calcJoursConges, consumeN1First } = require('../services/congesService');
+const { logMouvement, descriptionConge } = require('../services/mouvementSoldeService');
 const safeNum = (v) => parseFloat(v || 0);
 const logger = require('../utils/logger');
 const { auditImport } = require('../services/auditHelper');
@@ -155,11 +156,38 @@ async function importCongesCSV(req, res, next) {
             consumeN1First(compteur, jours);
             compteur.jours_acquis = Math.max(0, safeNum(compteur.jours_acquis) - jours);
             compteur.jours_pris   = safeNum(compteur.jours_pris) + jours;
+            await compteur.save({ transaction: t });
+            await logMouvement({
+              entreprise_id,
+              utilisateur_id: user.id,
+              conge_type_id:  congeType.id,
+              annee,
+              type: 'import_csv',
+              quantite: -jours,
+              solde_apres: safeNum(compteur.jours_acquis) - safeNum(compteur.jours_reserves),
+              source_id: conge.id,
+              description: descriptionConge('Congé importé (CSV)', row.date_debut, row.date_fin),
+              transaction: t,
+            });
           } else if (['en_attente_manager', 'valide_manager'].includes(row.statut)) {
             compteur.jours_reserves = safeNum(compteur.jours_reserves) + jours;
+            await compteur.save({ transaction: t });
+            await logMouvement({
+              entreprise_id,
+              utilisateur_id: user.id,
+              conge_type_id:  congeType.id,
+              annee,
+              type: 'reservation',
+              quantite: -jours,
+              solde_apres: safeNum(compteur.jours_acquis) - safeNum(compteur.jours_reserves),
+              source_id: conge.id,
+              description: descriptionConge('Congé importé en attente (CSV)', row.date_debut, row.date_fin),
+              transaction: t,
+            });
+          } else {
+            // refuse_final / refuse_manager → solde inchangé, pas de mouvement
+            await compteur.save({ transaction: t });
           }
-          // refuse_final / refuse_manager → solde inchangé
-          await compteur.save({ transaction: t });
         }
 
         created.push({
@@ -314,6 +342,11 @@ async function importReservationsCSV(req, res, next) {
         const finDemi   = row.fin_demi_journee   || 'apres_midi';
         const jours = await calcJoursConges(entreprise_id, row.date_debut, row.date_fin, debutDemi, finDemi, t);
 
+        if (!Number.isFinite(jours) || jours <= 0) {
+          skipped.push({ line: row.line, email: row.email, raison: 'période sans jour ouvrable (weekends/fériés)' });
+          continue;
+        }
+
         const conge = await Conge.create({
           entreprise_id,
           utilisateur_id:     user.id,
@@ -335,6 +368,18 @@ async function importReservationsCSV(req, res, next) {
         if (compteur) {
           compteur.jours_reserves = safeNum(compteur.jours_reserves) + jours;
           await compteur.save({ transaction: t });
+          await logMouvement({
+            entreprise_id,
+            utilisateur_id: user.id,
+            conge_type_id:  congeType.id,
+            annee,
+            type: 'reservation',
+            quantite: -jours,
+            solde_apres: safeNum(compteur.jours_acquis) - safeNum(compteur.jours_reserves),
+            source_id: conge.id,
+            description: descriptionConge('Réservation importée (CSV)', row.date_debut, row.date_fin),
+            transaction: t,
+          });
         }
 
         created.push({
