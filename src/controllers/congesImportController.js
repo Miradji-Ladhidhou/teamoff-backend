@@ -231,4 +231,177 @@ async function getCongesImportTemplate(req, res, next) {
   }
 }
 
-module.exports = { importCongesCSV, getCongesImportTemplate };
+async function importReservationsCSV(req, res, next) {
+  try {
+    if (!req.file?.buffer) return res.status(400).json({ message: 'Fichier CSV manquant' });
+
+    const entreprise_id = String(req.body.entreprise_id || '').trim();
+    if (!entreprise_id) return res.status(400).json({ message: 'entreprise_id requis' });
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entreprise_id))
+      return res.status(400).json({ message: 'entreprise_id invalide (UUID attendu)' });
+
+    const entreprise = await Entreprise.findByPk(entreprise_id);
+    if (!entreprise) return res.status(404).json({ message: 'Entreprise introuvable' });
+
+    let rows;
+    try {
+      const { content, fromLine, delimiter } = parseContent(req.file.buffer);
+      rows = parse(content, { columns: true, skip_empty_lines: true, trim: true, delimiter, from_line: fromLine });
+    } catch {
+      return res.status(400).json({ message: 'Fichier CSV invalide ou mal formaté' });
+    }
+
+    if (rows.length === 0) return res.status(400).json({ message: 'Le fichier est vide' });
+    if (rows.length > MAX_ROWS) return res.status(400).json({ message: `Maximum ${MAX_ROWS} lignes par import` });
+
+    // Normalisation sans colonne statut (forcé à 'reserve')
+    const normalized = rows.map((raw, i) => {
+      const email    = String(raw.email     || '').trim().toLowerCase();
+      const type_conge = String(raw.type_conge || '').trim();
+      const date_debut = String(raw.date_debut || '').trim();
+      const date_fin   = String(raw.date_fin   || '').trim();
+      const commentaire = String(raw.commentaire || '').trim() || null;
+      const debut_demi_journee = normalizeDemiJournee(raw.debut_demi_journee, 'debut');
+      const fin_demi_journee   = normalizeDemiJournee(raw.fin_demi_journee,   'fin');
+
+      const errors = [];
+      if (!email || !/\S+@\S+\.\S+/.test(email)) errors.push('email invalide');
+      if (!type_conge) errors.push('type_conge requis');
+      if (!date_debut || !/^\d{4}-\d{2}-\d{2}$/.test(date_debut)) errors.push('date_debut invalide (format YYYY-MM-DD)');
+      if (!date_fin   || !/^\d{4}-\d{2}-\d{2}$/.test(date_fin))   errors.push('date_fin invalide (format YYYY-MM-DD)');
+      if (date_debut && date_fin && /^\d{4}-\d{2}-\d{2}$/.test(date_debut) && /^\d{4}-\d{2}-\d{2}$/.test(date_fin) && date_fin < date_debut)
+        errors.push('date_fin antérieure à date_debut');
+      if (debut_demi_journee === null) errors.push('debut_demi_journee invalide — valeurs acceptées : vide (journée entière), après-midi');
+      if (fin_demi_journee   === null) errors.push('fin_demi_journee invalide — valeurs acceptées : vide (journée entière), matin');
+
+      return { line: i + 2, email, type_conge, date_debut, date_fin, debut_demi_journee: debut_demi_journee || '', fin_demi_journee: fin_demi_journee || '', commentaire, errors };
+    });
+
+    const formatErrors = normalized.filter(r => r.errors.length > 0).map(r => ({ line: r.line, errors: r.errors }));
+    if (formatErrors.length > 0) return res.status(422).json({ message: 'Erreurs de validation', errors: formatErrors });
+
+    const utilisateurs = await Utilisateur.findAll({ where: { entreprise_id }, attributes: ['id', 'email'] });
+    const userByEmail  = new Map(utilisateurs.map(u => [u.email.toLowerCase(), u]));
+    const congeTypes   = await CongeType.findAll({ where: { entreprise_id } });
+    const typeByLibelle = new Map(congeTypes.map(t => [t.libelle.toLowerCase(), t]));
+
+    const refErrors = [
+      ...normalized.filter(r => !userByEmail.has(r.email))
+        .map(r => ({ line: r.line, errors: [`email inconnu dans cette entreprise : "${r.email}"`] })),
+      ...normalized.filter(r => r.type_conge && !typeByLibelle.has(r.type_conge.toLowerCase()))
+        .map(r => ({ line: r.line, errors: [`type_conge inconnu pour cette entreprise : "${r.type_conge}"`] })),
+    ].sort((a, b) => a.line - b.line);
+    if (refErrors.length > 0) return res.status(422).json({ message: 'Données inconnues', errors: refErrors });
+
+    const created = [];
+    const skipped = [];
+
+    await sequelize.transaction(async (t) => {
+      for (const row of normalized) {
+        const user      = userByEmail.get(row.email);
+        const congeType = typeByLibelle.get(row.type_conge.toLowerCase());
+
+        const existing = await Conge.findOne({
+          where: { entreprise_id, utilisateur_id: user.id, conge_type_id: congeType.id, date_debut: row.date_debut, date_fin: row.date_fin },
+          transaction: t,
+        });
+        if (existing) {
+          skipped.push({ line: row.line, email: row.email, raison: 'congé identique déjà existant' });
+          continue;
+        }
+
+        const debutDemi = row.debut_demi_journee || 'matin';
+        const finDemi   = row.fin_demi_journee   || 'apres_midi';
+        const jours = await calcJoursConges(entreprise_id, row.date_debut, row.date_fin, debutDemi, finDemi, t);
+
+        const conge = await Conge.create({
+          entreprise_id,
+          utilisateur_id:     user.id,
+          conge_type_id:      congeType.id,
+          date_debut:         row.date_debut,
+          date_fin:           row.date_fin,
+          debut_demi_journee: row.debut_demi_journee || 'matin',
+          fin_demi_journee:   row.fin_demi_journee   || 'apres_midi',
+          statut:             'reserve',
+          commentaire_employe: row.commentaire,
+          jours_calcules:     jours,
+        }, { transaction: t });
+
+        const annee = new Date(row.date_debut).getFullYear();
+        const compteur = await CompteurConges.findOne({
+          where: { entreprise_id, utilisateur_id: user.id, conge_type_id: congeType.id, annee },
+          transaction: t,
+        });
+        if (compteur) {
+          compteur.jours_reserves = safeNum(compteur.jours_reserves) + jours;
+          await compteur.save({ transaction: t });
+        }
+
+        created.push({
+          id: conge.id, email: row.email, type_conge: row.type_conge,
+          date_debut: row.date_debut, date_fin: row.date_fin,
+          jours_calcules: jours, statut: 'reserve',
+        });
+      }
+    });
+
+    auditImport.reservationsSuccess(req.user, req, {
+      entreprise_id,
+      nb_created: created.length,
+      nb_skipped: skipped.length,
+    }).catch(() => {});
+
+    res.status(created.length > 0 ? 201 : 200).json({
+      message: `${created.length} réservation(s) créée(s), ${skipped.length} ignorée(s)`,
+      created,
+      skipped,
+    });
+  } catch (err) {
+    logger.error('Import CSV réservations', { error: err.message });
+    auditImport.reservationsFailed(req.user, req, { entreprise_id: req.body?.entreprise_id, error: err.message }).catch(() => {});
+    next(err);
+  }
+}
+
+async function getReservationsImportTemplate(req, res, next) {
+  try {
+    const entreprise_id = String(req.query.entreprise_id || '').trim();
+    if (!entreprise_id) return res.status(400).json({ message: 'entreprise_id requis' });
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entreprise_id))
+      return res.status(400).json({ message: 'entreprise_id invalide (UUID attendu)' });
+
+    const [congeTypes, utilisateurs] = await Promise.all([
+      CongeType.findAll({ where: { entreprise_id }, order: [['libelle', 'ASC']] }),
+      Utilisateur.findAll({
+        where: { entreprise_id, statut: { [Op.ne]: 'inactif' } },
+        attributes: ['email', 'nom', 'prenom'],
+        order: [['nom', 'ASC'], ['prenom', 'ASC']],
+      }),
+    ]);
+
+    const csvField = (v) => (v.includes(',') || v.includes(';') || v.includes('"') || v.includes('\n'))
+      ? `"${v.replace(/"/g, '""')}"` : v;
+
+    const lines = ['email,type_conge,date_debut,debut_demi_journee,date_fin,fin_demi_journee,commentaire'];
+    const defaultType = congeTypes.length > 0 ? congeTypes[0].libelle : 'Congés payés';
+
+    if (utilisateurs.length === 0) {
+      lines.push(`marie.dupont@exemple.fr,${csvField(defaultType)},AAAA-MM-JJ,,AAAA-MM-JJ,,`);
+      lines.push(`paul.martin@exemple.fr,${csvField(defaultType)},AAAA-MM-JJ,après-midi,AAAA-MM-JJ,matin,`);
+    } else {
+      for (const u of utilisateurs) {
+        lines.push(`${csvField(u.email)},${csvField(defaultType)},AAAA-MM-JJ,,AAAA-MM-JJ,,`);
+      }
+    }
+
+    const csv = ['sep=,', ...lines].join('\r\n') + '\r\n';
+    res.set('Content-Type', 'text/csv; charset=utf-8');
+    res.set('Content-Disposition', 'attachment; filename="modele_import_reservations.csv"');
+    res.send(Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(csv, 'utf8')]));
+  } catch (err) {
+    logger.error('Template CSV réservations', { error: err.message });
+    next(err);
+  }
+}
+
+module.exports = { importCongesCSV, getCongesImportTemplate, importReservationsCSV, getReservationsImportTemplate };

@@ -296,6 +296,10 @@ const auditImport = {
     auditEntity({ action: auditActions.IMPORT_CONGES_SUCCESS, entity: 'import', entityId: null, performedBy, req, metadata }),
   congesFailed: (performedBy, req, metadata = {}) =>
     auditEntity({ action: auditActions.IMPORT_CONGES_FAILED, entity: 'import', entityId: null, performedBy, req, metadata }),
+  reservationsSuccess: (performedBy, req, metadata = {}) =>
+    auditEntity({ action: auditActions.IMPORT_RESERVATIONS_SUCCESS, entity: 'import', entityId: null, performedBy, req, metadata }),
+  reservationsFailed: (performedBy, req, metadata = {}) =>
+    auditEntity({ action: auditActions.IMPORT_RESERVATIONS_FAILED, entity: 'import', entityId: null, performedBy, req, metadata }),
 
   inviteExpired: async (email, req) => {
     const entreprise_id = await resolveEntrepriseIdFromEmail(email);

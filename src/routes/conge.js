@@ -6,7 +6,7 @@ const validateUUIDParam = require('../middlewares/validateUUIDParam');
 const { checkUsageLimit } = require('../middlewares/usageLimiter');
 const { advancedRateLimiter } = require('../middlewares/advancedRateLimiter');
 const congeController = require('../controllers/congeController');
-const { importCongesCSV, getCongesImportTemplate } = require('../controllers/congesImportController');
+const { importCongesCSV, getCongesImportTemplate, importReservationsCSV, getReservationsImportTemplate } = require('../controllers/congesImportController');
 const actionRequestController = require('../controllers/congeActionRequestController');
 const { AuditLog, Conge, Utilisateur } = require('../models');
 const validate = require('../middlewares/validate');
@@ -17,6 +17,8 @@ const csvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 
 // Import CSV — avant /:id pour éviter les conflits de route
 router.get('/import/csv/template', authorizeRole(['super_admin']), getCongesImportTemplate);
 router.post('/import/csv', authorizeRole(['super_admin']), csvUpload.single('file'), importCongesCSV);
+router.get('/import/reservations/template', authorizeRole(['super_admin']), getReservationsImportTemplate);
+router.post('/import/reservations', authorizeRole(['super_admin']), csvUpload.single('file'), importReservationsCSV);
 
 router.post('/check-overlap', authorizeRole(['employe','apprenti','manager','super_admin']), advancedRateLimiter('conges'), validate(checkOverlapRules), congeController.checkOverlap);
 router.post('/calculate-days', authorizeRole(['employe','apprenti','manager','admin_entreprise','super_admin']), advancedRateLimiter('conges'), congeController.calculateDays);
