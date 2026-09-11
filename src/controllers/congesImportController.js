@@ -58,7 +58,7 @@ function normalizeRow(raw) {
   if (!ALLOWED_STATUTS.includes(statut))
     errors.push(`statut invalide — valeurs acceptées : ${ALLOWED_STATUTS.join(', ')}`);
   if (debut_demi_journee === null)
-    errors.push('debut_demi_journee invalide — valeurs acceptées : vide (journée entière), apr��s-midi');
+    errors.push('debut_demi_journee invalide — valeurs acceptées : vide (journée entière), après-midi');
   if (fin_demi_journee === null)
     errors.push('fin_demi_journee invalide — valeurs acceptées : vide (journée entière), matin');
 
