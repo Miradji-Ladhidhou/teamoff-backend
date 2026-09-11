@@ -9,6 +9,15 @@ const safeNum = (v) => parseFloat(v || 0);
 const logger = require('../utils/logger');
 const { auditImport } = require('../services/auditHelper');
 const { decodeCsvBuffer } = require('../utils/csvDecoder');
+const iconv = require('iconv-lite');
+
+// Encode le CSV en UTF-16 LE avec BOM — seul encodage qu'Excel respecte
+// universellement (Windows et Mac) sans passer par l'assistant d'import.
+function buildCsvBuffer(lines) {
+  const content = ['sep=,', ...lines].join('\r\n') + '\r\n';
+  const bom = Buffer.from([0xFF, 0xFE]); // UTF-16 LE BOM
+  return Buffer.concat([bom, iconv.encode(content, 'utf-16le')]);
+}
 
 const ALLOWED_STATUTS = ['en_attente_manager', 'valide_manager', 'refuse_manager', 'valide_final', 'refuse_final'];
 const MAX_ROWS = 500;
@@ -249,10 +258,9 @@ async function getCongesImportTemplate(req, res, next) {
       }
     }
 
-    const csv = ['sep=,', ...lines].join('\r\n') + '\r\n';
-    res.set('Content-Type', 'text/csv; charset=utf-8');
+    res.set('Content-Type', 'text/csv; charset=utf-16le');
     res.set('Content-Disposition', 'attachment; filename="modele_import_conges.csv"');
-    res.send(Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(csv, 'utf8')]));
+    res.send(buildCsvBuffer(lines));
   } catch (err) {
     logger.error('Template CSV congés', { error: err.message });
     next(err);
@@ -439,10 +447,9 @@ async function getReservationsImportTemplate(req, res, next) {
       }
     }
 
-    const csv = ['sep=,', ...lines].join('\r\n') + '\r\n';
-    res.set('Content-Type', 'text/csv; charset=utf-8');
+    res.set('Content-Type', 'text/csv; charset=utf-16le');
     res.set('Content-Disposition', 'attachment; filename="modele_import_reservations.csv"');
-    res.send(Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(csv, 'utf8')]));
+    res.send(buildCsvBuffer(lines));
   } catch (err) {
     logger.error('Template CSV réservations', { error: err.message });
     next(err);

@@ -11,6 +11,7 @@ const { auditImport } = require('../services/auditHelper');
 const logger = require('../utils/logger');
 const { decodeCsvBuffer } = require('../utils/csvDecoder');
 const { logMouvement } = require('../services/mouvementSoldeService');
+const iconv = require('iconv-lite');
 
 const BCRYPT_COST = 12;
 
@@ -279,10 +280,11 @@ async function getImportTemplate(req, res, next) {
     const exRow = ['Dupont', 'Marie', 'marie.dupont@exemple.fr', 'employe', 'RH',
       `${currentYear - 3}-03-01`, ...exBalances].map(csvField).join(',');
 
-    const csv = ['sep=,', header, exRow].join('\r\n') + '\r\n';
-    res.set('Content-Type', 'text/csv; charset=utf-8');
+    const csvContent = ['sep=,', header, exRow].join('\r\n') + '\r\n';
+    const bom = Buffer.from([0xFF, 0xFE]);
+    res.set('Content-Type', 'text/csv; charset=utf-16le');
     res.set('Content-Disposition', 'attachment; filename="modele_import_employes.csv"');
-    res.send(Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(csv, 'utf8')]));
+    res.send(Buffer.concat([bom, iconv.encode(csvContent, 'utf-16le')]));
   } catch (err) {
     logger.error('Template CSV employés', { error: err.message });
     next(err);
