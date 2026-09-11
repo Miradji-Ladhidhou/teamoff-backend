@@ -1,13 +1,18 @@
 const bcrypt  = require('bcrypt');
 const crypto  = require('crypto');
 const jwt     = require('jsonwebtoken');
-const { Entreprise, Utilisateur, LeavePolicy, sequelize } = require('../models');
+const { Entreprise, Utilisateur, LeavePolicy, Conge, CompteurConges, CongeType, sequelize } = require('../models');
 const logger = require('../utils/logger');
 const { validationResult } = require('express-validator');
 const { auditEntreprise, auditUser } = require('../services/auditHelper');
 const emailService = require('../services/emailService');
 const quotasService = require('../services/quotasService');
 const { BCRYPT_COST } = require('../services/authService');
+const { calcJoursConges } = require('../services/congesService');
+const { logMouvement, descriptionConge } = require('../services/mouvementSoldeService');
+const { Op } = require('sequelize');
+
+const safeNum = (v) => parseFloat(v || 0);
 
 // Compte racine insupprimable — l'entreprise qui le contient l'est également
 const PROTECTED_SUPER_ADMIN_EMAIL = 'saas.teamoff@gmail.com';
@@ -673,6 +678,142 @@ async function deleteEntrepriseService(req, res, next) {
   }
 }
 
+// Statuts actifs : congés qui mobilisent du solde et doivent être recalculés
+const STATUTS_ACTIFS = ['reserve', 'en_attente_manager', 'valide_manager', 'valide_final'];
+
+async function recalculConges(req, res, next) {
+  try {
+    const entrepriseId = req.user.role === 'super_admin'
+      ? req.params.id
+      : req.user.entreprise_id;
+
+    if (!entrepriseId) return res.status(400).json({ message: 'entreprise_id requis' });
+
+    // Vérifier accès
+    if (req.user.role !== 'super_admin' && req.user.entreprise_id !== entrepriseId) {
+      return res.status(403).json({ message: 'Accès interdit' });
+    }
+
+    const dryRun = req.query.dry_run === 'true';
+
+    // Charger tous les congés actifs de l'entreprise avec email et libellé type
+    const conges = await Conge.findAll({
+      where: { entreprise_id: entrepriseId, statut: { [Op.in]: STATUTS_ACTIFS } },
+      attributes: ['id', 'utilisateur_id', 'conge_type_id', 'date_debut', 'date_fin', 'debut_demi_journee', 'fin_demi_journee', 'statut', 'jours_calcules'],
+      include: [
+        { model: Utilisateur, as: 'utilisateur', attributes: ['email', 'nom', 'prenom'] },
+        { model: CongeType,   as: 'conge_type',  attributes: ['libelle'] },
+      ],
+    });
+
+    const resultats = [];
+    let nb_modifies = 0;
+
+    if (!dryRun) {
+      await sequelize.transaction(async (t) => {
+        for (const conge of conges) {
+          const ancien = safeNum(conge.jours_calcules);
+          const nouveau = await calcJoursConges(
+            entrepriseId,
+            conge.date_debut,
+            conge.date_fin,
+            conge.debut_demi_journee || 'matin',
+            conge.fin_demi_journee   || 'apres_midi',
+            t,
+          );
+          const delta = parseFloat((nouveau - ancien).toFixed(2));
+          if (delta === 0) continue;
+
+          const annee = new Date(conge.date_debut).getFullYear();
+          const compteur = await CompteurConges.findOne({
+            where: { entreprise_id: entrepriseId, utilisateur_id: conge.utilisateur_id, conge_type_id: conge.conge_type_id, annee },
+            transaction: t,
+            lock: t.LOCK.UPDATE,
+          });
+
+          // Mettre à jour jours_calcules sur le congé
+          await conge.update({ jours_calcules: nouveau }, { transaction: t });
+
+          if (compteur) {
+            if (conge.statut === 'valide_final') {
+              // Pour un congé validé : jours_pris et jours_acquis bougent du delta
+              // delta < 0 = moins de jours → on rend des jours (acquis remonte, pris descend)
+              compteur.jours_pris   = Math.max(0, safeNum(compteur.jours_pris)   + delta);
+              compteur.jours_acquis = Math.max(0, safeNum(compteur.jours_acquis) - delta);
+            } else {
+              // reserve / en_attente / valide_manager : seuls jours_reserves bougent
+              compteur.jours_reserves = Math.max(0, safeNum(compteur.jours_reserves) + delta);
+            }
+            await compteur.save({ transaction: t });
+
+            await logMouvement({
+              entreprise_id: entrepriseId,
+              utilisateur_id: conge.utilisateur_id,
+              conge_type_id:  conge.conge_type_id,
+              annee,
+              type: 'ajustement_admin',
+              quantite: -delta,
+              solde_apres: safeNum(compteur.jours_acquis) - safeNum(compteur.jours_reserves),
+              source_id: conge.id,
+              description: descriptionConge(`Recalcul solde (${delta > 0 ? '+' : ''}${delta} j)`, conge.date_debut, conge.date_fin),
+              transaction: t,
+            });
+          }
+
+          resultats.push({
+            conge_id: conge.id,
+            email:    conge.utilisateur?.email ?? conge.utilisateur_id,
+            type:     conge.conge_type?.libelle ?? conge.conge_type_id,
+            date_debut: conge.date_debut,
+            date_fin:   conge.date_fin,
+            statut:     conge.statut,
+            ancien, nouveau, delta,
+          });
+          nb_modifies++;
+        }
+      });
+    } else {
+      // Mode simulation : recalcul sans toucher la base
+      for (const conge of conges) {
+        const ancien = safeNum(conge.jours_calcules);
+        const nouveau = await calcJoursConges(
+          entrepriseId,
+          conge.date_debut,
+          conge.date_fin,
+          conge.debut_demi_journee || 'matin',
+          conge.fin_demi_journee   || 'apres_midi',
+        );
+        const delta = parseFloat((nouveau - ancien).toFixed(2));
+        if (delta !== 0) {
+          resultats.push({
+            conge_id: conge.id,
+            email:    conge.utilisateur?.email ?? conge.utilisateur_id,
+            type:     conge.conge_type?.libelle ?? conge.conge_type_id,
+            date_debut: conge.date_debut,
+            date_fin:   conge.date_fin,
+            statut:     conge.statut,
+            ancien, nouveau, delta,
+          });
+          nb_modifies++;
+        }
+      }
+    }
+
+    res.json({
+      message: dryRun
+        ? `Simulation : ${nb_modifies} congé(s) seraient recalculés sur ${conges.length} congés actifs`
+        : `${nb_modifies} congé(s) recalculé(s) sur ${conges.length} congés actifs`,
+      dry_run: dryRun,
+      nb_total: conges.length,
+      nb_modifies,
+      resultats,
+    });
+  } catch (err) {
+    logger.error('Erreur recalcul congés', { error: err.message });
+    next(err);
+  }
+}
+
 module.exports = {
   createEntreprise,
   getAllEntreprises,
@@ -689,4 +830,5 @@ module.exports = {
   createEntrepriseService,
   updateEntrepriseService,
   deleteEntrepriseService,
+  recalculConges,
 };

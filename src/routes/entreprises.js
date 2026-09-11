@@ -62,4 +62,7 @@ router.post('/:id/services', authorizeRole(['super_admin', 'admin_entreprise'], 
 router.put('/:id/services/:serviceName', authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id), validateUUIDParam('id'), entreprisesController.updateEntrepriseService);
 router.delete('/:id/services/:serviceName', authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id), validateUUIDParam('id'), entreprisesController.deleteEntrepriseService);
 
+// Recalcul des jours_calcules des congés actifs selon les nouveaux fériés / politique
+router.post('/:id/recalcul-conges', authorizeRole(['super_admin', 'admin_entreprise'], req => req.params.id), validateUUIDParam('id'), entreprisesController.recalculConges);
+
 module.exports = router;
