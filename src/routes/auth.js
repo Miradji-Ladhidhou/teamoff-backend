@@ -6,14 +6,13 @@ const authJwt = require('../middlewares/authJwt');
 const validate = require('../middlewares/validate');
 const {
   loginRules,
-  registerRules,
   forgotPasswordRules,
   resetPasswordRules,
   changePasswordRules,
   setPasswordRules,
 } = require('../validators/auth.validators');
 
-router.post('/register', advancedRateLimiter('register'), validate(registerRules), authController.register);
+router.post('/register', (req, res) => res.status(403).json({ message: 'La création de compte se fait sur demande. Contactez saas.teamoff@gmail.com' }));
 router.post('/login', advancedRateLimiter('login'), validate(loginRules), authController.login);
 router.post('/forgot-password', advancedRateLimiter('forgotPassword'), validate(forgotPasswordRules), authController.forgotPassword);
 router.post('/reset-password', advancedRateLimiter('forgotPassword'), validate(resetPasswordRules), authController.resetPassword);
