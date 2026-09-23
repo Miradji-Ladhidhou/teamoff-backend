@@ -14,9 +14,9 @@
 const bcrypt = require('bcrypt');
 const dayjs  = require('dayjs');
 const {
-  Entreprise, Utilisateur, CongeType, CompteurConges, Conge,
+  Entreprise, Utilisateur, CongeType, CompteurConges, Conge, CongeImputation,
 } = require('../src/models');
-const { createConge, tryActivateReservations } = require('../src/services/congesService');
+const { createConge, tryActivateReservations, validerConge } = require('../src/services/congesService');
 
 const TS        = Date.now();
 const NEXT_YEAR = dayjs().year() + 1;
@@ -433,5 +433,182 @@ describe('Feature N+1 F — tryActivateReservations idempotente', () => {
 
     const c = await Conge.findByPk(conge.id);
     expect(c.statut).toBe('valide_final');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// I) réservation N+1 imputée sur le compteur N
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Feature N+1 I — activation utilise le compteur mémorisé', () => {
+  let ent, emp, type, conge;
+
+  beforeAll(async () => {
+    ent  = await mkEntreprise('I', true);
+    emp  = await mkEmploye(ent.id, 'I');
+    type = await mkCongeType(ent.id, 'I');
+
+    await mkCompteur(ent.id, emp.id, type.id, NEXT_YEAR - 1, {
+      jours_acquis: 12, jours_reserves: 12,
+    });
+    await mkCompteur(ent.id, emp.id, type.id, NEXT_YEAR, {
+      jours_acquis: 0, jours_reserves: 0,
+    });
+
+    conge = await Conge.create({
+      entreprise_id: ent.id, utilisateur_id: emp.id, conge_type_id: type.id,
+      date_debut: `${NEXT_YEAR}-11-02`, date_fin: `${NEXT_YEAR}-11-13`,
+      statut: 'reserve', jours_calcules: 12, annee_compteur: NEXT_YEAR - 1,
+    });
+  });
+
+  afterAll(async () => {
+    await Conge.destroy({ where: { entreprise_id: ent.id } });
+    await CompteurConges.destroy({ where: { entreprise_id: ent.id } });
+    await Utilisateur.destroy({ where: { entreprise_id: ent.id } });
+    await CongeType.destroy({ where: { entreprise_id: ent.id } });
+    await Entreprise.destroy({ where: { id: ent.id } });
+  });
+
+  it('active la réservation sur le compteur mémorisé et non sur l’année du congé', async () => {
+    const result = await tryActivateReservations(emp.id, type.id, NEXT_YEAR - 1);
+
+    expect(result.activated.map((item) => item.conge_id)).toContain(conge.id);
+
+    const previousYearCounter = await CompteurConges.findOne({
+      where: { utilisateur_id: emp.id, conge_type_id: type.id, annee: NEXT_YEAR - 1 },
+    });
+    const nextYearCounter = await CompteurConges.findOne({
+      where: { utilisateur_id: emp.id, conge_type_id: type.id, annee: NEXT_YEAR },
+    });
+
+    expect(Number(previousYearCounter.jours_acquis)).toBe(0);
+    expect(Number(previousYearCounter.jours_reserves)).toBe(0);
+    expect(Number(previousYearCounter.jours_pris)).toBe(12);
+    expect(Number(nextYearCounter.jours_acquis)).toBe(0);
+    expect(Number(nextYearCounter.jours_pris)).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// J) réservation N+1 activée puis validée sur le solde courant
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Feature N+1 J — validation finale réalloue vers le solde courant', () => {
+  let ent, emp, manager, type, conge;
+
+  beforeAll(async () => {
+    const hash = await bcrypt.hash('Test1234!', 10);
+    ent = await Entreprise.create({
+      nom: `ResaSansSolde_J_${TS}`,
+      politique_conges: {
+        approval_workflow: 'manager_only',
+        autoriser_reservation_sans_solde: true,
+        blocked_days: { exclude_weekends: false, exclude_holidays: false },
+      },
+      parametres: {}, statut: 'active',
+    });
+    emp = await mkEmploye(ent.id, 'J');
+    manager = await Utilisateur.create({
+      entreprise_id: ent.id, prenom: 'Manager', nom: `J_${TS}`,
+      email: `manager.J.${TS}@test.internal`, role: 'manager', password_hash: hash, statut: 'actif',
+    });
+    type = await mkCongeType(ent.id, 'J');
+
+    await mkCompteur(ent.id, emp.id, type.id, NEXT_YEAR - 1, { jours_acquis: 12 });
+    await mkCompteur(ent.id, emp.id, type.id, NEXT_YEAR, { jours_acquis: 0, jours_reserves: 12 });
+    conge = await Conge.create({
+      entreprise_id: ent.id, utilisateur_id: emp.id, conge_type_id: type.id,
+      date_debut: `${NEXT_YEAR}-07-05`, date_fin: `${NEXT_YEAR}-07-16`,
+      statut: 'en_attente_manager', jours_calcules: 12, annee_compteur: NEXT_YEAR,
+    });
+  });
+
+  afterAll(async () => {
+    await Conge.destroy({ where: { entreprise_id: ent.id } });
+    await CompteurConges.destroy({ where: { entreprise_id: ent.id } });
+    await Utilisateur.destroy({ where: { entreprise_id: ent.id } });
+    await CongeType.destroy({ where: { entreprise_id: ent.id } });
+    await Entreprise.destroy({ where: { id: ent.id } });
+  });
+
+  it('débite 2026, libère la réservation 2027 et trace l’imputation', async () => {
+    await validerConge(conge.id, manager, 'Validation sur le solde courant');
+
+    const counter2026 = await CompteurConges.findOne({
+      where: { utilisateur_id: emp.id, conge_type_id: type.id, annee: NEXT_YEAR - 1 },
+    });
+    const counter2027 = await CompteurConges.findOne({
+      where: { utilisateur_id: emp.id, conge_type_id: type.id, annee: NEXT_YEAR },
+    });
+    const imputation = await CongeImputation.findAll({ where: { conge_id: conge.id } });
+
+    expect(Number(counter2026.jours_acquis)).toBe(0);
+    expect(Number(counter2026.jours_pris)).toBe(12);
+    expect(Number(counter2027.jours_acquis)).toBe(0);
+    expect(Number(counter2027.jours_pris)).toBe(0);
+    expect(Number(counter2027.jours_reserves)).toBe(0);
+    expect(imputation).toHaveLength(1);
+    expect(imputation[0].annee).toBe(NEXT_YEAR - 1);
+    expect(Number(imputation[0].jours)).toBe(12);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// K) validation finale refusée si le solde réel est insuffisant
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Feature N+1 K — validation finale atomique si solde insuffisant', () => {
+  let ent, emp, manager, type, conge;
+
+  beforeAll(async () => {
+    const hash = await bcrypt.hash('Test1234!', 10);
+    ent = await Entreprise.create({
+      nom: `ResaSansSolde_K_${TS}`,
+      politique_conges: {
+        approval_workflow: 'manager_only',
+        autoriser_reservation_sans_solde: true,
+        blocked_days: { exclude_weekends: false, exclude_holidays: false },
+      },
+      parametres: {}, statut: 'active',
+    });
+    emp = await mkEmploye(ent.id, 'K');
+    manager = await Utilisateur.create({
+      entreprise_id: ent.id, prenom: 'Manager', nom: `K_${TS}`,
+      email: `manager.K.${TS}@test.internal`, role: 'manager', password_hash: hash, statut: 'actif',
+    });
+    type = await mkCongeType(ent.id, 'K');
+    await mkCompteur(ent.id, emp.id, type.id, NEXT_YEAR - 1, { jours_acquis: 11.5 });
+    await mkCompteur(ent.id, emp.id, type.id, NEXT_YEAR, { jours_acquis: 0, jours_reserves: 12 });
+    conge = await Conge.create({
+      entreprise_id: ent.id, utilisateur_id: emp.id, conge_type_id: type.id,
+      date_debut: `${NEXT_YEAR}-08-03`, date_fin: `${NEXT_YEAR}-08-14`,
+      statut: 'en_attente_manager', jours_calcules: 12, annee_compteur: NEXT_YEAR,
+    });
+  });
+
+  afterAll(async () => {
+    await Conge.destroy({ where: { entreprise_id: ent.id } });
+    await CompteurConges.destroy({ where: { entreprise_id: ent.id } });
+    await Utilisateur.destroy({ where: { entreprise_id: ent.id } });
+    await CongeType.destroy({ where: { entreprise_id: ent.id } });
+    await Entreprise.destroy({ where: { id: ent.id } });
+  });
+
+  it('refuse sans modifier le statut ni les compteurs', async () => {
+    await expect(validerConge(conge.id, manager, 'Validation impossible')).rejects.toMatchObject({ statusCode: 422 });
+
+    const savedConge = await Conge.findByPk(conge.id);
+    const counter2026 = await CompteurConges.findOne({
+      where: { utilisateur_id: emp.id, conge_type_id: type.id, annee: NEXT_YEAR - 1 },
+    });
+    const counter2027 = await CompteurConges.findOne({
+      where: { utilisateur_id: emp.id, conge_type_id: type.id, annee: NEXT_YEAR },
+    });
+
+    expect(savedConge.statut).toBe('en_attente_manager');
+    expect(Number(counter2026.jours_acquis)).toBe(11.5);
+    expect(Number(counter2027.jours_reserves)).toBe(12);
+    expect(Number(counter2027.jours_pris)).toBe(0);
   });
 });

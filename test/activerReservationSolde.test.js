@@ -10,8 +10,8 @@
  * APRÈS fix  : POST /api/conges/:id/activate → 400 avec message explicite.
  *
  * Deux cas :
- *   A) Solde insuffisant (jours_acquis < jours_reserves)  → 400 attendu
- *   B) Solde suffisant                                     → 200 attendu (non-régression)
+ *   A) Workflow manuel : activation autorisée sans solde futur, sans débit
+ *   B) Solde suffisant : activation autorisée (non-régression)
  */
 
 const request = require('supertest');
@@ -114,7 +114,7 @@ afterAll(async () => {
 // A) Solde insuffisant → rejet
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Fix #42 — solde insuffisant : activation refusée', () => {
+describe('Activation manuelle — solde futur insuffisant : passage en attente sans débit', () => {
 
   let res;
   beforeAll(async () => {
@@ -123,21 +123,16 @@ describe('Fix #42 — solde insuffisant : activation refusée', () => {
       .set('Authorization', `Bearer ${fxInsuf.tokenAdmin}`);
   });
 
-  it('AVANT fix : 200 (déficit absorbé silencieusement) / APRÈS fix : 400', () => {
-    expect(res.status).toBe(400);
+  it('répond 200 car l’activation manuelle ne prélève pas le solde', () => {
+    expect(res.status).toBe(200);
   });
 
-  it('message d\'erreur explicite mentionnant le solde', () => {
-    const msg = (res.body?.message || res.body?.error || '').toLowerCase();
-    expect(msg).toMatch(/solde|insuffisant|disponible/i);
-  });
-
-  it('le statut du congé reste "reserve" (non modifié)', async () => {
+  it('le statut devient "en_attente_manager"', async () => {
     const conge = await Conge.findByPk(fxInsuf.conge.id);
-    expect(conge.statut).toBe('reserve');
+    expect(conge.statut).toBe('en_attente_manager');
   });
 
-  it('le compteur n\'est pas modifié', async () => {
+  it('le compteur reste inchangé', async () => {
     const compteur = await CompteurConges.findOne({
       where: {
         utilisateur_id: fxInsuf.employe.id,

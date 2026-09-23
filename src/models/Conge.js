@@ -40,6 +40,12 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: null,
     },
 
+    annee_compteur: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: null,
+    },
+
     effective_approval_workflow: { type: DataTypes.STRING(30), allowNull: true, defaultValue: null },
 
     reminder_j30_sent_at: { type: DataTypes.DATE, allowNull: true, defaultValue: null },
