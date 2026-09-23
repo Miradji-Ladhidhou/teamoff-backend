@@ -119,6 +119,7 @@ Absence.belongsTo(Entreprise, { foreignKey: 'entreprise_id', as: 'entreprise' })
 MouvementSolde.belongsTo(Utilisateur, { foreignKey: 'utilisateur_id', as: 'utilisateur' });
 MouvementSolde.belongsTo(Entreprise, { foreignKey: 'entreprise_id', as: 'entreprise' });
 MouvementSolde.belongsTo(CongeType, { foreignKey: 'conge_type_id', as: 'conge_type' });
+MouvementSolde.belongsTo(Conge, { foreignKey: 'source_id', as: 'conge' });
 Utilisateur.hasMany(MouvementSolde, { foreignKey: 'utilisateur_id', as: 'mouvements_solde' });
 Entreprise.hasMany(MouvementSolde, { foreignKey: 'entreprise_id', as: 'mouvements_solde', onDelete: 'CASCADE' });
 

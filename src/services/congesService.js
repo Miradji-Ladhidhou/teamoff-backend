@@ -111,10 +111,10 @@ async function allocateCongeToAvailableCounters(conge, joursConge, transaction, 
       conge_type_id: conge.conge_type_id,
       annee: compteur.annee,
       type: 'validation',
-      quantite: 0,
+      quantite: -jours,
       solde_apres: safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves),
       source_id: conge.id,
-      description: descriptionConge('Congé validé', conge.date_debut, conge.date_fin),
+      description: descriptionConge(`Prélèvement validation (${jours} j)`, conge.date_debut, conge.date_fin),
       transaction,
     });
 
@@ -2924,8 +2924,24 @@ async function activerReservation(congeId, reqUser) {
 
     await conge.save({ transaction: t });
 
-    // C-3 : audit après commit (symétrique avec tryActivateReservations)
     const newStatut = conge.statut;
+
+    if (newStatut === 'en_attente_manager') {
+      await logMouvement({
+        entreprise_id: conge.entreprise_id,
+        utilisateur_id: conge.utilisateur_id,
+        conge_type_id: conge.conge_type_id,
+        annee,
+        type: 'activation_reservation',
+        quantite: 0,
+        solde_apres: safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves),
+        source_id: conge.id,
+        description: descriptionConge('Réservation activée · en attente de validation', conge.date_debut, conge.date_fin),
+        transaction: t,
+      });
+    }
+
+    // C-3 : audit après commit (symétrique avec tryActivateReservations)
     t.afterCommit(() => auditConge.activated(conge, {
       from_statut: 'reserve', new_statut: newStatut, jours: joursConge, annee, triggered_by: reqUser.id,
     }));
@@ -3160,6 +3176,12 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
           compteur.jours_acquis   = Math.max(0, safeNumber(compteur.jours_acquis)   - jours);
           compteur.jours_pris     = safeNumber(compteur.jours_pris) + jours;
           await compteur.save({ transaction: t });
+          await CongeImputation.create({
+            conge_id: conge.id,
+            compteur_conges_id: compteur.id,
+            annee: compteur.annee,
+            jours,
+          }, { transaction: t });
           await logMouvement({
             entreprise_id: conge.entreprise_id,
             utilisateur_id: conge.utilisateur_id,

@@ -327,7 +327,10 @@ async function getHistorique(req, res, next) {
 
     const { count, rows } = await MouvementSolde.findAndCountAll({
       where,
-      include: [{ model: CongeType, as: 'conge_type', attributes: ['id', 'libelle'] }],
+      include: [
+        { model: CongeType, as: 'conge_type', attributes: ['id', 'libelle'] },
+        { model: Conge, as: 'conge', attributes: ['id', 'date_debut', 'date_fin', 'statut', 'annee_compteur'] },
+      ],
       order: [['date', 'DESC'], ['created_at', 'DESC']],
       limit,
       offset,
@@ -366,6 +369,7 @@ async function getHistoriqueEntreprise(req, res, next) {
       include: [
         { model: CongeType,    as: 'conge_type',  attributes: ['id', 'libelle'] },
         { model: Utilisateur,  as: 'utilisateur', attributes: ['id', 'prenom', 'nom', 'service'] },
+        { model: Conge,        as: 'conge',       attributes: ['id', 'date_debut', 'date_fin', 'statut', 'annee_compteur'] },
       ],
       order: [['date', 'DESC'], ['created_at', 'DESC']],
       limit,
