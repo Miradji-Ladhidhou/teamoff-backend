@@ -16,6 +16,7 @@ const Utilisateur = require('./Utilisateur')(sequelize, DataTypes);
 const CongeType = require('./CongeType')(sequelize, DataTypes);
 const CompteurConges = require('./CompteurConges')(sequelize, DataTypes);
 const Conge = require('./Conge')(sequelize, DataTypes);
+const CongeImputation = require('./CongeImputation')(sequelize, DataTypes);
 const LeavePolicy = require('./LeavePolicy')(sequelize, DataTypes);
 const JoursFeries = require('./JoursFeries')(sequelize, DataTypes);
 const AuditLog = require('./AuditLog')(sequelize, DataTypes);
@@ -130,6 +131,11 @@ CongeActionRequest.belongsTo(Entreprise,   { foreignKey: 'entreprise_id',  as: '
 Conge.hasMany(CongeActionRequest,          { foreignKey: 'conge_id',       as: 'action_requests', onDelete: 'SET NULL' });
 Entreprise.hasMany(CongeActionRequest,     { foreignKey: 'entreprise_id',  as: 'conge_action_requests', onDelete: 'CASCADE' });
 
+CongeImputation.belongsTo(Conge, { foreignKey: 'conge_id', as: 'conge' });
+CongeImputation.belongsTo(CompteurConges, { foreignKey: 'compteur_conges_id', as: 'compteur' });
+Conge.hasMany(CongeImputation, { foreignKey: 'conge_id', as: 'imputations', onDelete: 'CASCADE' });
+CompteurConges.hasMany(CongeImputation, { foreignKey: 'compteur_conges_id', as: 'imputations', onDelete: 'RESTRICT' });
+
 // ----------------------
 // EmailLog relations
 // ----------------------
@@ -148,6 +154,7 @@ module.exports = {
   CongeType,
   CompteurConges,
   Conge,
+  CongeImputation,
   LeavePolicy,
   JoursFeries,
   AuditLog,
