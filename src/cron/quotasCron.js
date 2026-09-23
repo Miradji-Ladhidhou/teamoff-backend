@@ -10,14 +10,16 @@ const { Entreprise, Conge } = require('../models');
  */
 async function tryActivateCompanyReservations(entrepriseId) {
   const pending = await Conge.findAll({
-    attributes: ['utilisateur_id', 'conge_type_id', 'date_debut'],
+    attributes: ['utilisateur_id', 'conge_type_id', 'date_debut', 'annee_compteur'],
     where: { entreprise_id: entrepriseId, statut: 'reserve' },
     raw: true,
   });
 
   const seen = new Set();
   for (const row of pending) {
-    const annee = new Date(row.date_debut).getFullYear();
+    const annee = Number.isInteger(Number(row.annee_compteur))
+      ? Number(row.annee_compteur)
+      : new Date(row.date_debut).getFullYear();
     const key = `${row.utilisateur_id}::${row.conge_type_id}::${annee}`;
     if (seen.has(key)) continue;
     seen.add(key);
