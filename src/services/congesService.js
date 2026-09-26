@@ -2100,7 +2100,12 @@ async function updateConge(id, data, user, req = null) {
     }
 
     const oldYear = getCongeCompteurAnnee(conge);
-    const nextYear = dayjs(nextDateDebut).year();
+    const dateYear = dayjs(conge.date_debut).year();
+    const nextDateYear = dayjs(nextDateDebut).year();
+    const nextYear = conge.conge_type_id === nextCongeTypeId
+      && dateYear === nextDateYear
+      ? oldYear
+      : nextDateYear;
 
     let oldCounter = await CompteurConges.findOne({
       where: {

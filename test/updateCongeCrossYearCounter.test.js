@@ -1,0 +1,98 @@
+'use strict';
+
+const {
+  Entreprise,
+  Utilisateur,
+  CongeType,
+  CompteurConges,
+  Conge,
+} = require('../src/models');
+const { updateConge } = require('../src/services/congesService');
+
+const RUN_ID = Date.now();
+const CURRENT_YEAR = new Date().getFullYear();
+const NEXT_YEAR = CURRENT_YEAR + 1;
+
+describe('updateConge — demande N+1 imputée sur le compteur courant', () => {
+  let entreprise;
+  let employe;
+  let typeConge;
+  let compteurCourant;
+  let compteurFutur;
+  let conge;
+
+  beforeAll(async () => {
+    entreprise = await Entreprise.create({
+      nom: `UpdateCrossYear_${RUN_ID}`,
+      politique_conges: {
+        approval_workflow: 'manager_admin',
+        blocked_days: { exclude_weekends: false, exclude_holidays: false },
+      },
+      parametres: {},
+      statut: 'active',
+    });
+    employe = await Utilisateur.create({
+      entreprise_id: entreprise.id,
+      prenom: 'Employe',
+      nom: `UpdateCrossYear_${RUN_ID}`,
+      email: `update.crossyear.${RUN_ID}@test.internal`,
+      role: 'employe',
+      password_hash: 'test-hash',
+      statut: 'actif',
+    });
+    typeConge = await CongeType.create({
+      entreprise_id: entreprise.id,
+      libelle: `CP_UpdateCrossYear_${RUN_ID}`,
+      code: `UC${String(RUN_ID).slice(-6)}`,
+      deductible: true,
+      demi_journee_autorisee: false,
+    });
+    compteurCourant = await CompteurConges.create({
+      entreprise_id: entreprise.id,
+      utilisateur_id: employe.id,
+      conge_type_id: typeConge.id,
+      annee: CURRENT_YEAR,
+      jours_acquis: 10,
+      jours_pris: 0,
+      jours_reserves: 5,
+    });
+    compteurFutur = await CompteurConges.create({
+      entreprise_id: entreprise.id,
+      utilisateur_id: employe.id,
+      conge_type_id: typeConge.id,
+      annee: NEXT_YEAR,
+      jours_acquis: 0,
+      jours_pris: 0,
+      jours_reserves: 0,
+    });
+    conge = await Conge.create({
+      entreprise_id: entreprise.id,
+      utilisateur_id: employe.id,
+      conge_type_id: typeConge.id,
+      date_debut: `${NEXT_YEAR}-10-04`,
+      date_fin: `${NEXT_YEAR}-10-08`,
+      statut: 'en_attente_manager',
+      jours_calcules: 5,
+      annee_compteur: CURRENT_YEAR,
+    });
+  });
+
+  afterAll(async () => {
+    if (entreprise) {
+      await Entreprise.destroy({ where: { id: entreprise.id } }).catch(() => {});
+    }
+  });
+
+  it('conserve le compteur mémorisé lors d’une modification dans la même année des dates', async () => {
+    await updateConge(conge.id, { date_fin: `${NEXT_YEAR}-10-07` }, employe);
+
+    const savedLeave = await Conge.findByPk(conge.id);
+    const savedCurrentCounter = await CompteurConges.findByPk(compteurCourant.id);
+    const savedFutureCounter = await CompteurConges.findByPk(compteurFutur.id);
+
+    expect(savedLeave.date_fin).toBe(`${NEXT_YEAR}-10-07`);
+    expect(savedLeave.annee_compteur).toBe(CURRENT_YEAR);
+    expect(Number(savedCurrentCounter.jours_reserves)).toBe(4);
+    expect(Number(savedFutureCounter.jours_reserves)).toBe(0);
+  });
+});
