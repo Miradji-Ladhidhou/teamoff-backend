@@ -43,23 +43,24 @@ function getCongeCompteurAnnee(conge) {
     : dayjs(conge.date_debut).year();
 }
 
-async function allocateCongeToAvailableCounters(conge, joursConge, transaction, { releaseReservation = true } = {}) {
+async function allocateCongeToAvailableCounters(conge, joursConge, transaction, {
+  releaseReservation = true,
+  reservationBatchDaysByYear = null,
+} = {}) {
   const sourceYear = getCongeCompteurAnnee(conge);
-  const sourceCounter = await CompteurConges.findOne({
+  const compteurs = await CompteurConges.findAll({
     where: {
       utilisateur_id: conge.utilisateur_id,
       conge_type_id: conge.conge_type_id,
-      annee: sourceYear,
+      annee: { [Op.lte]: sourceYear },
     },
+    order: [['annee', 'ASC']],
     transaction,
     lock: transaction.LOCK.UPDATE,
   });
+  const sourceCounter = compteurs.find((compteur) => Number(compteur.annee) === sourceYear);
 
-  if (!sourceCounter) {
-    throw Object.assign(new Error('Compteur de réservation introuvable'), { statusCode: 409 });
-  }
-
-  if (releaseReservation) {
+  if (releaseReservation && sourceCounter) {
     sourceCounter.jours_reserves = Math.max(
       0,
       safeNumber(sourceCounter.jours_reserves) - safeNumber(joursConge)
@@ -67,28 +68,17 @@ async function allocateCongeToAvailableCounters(conge, joursConge, transaction, 
     await sourceCounter.save({ transaction });
   }
 
-  const compteurs = await CompteurConges.findAll({
-    where: {
-      utilisateur_id: conge.utilisateur_id,
-      conge_type_id: conge.conge_type_id,
-      [Op.or]: [
-        { annee: { [Op.lte]: dayjs().year() } },
-        { annee: getCongeCompteurAnnee(conge) },
-      ],
-    },
-    order: [['annee', 'ASC']],
-    transaction,
-    lock: transaction.LOCK.UPDATE,
-  });
-
   let restant = Number(safeNumber(joursConge).toFixed(2));
   const allocations = [];
 
   for (const compteur of compteurs) {
     if (restant <= 0) break;
+    const reservationsOutsideBatch = reservationBatchDaysByYear
+      ? Math.max(0, safeNumber(compteur.jours_reserves) - (reservationBatchDaysByYear.get(Number(compteur.annee)) || 0))
+      : safeNumber(compteur.jours_reserves);
     const disponible = Math.max(
       0,
-      safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves)
+      safeNumber(compteur.jours_acquis) - reservationsOutsideBatch
     );
     const jours = Math.min(restant, disponible);
     if (jours <= 0) continue;
@@ -2815,25 +2805,6 @@ async function activerReservation(congeId, reqUser) {
       lock: t.LOCK.UPDATE,
     });
 
-    // M-1 : compteur obligatoire — la réservation ne peut pas exister sans compteur.
-    if (!compteur) {
-      throw Object.assign(
-        new Error('Compteur introuvable — activation impossible. Contactez l\'administrateur.'),
-        { statusCode: 500 }
-      );
-    }
-
-    // Fix #42 : vérifier que le solde couvre cette activation.
-    // soldeDispo = jours_acquis - (jours_reserves - joursConge) : solde disponible une
-    // fois qu'on retire la réservation courante des réserves pour évaluer si elle est couverte.
-    const soldeDispo = safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves) + joursConge;
-    if (leaveRules.approval_workflow === 'auto' && soldeDispo < joursConge) {
-      throw Object.assign(
-        new Error(`Solde insuffisant pour activer cette réservation : ${Math.max(0, soldeDispo)} jour(s) disponible(s), ${joursConge} jour(s) requis`),
-        { statusCode: 400 }
-      );
-    }
-
     const congeType = await CongeType.findByPk(conge.conge_type_id, { transaction: t });
     const employeNom = `${employe?.prenom || ''} ${employe?.nom || ''}`.trim() || 'L\'employé';
 
@@ -2934,7 +2905,9 @@ async function activerReservation(congeId, reqUser) {
         annee,
         type: 'activation_reservation',
         quantite: 0,
-        solde_apres: safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves),
+        solde_apres: compteur
+          ? safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves)
+          : 0,
         source_id: conge.id,
         description: descriptionConge('Réservation activée · en attente de validation', conge.date_debut, conge.date_fin),
         transaction: t,
@@ -3040,14 +3013,6 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
 
   try {
     await sequelize.transaction(async (t) => {
-      // Verrou exclusif sur le compteur pour sérialiser les mutations concurrentes
-      const compteur = await CompteurConges.findOne({
-        where: { utilisateur_id: utilisateurId, conge_type_id: congeTypeId, annee: Number(annee) },
-        transaction: t,
-        lock: t.LOCK.UPDATE,
-      });
-      if (!compteur) return;
-
       // Réservations de l'année triées par date_debut (FIFO).
       // C-4 : filtre année dans SQL pour éviter un lock FOR UPDATE inutile sur les autres années.
       const yearReservations = await Conge.findAll({
@@ -3071,37 +3036,61 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
 
       // Règles entreprise chargées une seule fois
       const baseLeaveRules = await getEntrepriseLeaveRules(yearReservations[0].entreprise_id, t);
-
-      // Budget FIFO : on part de jours_acquis (brut) et on consomme au fil des activations.
-      // jours_reserves peut dépasser jours_acquis quand des réservations ont été faites
-      // avant que le solde soit suffisant. En évaluant chaque réservation séquentiellement
-      // contre le budget restant (pas contre le total reserves), on obtient le bon
-      // comportement partiel : la 1ère réservation peut s'activer même si le solde
-      // ne couvre pas toutes les réservations en attente.
-      let budget = Math.max(0, safeNumber(compteur.jours_acquis));
+      const targetYear = Number(annee);
+      const compteursPourActivation = await CompteurConges.findAll({
+        where: {
+          utilisateur_id: utilisateurId,
+          conge_type_id: congeTypeId,
+          annee: { [Op.lte]: targetYear },
+        },
+        order: [['annee', 'ASC']],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      const batchReservedByYear = new Map();
+      for (const reservation of yearReservations) {
+        const sourceYear = getCongeCompteurAnnee(reservation);
+        batchReservedByYear.set(
+          sourceYear,
+          (batchReservedByYear.get(sourceYear) || 0) + safeNumber(reservation.jours_calcules)
+        );
+      }
+      let budget = compteursPourActivation.reduce((total, counter) => {
+        const reservationsOutsideBatch = Math.max(
+          0,
+          safeNumber(counter.jours_reserves) - (batchReservedByYear.get(Number(counter.annee)) || 0)
+        );
+        return total + Math.max(0, safeNumber(counter.jours_acquis) - reservationsOutsideBatch);
+      }, 0);
 
       for (const conge of yearReservations) {
         const jours = safeNumber(conge.jours_calcules);
 
-        if (budget < jours) {
-          const solde_manquant = Number((jours - budget).toFixed(2));
-          results.still_pending.push({
-            conge_id: conge.id,
-            date_debut: formatDateFR(conge.date_debut),
-            date_fin: formatDateFR(conge.date_fin),
-            jours,
-            solde_manquant,
-          });
-          logger.info(`[try-activate] ${conge.id} — budget insuffisant (budget=${budget.toFixed(2)}, requis=${jours})`);
-          await auditConge.skipped(conge, { jours, budget: Number(budget.toFixed(2)), solde_manquant, annee: Number(annee) });
-          continue;
-        }
-
-        budget -= jours; // Consommer le budget avant l'activation
-
         const employe = await Utilisateur.findByPk(conge.utilisateur_id, { transaction: t });
         const leaveRules = getEffectiveLeaveRules(baseLeaveRules, employe?.service || null);
         const employeNom = `${employe?.prenom || ''} ${employe?.nom || ''}`.trim();
+
+        if (leaveRules.approval_workflow === 'auto') {
+          if (budget < jours) {
+            const solde_manquant = Number((jours - budget).toFixed(2));
+            results.still_pending.push({
+              conge_id: conge.id,
+              date_debut: formatDateFR(conge.date_debut),
+              date_fin: formatDateFR(conge.date_fin),
+              jours,
+              solde_manquant,
+            });
+            logger.info(`[try-activate] ${conge.id} — budget insuffisant (budget=${budget.toFixed(2)}, requis=${jours})`);
+            await auditConge.skipped(conge, {
+              jours,
+              budget: Number(budget.toFixed(2)),
+              solde_manquant,
+              annee: getCongeCompteurAnnee(conge),
+            });
+            continue;
+          }
+          budget -= jours;
+        }
 
         // M-2 : chevauchement propre — tout statut non refusé bloque (symétrique avec creerConge).
         // Pour 'reserve' : on exclut le même conge_type_id car le traitement FIFO de ce batch
@@ -3121,10 +3110,10 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
           transaction: t,
         });
         if (selfOverlapAuto) {
-          budget += jours; // Restituer le budget — cette réservation ne sera pas activée
+          if (leaveRules.approval_workflow === 'auto') budget += jours;
           results.still_pending.push({ conge_id: conge.id, date_debut: formatDateFR(conge.date_debut), date_fin: formatDateFR(conge.date_fin), jours, reason: 'overlap' });
           logger.warn(`[try-activate] ${conge.id} — chevauchement avec congé/réservation existant, skippé`);
-          await auditConge.skipped(conge, { jours, reason: 'self_overlap', annee: Number(annee) });
+          await auditConge.skipped(conge, { jours, reason: 'self_overlap', annee: getCongeCompteurAnnee(conge) });
           continue;
         }
 
@@ -3159,10 +3148,10 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
           }
 
           if (capacityExceeded) {
-            budget += jours; // Restituer le budget
+            if (leaveRules.approval_workflow === 'auto') budget += jours;
             results.still_pending.push({ conge_id: conge.id, date_debut: formatDateFR(conge.date_debut), date_fin: formatDateFR(conge.date_fin), jours, reason: 'capacity' });
             logger.warn(`[try-activate] ${conge.id} — capacité dépassée, skippé`);
-            await auditConge.skipped(conge, { jours, reason: 'capacity_exceeded', annee: Number(annee) });
+            await auditConge.skipped(conge, { jours, reason: 'capacity_exceeded', annee: getCongeCompteurAnnee(conge) });
             continue;
           }
         }
@@ -3170,30 +3159,7 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
         let newStatut;
         if (leaveRules.approval_workflow === 'auto') {
           newStatut = 'valide_final';
-          // Consommer définitivement les jours
-          consumeN1First(compteur, jours);
-          compteur.jours_reserves = Math.max(0, safeNumber(compteur.jours_reserves) - jours);
-          compteur.jours_acquis   = Math.max(0, safeNumber(compteur.jours_acquis)   - jours);
-          compteur.jours_pris     = safeNumber(compteur.jours_pris) + jours;
-          await compteur.save({ transaction: t });
-          await CongeImputation.create({
-            conge_id: conge.id,
-            compteur_conges_id: compteur.id,
-            annee: compteur.annee,
-            jours,
-          }, { transaction: t });
-          await logMouvement({
-            entreprise_id: conge.entreprise_id,
-            utilisateur_id: conge.utilisateur_id,
-            conge_type_id: compteur.conge_type_id,
-            annee: Number(annee),
-            type: 'activation_reservation',
-            quantite: -jours,
-            solde_apres: safeNumber(compteur.jours_acquis) - safeNumber(compteur.jours_reserves),
-            source_id: conge.id,
-            description: descriptionConge('Réservation N+1 activée', conge.date_debut, conge.date_fin),
-            transaction: t,
-          });
+          await allocateCongeToAvailableCounters(conge, jours, t, { reservationBatchDaysByYear: batchReservedByYear });
         } else {
           newStatut = 'en_attente_manager';
           // Les jours restent dans reserves — aucun mouvement de compteur

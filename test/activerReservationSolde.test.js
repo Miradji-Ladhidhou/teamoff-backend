@@ -30,7 +30,7 @@ const CONGE_YEAR = dayjs().year() + 1;
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function mkFixture(label, politiqueConges, jours_acquis, joursConge) {
+async function mkFixture(label, politiqueConges, jours_acquis, joursConge, createCounter = true) {
   const hash = await bcrypt.hash('Test1234!', 10);
 
   const ent = await Entreprise.create({
@@ -63,7 +63,7 @@ async function mkFixture(label, politiqueConges, jours_acquis, joursConge) {
   });
 
   // jours_reserves = joursConge : la réservation est déjà comptée dans ce bucket
-  await CompteurConges.create({
+  if (createCounter) await CompteurConges.create({
     entreprise_id: ent.id,
     utilisateur_id: employe.id,
     conge_type_id: congeType.id,
@@ -85,7 +85,7 @@ async function mkFixture(label, politiqueConges, jours_acquis, joursConge) {
     jours_calcules: joursConge,
   });
 
-  return { ent, employe, admin, conge, tokenAdmin: generateToken(admin) };
+  return { ent, employe, admin, congeType, conge, tokenAdmin: generateToken(admin) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -94,19 +94,43 @@ async function mkFixture(label, politiqueConges, jours_acquis, joursConge) {
 
 const JOURS_CONGE = 5;
 
-let fxInsuf, fxSuf;
+let fxInsuf, fxSuf, fxNoCounter, fxAutoSplit;
 
 beforeAll(async () => {
-  [fxInsuf, fxSuf] = await Promise.all([
+  [fxInsuf, fxSuf, fxNoCounter, fxAutoSplit] = await Promise.all([
     // A) solde insuffisant : 3 acquis pour 5 jours demandés
     mkFixture('Insuf', { approval_workflow: 'manager_admin' }, 3, JOURS_CONGE),
     // B) solde suffisant : 20 acquis pour 5 jours demandés
     mkFixture('Suf',   { approval_workflow: 'manager_admin' }, 20, JOURS_CONGE),
+    // C) ancienne réservation sans compteur N+1
+    mkFixture('NoCounter', { approval_workflow: 'manager_admin' }, 0, JOURS_CONGE, false),
+    // D) validation automatique couverte par des années antérieures sans compteur N+1
+    mkFixture('AutoSplit', { approval_workflow: 'auto' }, 0, JOURS_CONGE, false),
+  ]);
+  await Promise.all([
+    CompteurConges.create({
+      entreprise_id: fxAutoSplit.ent.id,
+      utilisateur_id: fxAutoSplit.employe.id,
+      conge_type_id: fxAutoSplit.congeType.id,
+      annee: CONGE_YEAR - 2,
+      jours_acquis: 3,
+      jours_pris: 0,
+      jours_reserves: 0,
+    }),
+    CompteurConges.create({
+      entreprise_id: fxAutoSplit.ent.id,
+      utilisateur_id: fxAutoSplit.employe.id,
+      conge_type_id: fxAutoSplit.congeType.id,
+      annee: CONGE_YEAR - 1,
+      jours_acquis: 2,
+      jours_pris: 0,
+      jours_reserves: 0,
+    }),
   ]);
 });
 
 afterAll(async () => {
-  const ids = [fxInsuf?.ent?.id, fxSuf?.ent?.id].filter(Boolean);
+  const ids = [fxInsuf?.ent?.id, fxSuf?.ent?.id, fxNoCounter?.ent?.id, fxAutoSplit?.ent?.id].filter(Boolean);
   await Entreprise.destroy({ where: { id: ids } }).catch(() => {});
 });
 
@@ -166,6 +190,48 @@ describe('Fix #42 — solde suffisant : activation autorisée', () => {
   it('statut = "en_attente_manager"', async () => {
     const conge = await Conge.findByPk(fxSuf.conge.id);
     expect(conge.statut).toBe('en_attente_manager');
+  });
+});
+
+describe('Activation manuelle — compteur de l’année du congé absent', () => {
+  it('active la réservation en workflow normal sans exiger le compteur N+1', async () => {
+    const res = await request(app)
+      .post(`/api/conges/${fxNoCounter.conge.id}/activate`)
+      .set('Authorization', `Bearer ${fxNoCounter.tokenAdmin}`);
+
+    expect(res.status).toBe(200);
+    const conge = await Conge.findByPk(fxNoCounter.conge.id);
+    expect(conge.statut).toBe('en_attente_manager');
+    expect(await CompteurConges.count({ where: { utilisateur_id: fxNoCounter.employe.id } })).toBe(0);
+  });
+});
+
+describe('Activation automatique — soldes antérieurs sans compteur N+1', () => {
+  it('valide en imputant du plus ancien au plus récent', async () => {
+    const res = await request(app)
+      .post(`/api/conges/${fxAutoSplit.conge.id}/activate`)
+      .set('Authorization', `Bearer ${fxAutoSplit.tokenAdmin}`);
+
+    expect(res.status).toBe(200);
+    const conge = await Conge.findByPk(fxAutoSplit.conge.id);
+    const counters = await CompteurConges.findAll({
+      where: { utilisateur_id: fxAutoSplit.employe.id },
+      order: [['annee', 'ASC']],
+    });
+    const imputations = await require('../src/models').CongeImputation.findAll({
+      where: { conge_id: fxAutoSplit.conge.id },
+      order: [['annee', 'ASC']],
+    });
+
+    expect(conge.statut).toBe('valide_final');
+    expect(counters.map((row) => Number(row.jours_pris))).toEqual([3, 2]);
+    expect(imputations.map((row) => [row.annee, Number(row.jours)])).toEqual([
+      [CONGE_YEAR - 2, 3],
+      [CONGE_YEAR - 1, 2],
+    ]);
+    expect(await CompteurConges.count({
+      where: { utilisateur_id: fxAutoSplit.employe.id, annee: CONGE_YEAR },
+    })).toBe(0);
   });
 });
 
