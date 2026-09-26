@@ -125,4 +125,60 @@ describe('updateConge — demande N+1 imputée sur le compteur courant', () => {
 
     await currentLeave.destroy();
   });
+
+  it('permet de modifier une réservation N+1 sans l’activer ni exiger de solde acquis', async () => {
+    await compteurFutur.update({ jours_acquis: 0, jours_reserves: 5 });
+    const reservation = await Conge.create({
+      entreprise_id: entreprise.id,
+      utilisateur_id: employe.id,
+      conge_type_id: typeConge.id,
+      date_debut: `${NEXT_YEAR}-12-01`,
+      date_fin: `${NEXT_YEAR}-12-05`,
+      statut: 'reserve',
+      jours_calcules: 5,
+      annee_compteur: NEXT_YEAR,
+    });
+
+    await updateConge(reservation.id, { date_fin: `${NEXT_YEAR}-12-04` }, employe);
+
+    const savedReservation = await Conge.findByPk(reservation.id);
+    await compteurFutur.reload();
+    expect(savedReservation.statut).toBe('reserve');
+    expect(savedReservation.date_fin).toBe(`${NEXT_YEAR}-12-04`);
+    expect(savedReservation.annee_compteur).toBe(NEXT_YEAR);
+    expect(Number(compteurFutur.jours_acquis)).toBe(0);
+    expect(Number(compteurFutur.jours_reserves)).toBe(4);
+
+    await reservation.destroy();
+  });
+
+  it('transfère la réserve et met à jour annee_compteur si les dates changent d’année', async () => {
+    await compteurCourant.update({ jours_acquis: 0, jours_reserves: 5 });
+    await compteurFutur.update({ jours_acquis: 0, jours_reserves: 0 });
+    const reservation = await Conge.create({
+      entreprise_id: entreprise.id,
+      utilisateur_id: employe.id,
+      conge_type_id: typeConge.id,
+      date_debut: `${CURRENT_YEAR}-11-02`,
+      date_fin: `${CURRENT_YEAR}-11-06`,
+      statut: 'reserve',
+      jours_calcules: 5,
+      annee_compteur: CURRENT_YEAR,
+    });
+
+    await updateConge(reservation.id, {
+      date_debut: `${NEXT_YEAR}-12-01`,
+      date_fin: `${NEXT_YEAR}-12-05`,
+    }, employe);
+
+    const savedReservation = await Conge.findByPk(reservation.id);
+    await compteurCourant.reload();
+    await compteurFutur.reload();
+    expect(savedReservation.statut).toBe('reserve');
+    expect(savedReservation.annee_compteur).toBe(NEXT_YEAR);
+    expect(Number(compteurCourant.jours_reserves)).toBe(0);
+    expect(Number(compteurFutur.jours_reserves)).toBe(5);
+
+    await reservation.destroy();
+  });
 });

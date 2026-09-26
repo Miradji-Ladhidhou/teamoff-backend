@@ -1896,6 +1896,7 @@ async function updateConge(id, data, user, req = null) {
     }
 
     let updateOverlapWarning = null;
+    const isReserved = conge.statut === 'reserve';
     const isPending = conge.statut === 'en_attente_manager';
     const isFinalValidated = conge.statut === 'valide_final';
     const isManagerValidated = conge.statut === 'valide_manager';
@@ -1904,8 +1905,10 @@ async function updateConge(id, data, user, req = null) {
     const previousDateFin = conge.date_fin;
     const previousCommentaireEmploye = conge.commentaire_employe || '';
 
-    if (!isPending && !isFinalValidated && !(isManagerValidated && isAdminRole)) {
-      throw new Error('Modification impossible');
+    if (!isReserved && !isPending && !isFinalValidated && !(isManagerValidated && isAdminRole)) {
+      const err = new Error('Cette demande ne peut pas être modifiée à ce stade.');
+      err.statusCode = 409;
+      throw err;
     }
 
     if (isFinalValidated || (isManagerValidated && isAdminRole)) {
@@ -2102,7 +2105,8 @@ async function updateConge(id, data, user, req = null) {
     const oldYear = getCongeCompteurAnnee(conge);
     const dateYear = dayjs(conge.date_debut).year();
     const nextDateYear = dayjs(nextDateDebut).year();
-    const nextYear = conge.conge_type_id === nextCongeTypeId
+    const nextYear = (isReserved || isPending || isManagerValidated)
+      && conge.conge_type_id === nextCongeTypeId
       && dateYear === nextDateYear
       ? oldYear
       : nextDateYear;
@@ -2167,23 +2171,28 @@ async function updateConge(id, data, user, req = null) {
       }
     }
 
-    if (isPending || isManagerValidated) {
+    if (isReserved || isPending || isManagerValidated) {
       const nextCounterAvailable =
         safeNumber(nextCounter.jours_acquis)
         - safeNumber(nextCounter.jours_reserves);
 
       const effectiveAvailable = sameCounter
-        ? nextCounterAvailable + safeNumber(oldDays)
+        ? nextCounterAvailable + (isReserved
+          ? Math.min(safeNumber(oldDays), safeNumber(oldCounter.jours_reserves))
+          : safeNumber(oldDays))
         : nextCounterAvailable;
 
-      if (safeNumber(newDays) > effectiveAvailable) {
+      if (!isReserved && safeNumber(newDays) > effectiveAvailable) {
         throw new Error('Solde insuffisant');
       }
     }
 
-    if (isPending || isManagerValidated) {
+    if (isReserved || isPending || isManagerValidated) {
       if (sameCounter) {
-        const rawReserves = safeNumber(oldCounter.jours_reserves) - safeNumber(oldDays);
+        const rawReserves = safeNumber(oldCounter.jours_reserves)
+          - (isReserved
+            ? Math.min(safeNumber(oldDays), safeNumber(oldCounter.jours_reserves))
+            : safeNumber(oldDays));
         if (rawReserves < 0) {
           logger.warn(`updateConge: incohérence jours_reserves compteur ${oldCounter.id} (${oldCounter.jours_reserves} < oldDays ${oldDays})`);
         }
@@ -2268,10 +2277,11 @@ async function updateConge(id, data, user, req = null) {
 
     await conge.update({
       ...updates,
-      jours_calcules: newDays
+      jours_calcules: newDays,
+      annee_compteur: nextYear,
     }, { transaction: t });
 
-    if (isPending && user?.id === employe.id) {
+    if ((isReserved || isPending) && user?.id === employe.id) {
       const managers = await Utilisateur.findAll({
         where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
         transaction: t,
@@ -2286,22 +2296,24 @@ async function updateConge(id, data, user, req = null) {
       const nextPeriod = `${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)}`;
       const nextCommentaireEmploye = (updates.commentaire_employe ?? conge.commentaire_employe ?? '').toString().trim();
 
-      const updatePendingWorkflow = conge.effective_approval_workflow || 'manager_admin';
-      const recipients = (updatePendingWorkflow === 'admin_only' ? admins : [...managers, ...admins]).filter((recipient) => recipient?.email);
+      const updateWorkflow = conge.effective_approval_workflow || 'manager_admin';
+      const recipients = (updateWorkflow === 'admin_only' ? admins : [...managers, ...admins]).filter((recipient) => recipient?.email);
 
       for (const recipient of recipients) {
         fireEmail({
           to: recipient.email,
-          subject: `Demande de conge modifiee - ${demandeurNom}`,
-          templateName: 'leave-updated-before-approval',
+          subject: `${isReserved ? 'Réservation' : 'Demande de conge'} modifiee - ${demandeurNom}`,
+          templateName: isReserved ? 'leave-reservation-admin' : 'leave-updated-before-approval',
           data: {
             destinataire_prenom: recipient.prenom || 'Validateur',
-            action_requise: 'Action requise',
-            contexte_modif: 'sa demande de conge avant validation',
+            action_requise: isReserved ? 'Pour information' : 'Action requise',
+            contexte_modif: isReserved ? 'sa réservation de congé' : 'sa demande de conge avant validation',
             demandeur_nom: demandeurNom,
             ancienne_periode: previousPeriod,
             nouvelle_periode: nextPeriod,
             type_conge: nextCongeType.libelle || 'Type non renseigne',
+            jours_calcules: newDays,
+            jours_avant_depart: dayjs(nextDateDebut).startOf('day').diff(dayjs().startOf('day'), 'day'),
             ancien_commentaire_employe: previousCommentaireEmploye || 'Aucun',
             commentaire_employe: nextCommentaireEmploye || 'Aucun',
             action_url: buildCongeUrl(conge.id),
@@ -2309,14 +2321,30 @@ async function updateConge(id, data, user, req = null) {
         });
       }
       if (employe.email) {
-        emailService.sendLeaveUpdatedSelfConfirm(
-          employe,
-          nextCongeType.libelle || 'Congé',
-          previousPeriod,
-          nextPeriod,
-          previousCommentaireEmploye || null,
-          nextCommentaireEmploye || null
-        ).catch((e) => logger.error('sendLeaveUpdatedSelfConfirm error', { error: e.message }));
+        if (isReserved) {
+          fireEmail({
+            to: employe.email,
+            subject: 'Votre réservation de congé a été modifiée',
+            templateName: 'leave-reservation-employee',
+            data: {
+              destinataire_prenom: employe.prenom || 'Collaborateur',
+              date_debut: formatDateFR(nextDateDebut),
+              date_fin: formatDateFR(nextDateFin),
+              type_conge: nextCongeType.libelle || 'Congé',
+              jours_calcules: newDays,
+              action_url: buildCongeUrl(conge.id),
+            },
+          });
+        } else {
+          emailService.sendLeaveUpdatedSelfConfirm(
+            employe,
+            nextCongeType.libelle || 'Congé',
+            previousPeriod,
+            nextPeriod,
+            previousCommentaireEmploye || null,
+            nextCommentaireEmploye || null
+          ).catch((e) => logger.error('sendLeaveUpdatedSelfConfirm error', { error: e.message }));
+        }
       }
     }
 
