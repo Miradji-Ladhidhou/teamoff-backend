@@ -95,4 +95,34 @@ describe('updateConge — demande N+1 imputée sur le compteur courant', () => {
     expect(Number(savedCurrentCounter.jours_reserves)).toBe(4);
     expect(Number(savedFutureCounter.jours_reserves)).toBe(0);
   });
+
+  it('permet de modifier un congé 2026 sans affecter une réservation 2027', async () => {
+    const currentLeave = await Conge.create({
+      entreprise_id: entreprise.id,
+      utilisateur_id: employe.id,
+      conge_type_id: typeConge.id,
+      date_debut: `${CURRENT_YEAR}-11-02`,
+      date_fin: `${CURRENT_YEAR}-11-05`,
+      statut: 'en_attente_manager',
+      jours_calcules: 4,
+      annee_compteur: CURRENT_YEAR,
+    });
+    await compteurCourant.update({ jours_acquis: 10, jours_reserves: 9 });
+    await compteurFutur.update({ jours_acquis: 0, jours_reserves: 5 });
+
+    await expect(updateConge(
+      currentLeave.id,
+      { date_fin: `${CURRENT_YEAR}-11-04` },
+      employe
+    )).resolves.toBeDefined();
+
+    const savedCurrentLeave = await Conge.findByPk(currentLeave.id);
+    await compteurCourant.reload();
+    await compteurFutur.reload();
+    expect(savedCurrentLeave.date_fin).toBe(`${CURRENT_YEAR}-11-04`);
+    expect(Number(compteurCourant.jours_reserves)).toBe(8);
+    expect(Number(compteurFutur.jours_reserves)).toBe(5);
+
+    await currentLeave.destroy();
+  });
 });

@@ -70,6 +70,57 @@ afterAll(async () => {
 });
 
 describe('createOrUpdateCounter — protection de jours_reserves', () => {
+  it('autorise le CRUD du compteur 2026 malgré une réservation distincte en 2027', async () => {
+    const currentYear = new Date().getFullYear();
+    const nextYear = currentYear + 1;
+    const counter2026 = await CompteurConges.create({
+      entreprise_id: entreprise.id,
+      utilisateur_id: employe.id,
+      conge_type_id: congeType.id,
+      annee: currentYear,
+      jours_acquis: 15,
+      jours_pris: 0,
+      jours_reserves: 0,
+    });
+    const counter2027 = await CompteurConges.create({
+      entreprise_id: entreprise.id,
+      utilisateur_id: employe.id,
+      conge_type_id: congeType.id,
+      annee: nextYear,
+      jours_acquis: 0,
+      jours_pris: 0,
+      jours_reserves: 5,
+    });
+    const reservation2027 = await Conge.create({
+      entreprise_id: entreprise.id,
+      utilisateur_id: employe.id,
+      conge_type_id: congeType.id,
+      date_debut: `${nextYear}-06-01`,
+      date_fin: `${nextYear}-06-05`,
+      statut: 'reserve',
+      jours_calcules: 5,
+      annee_compteur: nextYear,
+    });
+
+    await expect(createOrUpdateCounter({
+      entrepriseId: entreprise.id,
+      utilisateurId: employe.id,
+      congeTypeId: congeType.id,
+      annee: currentYear,
+      values: { jours_acquis: 18, jours_reserves: 0 },
+    })).resolves.toBeDefined();
+
+    await counter2026.reload();
+    await counter2027.reload();
+    expect(Number(counter2026.jours_acquis)).toBe(18);
+    expect(Number(counter2026.jours_reserves)).toBe(0);
+    expect(Number(counter2027.jours_reserves)).toBe(5);
+
+    await reservation2027.destroy();
+    await counter2026.destroy();
+    await counter2027.destroy();
+  });
+
   it('zeroing explicite (jours_reserves=0) avec congés en attente lève une erreur', async () => {
     await expect(
       createOrUpdateCounter({
