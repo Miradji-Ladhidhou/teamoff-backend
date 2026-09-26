@@ -2171,7 +2171,50 @@ async function updateConge(id, data, user, req = null) {
       }
     }
 
-    if (isReserved || isPending || isManagerValidated) {
+    const existingFinalImputations = isFinalValidated
+      ? await CongeImputation.findAll({ where: { conge_id: conge.id }, transaction: t })
+      : [];
+
+    if (isFinalValidated && existingFinalImputations.length > 0) {
+      for (const imputation of existingFinalImputations) {
+        const imputedCounter = await CompteurConges.findByPk(imputation.compteur_conges_id, {
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+        if (!imputedCounter) {
+          throw Object.assign(
+            new Error(`Compteur ${imputation.annee} introuvable pour modifier le congé`),
+            { statusCode: 409 }
+          );
+        }
+        const imputedDays = safeNumber(imputation.jours);
+        refundLIFO(imputedCounter, imputedDays);
+        imputedCounter.jours_acquis = Number((safeNumber(imputedCounter.jours_acquis) + imputedDays).toFixed(2));
+        imputedCounter.jours_pris = Math.max(0, Number((safeNumber(imputedCounter.jours_pris) - imputedDays).toFixed(2)));
+        await imputedCounter.save({ transaction: t });
+        await logMouvement({
+          entreprise_id: conge.entreprise_id,
+          utilisateur_id: conge.utilisateur_id,
+          conge_type_id: conge.conge_type_id,
+          annee: imputation.annee,
+          type: 'ajustement_admin',
+          quantite: imputedDays,
+          solde_apres: safeNumber(imputedCounter.jours_acquis) - safeNumber(imputedCounter.jours_reserves),
+          source_id: conge.id,
+          description: descriptionConge('Restitution avant modification du congé', conge.date_debut, conge.date_fin),
+          transaction: t,
+        });
+      }
+
+      await CongeImputation.destroy({ where: { conge_id: conge.id }, transaction: t });
+      const congeForAllocation = {
+        ...conge.toJSON(),
+        conge_type_id: nextCongeTypeId,
+        date_debut: nextDateDebut,
+        annee_compteur: nextYear,
+      };
+      await allocateCongeToAvailableCounters(congeForAllocation, newDays, t, { releaseReservation: false });
+    } else if (isReserved || isPending || isManagerValidated) {
       const nextCounterAvailable =
         safeNumber(nextCounter.jours_acquis)
         - safeNumber(nextCounter.jours_reserves);
@@ -2208,7 +2251,7 @@ async function updateConge(id, data, user, req = null) {
         await oldCounter.save({ transaction: t });
         await nextCounter.save({ transaction: t });
       }
-    } else {
+    } else if (!(isFinalValidated && existingFinalImputations.length > 0)) {
       // Branche valide_final : vérification explicite du solde avant toute mise à jour.
       // Avant ce fix, Math.max(0, ...) masquait silencieusement tout déficit.
       if (sameCounter) {

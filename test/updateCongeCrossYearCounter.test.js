@@ -6,8 +6,9 @@ const {
   CongeType,
   CompteurConges,
   Conge,
+  CongeImputation,
 } = require('../src/models');
-const { updateConge } = require('../src/services/congesService');
+const { deleteConge, updateConge } = require('../src/services/congesService');
 
 const RUN_ID = Date.now();
 const CURRENT_YEAR = new Date().getFullYear();
@@ -180,5 +181,59 @@ describe('updateConge — demande N+1 imputée sur le compteur courant', () => {
     expect(Number(compteurFutur.jours_reserves)).toBe(5);
 
     await reservation.destroy();
+  });
+
+  it('annule correctement un congé validé après allongement de sa période', async () => {
+    await compteurCourant.update({ jours_acquis: 0, jours_pris: 3, jours_reserves: 0 });
+    await compteurFutur.update({ jours_acquis: 2, jours_pris: 2, jours_reserves: 0 });
+    const validatedLeave = await Conge.create({
+      entreprise_id: entreprise.id,
+      utilisateur_id: employe.id,
+      conge_type_id: typeConge.id,
+      date_debut: `${NEXT_YEAR}-12-01`,
+      date_fin: `${NEXT_YEAR}-12-05`,
+      statut: 'valide_final',
+      jours_calcules: 5,
+      annee_compteur: NEXT_YEAR,
+    });
+    await CongeImputation.create({
+      conge_id: validatedLeave.id,
+      compteur_conges_id: compteurCourant.id,
+      annee: CURRENT_YEAR,
+      jours: 3,
+    });
+    await CongeImputation.create({
+      conge_id: validatedLeave.id,
+      compteur_conges_id: compteurFutur.id,
+      annee: NEXT_YEAR,
+      jours: 2,
+    });
+
+    await updateConge(validatedLeave.id, {
+      date_fin: `${NEXT_YEAR}-12-06`,
+    }, { id: 'super-admin-test', role: 'super_admin' });
+
+    const updatedImputations = await CongeImputation.findAll({
+      where: { conge_id: validatedLeave.id },
+      order: [['annee', 'ASC']],
+    });
+    expect(updatedImputations.map((row) => [row.annee, Number(row.jours)])).toEqual([
+      [CURRENT_YEAR, 3],
+      [NEXT_YEAR, 3],
+    ]);
+
+    await expect(deleteConge(validatedLeave.id, {
+      id: 'super-admin-test',
+      role: 'super_admin',
+    }, { commentaire: 'Annulation après modification' })).resolves.toBeUndefined();
+
+    await compteurCourant.reload();
+    await compteurFutur.reload();
+    expect(Number(compteurCourant.jours_acquis)).toBe(3);
+    expect(Number(compteurCourant.jours_pris)).toBe(0);
+    expect(Number(compteurCourant.jours_annules)).toBe(3);
+    expect(Number(compteurFutur.jours_acquis)).toBe(4);
+    expect(Number(compteurFutur.jours_pris)).toBe(0);
+    expect(Number(compteurFutur.jours_annules)).toBe(3);
   });
 });
