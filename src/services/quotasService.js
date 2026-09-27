@@ -438,12 +438,16 @@ async function getSoldeUtilisateur(utilisateur_id, conge_type_id, annee) {
  * Récupère tous les soldes d'un utilisateur pour une année
  */
 async function getSoldesUtilisateur(utilisateur_id, annee) {
+  const where = { utilisateur_id };
+  if (annee !== 'all') where.annee = annee;
   const compteurs = await CompteurConges.findAll({
-    where: { utilisateur_id, annee },
-    include: [{ model: require('../models').CongeType, as: 'conge_type' }]
+    where,
+    include: [{ model: require('../models').CongeType, as: 'conge_type' }],
+    order: [['annee', 'ASC']],
   });
 
   return compteurs.map(c => ({
+    annee: Number(c.annee),
     conge_type_id: c.conge_type_id,
     conge_type: c.conge_type.libelle,
     jours_acquis: c.jours_acquis,

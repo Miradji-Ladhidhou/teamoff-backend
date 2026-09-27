@@ -127,6 +127,36 @@ describe('updateConge — demande N+1 imputée sur le compteur courant', () => {
     await currentLeave.destroy();
   });
 
+  it('utilise les soldes des années précédentes pour modifier une demande 2027 en attente', async () => {
+    await compteurCourant.update({ jours_acquis: 5, jours_reserves: 0 });
+    await compteurFutur.update({ jours_acquis: 0, jours_reserves: 5 });
+    const pendingNextYear = await Conge.create({
+      entreprise_id: entreprise.id,
+      utilisateur_id: employe.id,
+      conge_type_id: typeConge.id,
+      date_debut: `${NEXT_YEAR}-11-04`,
+      date_fin: `${NEXT_YEAR}-11-08`,
+      statut: 'en_attente_manager',
+      jours_calcules: 5,
+      annee_compteur: NEXT_YEAR,
+    });
+
+    await expect(updateConge(
+      pendingNextYear.id,
+      { date_fin: `${NEXT_YEAR}-11-07` },
+      employe
+    )).resolves.toBeDefined();
+
+    const savedLeave = await Conge.findByPk(pendingNextYear.id);
+    await compteurCourant.reload();
+    await compteurFutur.reload();
+    expect(savedLeave.date_fin).toBe(`${NEXT_YEAR}-11-07`);
+    expect(Number(compteurCourant.jours_acquis)).toBe(5);
+    expect(Number(compteurFutur.jours_reserves)).toBe(4);
+
+    await pendingNextYear.destroy();
+  });
+
   it('permet de modifier une réservation N+1 sans l’activer ni exiger de solde acquis', async () => {
     await compteurFutur.update({ jours_acquis: 0, jours_reserves: 5 });
     const reservation = await Conge.create({

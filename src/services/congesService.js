@@ -2215,15 +2215,29 @@ async function updateConge(id, data, user, req = null) {
       };
       await allocateCongeToAvailableCounters(congeForAllocation, newDays, t, { releaseReservation: false });
     } else if (isReserved || isPending || isManagerValidated) {
-      const nextCounterAvailable =
-        safeNumber(nextCounter.jours_acquis)
-        - safeNumber(nextCounter.jours_reserves);
-
-      const effectiveAvailable = sameCounter
-        ? nextCounterAvailable + (isReserved
-          ? Math.min(safeNumber(oldDays), safeNumber(oldCounter.jours_reserves))
-          : safeNumber(oldDays))
-        : nextCounterAvailable;
+      let effectiveAvailable = 0;
+      if (!isReserved) {
+        const eligibleCounters = await CompteurConges.findAll({
+          where: {
+            utilisateur_id: conge.utilisateur_id,
+            conge_type_id: nextCongeTypeId,
+            annee: { [Op.lte]: nextYear },
+          },
+          order: [['annee', 'ASC']],
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+        effectiveAvailable = eligibleCounters.reduce((total, counter) => {
+          const isReleasedRequestCounter = nextCongeTypeId === conge.conge_type_id
+            && String(counter.id) === String(oldCounter.id);
+          const reservedWithoutCurrentLeave = Math.max(
+            0,
+            safeNumber(counter.jours_reserves)
+              - (isReleasedRequestCounter ? safeNumber(oldDays) : 0)
+          );
+          return total + Math.max(0, safeNumber(counter.jours_acquis) - reservedWithoutCurrentLeave);
+        }, 0);
+      }
 
       if (!isReserved && safeNumber(newDays) > effectiveAvailable) {
         throw new Error('Solde insuffisant');
