@@ -2,6 +2,7 @@
 
 const bcrypt = require('bcrypt');
 const dayjs = require('dayjs');
+const notificationService = require('../src/services/notificationService');
 const {
   Entreprise,
   Utilisateur,
@@ -224,6 +225,31 @@ describe('Nouvelles demandes de réservation N+1', () => {
       [CURRENT_YEAR - 1, 3],
       [CURRENT_YEAR, 2],
     ]);
+  });
+
+  it('envoie un email au manager quand une réservation activée attend sa validation', async () => {
+    const fixture = await createFixture('AutoPendingEmail', 'manager_admin');
+    const leave = await createFutureLeave(fixture);
+    await createCounter(fixture, CURRENT_YEAR, 5);
+    const sendEmailSpy = jest.spyOn(notificationService, 'sendEmail').mockResolvedValue(undefined);
+
+    try {
+      const result = await tryActivateReservations(
+        fixture.employee.id,
+        fixture.leaveType.id,
+        NEXT_YEAR
+      );
+
+      const approverEmails = sendEmailSpy.mock.calls
+        .filter(([params]) => params.templateName === 'leave-new-request-manager')
+        .map(([params]) => params.to);
+
+      expect(result.activated.map((item) => item.conge_id)).toContain(leave.id);
+      expect(approverEmails).toContain(fixture.manager.email);
+      expect(approverEmails).not.toContain(fixture.admin.email);
+    } finally {
+      sendEmailSpy.mockRestore();
+    }
   });
 
   it('laisse en réservation une demande auto si le solde cumulé est insuffisant', async () => {

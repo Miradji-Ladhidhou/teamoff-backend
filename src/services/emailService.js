@@ -124,6 +124,9 @@ class EmailService {
     const fromAddr = process.env.EMAIL_FROM || process.env.MAIL_USER || 'noreply@teamoff.app';
     let logEntry = null;
     try {
+      const { emailNotifications } = await systemSettingsService.getSettings();
+      if (!emailNotifications) return undefined;
+
       // 1. Résoudre entreprise_nom depuis l'entreprise_id si absent
       if (!data.entreprise_nom) {
         const eid = data.entreprise_id || data.user?.entreprise_id || data.employe?.entreprise_id;

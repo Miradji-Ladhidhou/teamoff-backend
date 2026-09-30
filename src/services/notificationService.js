@@ -1,4 +1,4 @@
-const { Notification, Utilisateur } = require('../models');
+const { Notification, Utilisateur, EmailLog } = require('../models');
 const logger = require('../utils/logger');
 const sseManager = require('./sseManager');
 const nodemailer = require('nodemailer');
@@ -99,6 +99,42 @@ async function renderEmailTemplate(templateName, data = {}) {
   return replaceTemplateVariables(template, data);
 }
 
+async function recordEmailLog({ to, subject, templateName, data, statut, provider, messageId, error }) {
+  try {
+    const recipients = Array.isArray(to) ? to : [to];
+    const toAddress = recipients.map((recipient) => String(recipient || '')).filter(Boolean).join(', ').slice(0, 255);
+    const relatedUser = data?.user || data?.employe || data?.manager || data?.admin || data?.conge?.utilisateur;
+    let entrepriseId = data?.entreprise_id || data?.conge?.entreprise_id || relatedUser?.entreprise_id || null;
+    let utilisateurId = data?.utilisateur_id || data?.conge?.utilisateur_id || relatedUser?.id || null;
+
+    if ((!entrepriseId || !utilisateurId) && recipients.length === 1) {
+      const rawAddress = String(recipients[0] || '');
+      const email = rawAddress.match(/<([^>]+)>/)?.[1] || rawAddress;
+      const recipient = await Utilisateur.findOne({
+        where: { email: email.trim() },
+        attributes: ['id', 'entreprise_id'],
+      });
+      entrepriseId ||= recipient?.entreprise_id || null;
+      utilisateurId ||= recipient?.id || null;
+    }
+
+    await EmailLog.create({
+      type: templateName || data?.email_type || 'notification',
+      from_address: APP_FROM || null,
+      to_address: toAddress || '(destinataire inconnu)',
+      subject: String(subject || '').slice(0, 500),
+      statut,
+      provider: provider || null,
+      message_id: messageId || null,
+      error_message: error ? String(error.message || error).slice(0, 5000) : null,
+      entreprise_id: entrepriseId,
+      utilisateur_id: utilisateurId,
+    });
+  } catch (logError) {
+    logger.error('EmailLog.create failed', { error: logError.message });
+  }
+}
+
 function wrapProfessionalEmail({ subject, html, entreprise_nom }) {
   const safeSubject = String(subject || `${APP_NAME} - Notification`);
   const content = String(html || '').trim() || '<p>Une mise a jour est disponible.</p>';
@@ -160,74 +196,85 @@ async function sendEmail({ to, subject, html, templateName, data }) {
   if (!emailNotifications) return;
 
   const normalizedSubject = normalizeSubject(subject);
-  let professionalHtml;
+  const provider = process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN
+    ? 'gmail'
+    : process.env.RESEND_API_KEY ? 'resend' : 'smtp';
 
-  const entreprise_nom = data?.entreprise_nom || null;
-  if (templateName) {
-    professionalHtml = await renderEmailTemplate(templateName, data || {});
-  } else {
-    professionalHtml = wrapProfessionalEmail({ subject: normalizedSubject, html, entreprise_nom });
-  }
+  try {
+    let professionalHtml;
+    const entreprise_nom = data?.entreprise_nom || null;
+    if (templateName) {
+      professionalHtml = await renderEmailTemplate(templateName, data || {});
+    } else {
+      professionalHtml = wrapProfessionalEmail({ subject: normalizedSubject, html, entreprise_nom });
+    }
 
-  const text = htmlToText(professionalHtml);
+    const text = htmlToText(professionalHtml);
 
-  // Gmail API HTTP (googleapis) — priorité 1, HTTPS port 443, jamais bloqué
-  if (process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN) {
-    const { google } = require('googleapis');
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GMAIL_CLIENT_ID,
-      process.env.GMAIL_CLIENT_SECRET
-    );
-    oauth2Client.setCredentials({ refresh_token: process.env.GMAIL_REFRESH_TOKEN });
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+    if (provider === 'gmail') {
+      const { google } = require('googleapis');
+      const oauth2Client = new google.auth.OAuth2(
+        process.env.GMAIL_CLIENT_ID,
+        process.env.GMAIL_CLIENT_SECRET
+      );
+      oauth2Client.setCredentials({ refresh_token: process.env.GMAIL_REFRESH_TOKEN });
+      const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
-    const boundary = `boundary_${Date.now()}`;
-    const rawParts = [
-      `From: "${APP_NAME}" <${APP_FROM}>`,
-      `To: ${Array.isArray(to) ? to.join(', ') : to}`,
-      `Subject: =?UTF-8?B?${Buffer.from(normalizedSubject).toString('base64')}?=`,
-      'MIME-Version: 1.0',
-      `Content-Type: multipart/alternative; boundary="${boundary}"`,
-      '',
-      `--${boundary}`,
-      'Content-Type: text/plain; charset=UTF-8',
-      '',
-      text,
-      '',
-      `--${boundary}`,
-      'Content-Type: text/html; charset=UTF-8',
-      '',
-      professionalHtml,
-      '',
-      `--${boundary}--`,
-    ];
-    const raw = Buffer.from(rawParts.join('\r\n')).toString('base64url');
-    return gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
-  }
+      const boundary = `boundary_${Date.now()}`;
+      const rawParts = [
+        `From: "${APP_NAME}" <${APP_FROM}>`,
+        `To: ${Array.isArray(to) ? to.join(', ') : to}`,
+        `Subject: =?UTF-8?B?${Buffer.from(normalizedSubject).toString('base64')}?=`,
+        'MIME-Version: 1.0',
+        `Content-Type: multipart/alternative; boundary="${boundary}"`,
+        '',
+        `--${boundary}`,
+        'Content-Type: text/plain; charset=UTF-8',
+        '',
+        text,
+        '',
+        `--${boundary}`,
+        'Content-Type: text/html; charset=UTF-8',
+        '',
+        professionalHtml,
+        '',
+        `--${boundary}--`,
+      ];
+      const raw = Buffer.from(rawParts.join('\r\n')).toString('base64url');
+      const sent = await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
+      await recordEmailLog({ to, subject: normalizedSubject, templateName, data, statut: 'success', provider, messageId: sent?.data?.id });
+      return sent;
+    }
 
-  // Resend — priorité 2
-  if (process.env.RESEND_API_KEY) {
-    const { Resend } = require('resend');
-    const resend = new Resend(process.env.RESEND_API_KEY);
-    const { data: sent, error } = await resend.emails.send({
-      from: `${APP_NAME} <${APP_FROM}>`,
-      to: Array.isArray(to) ? to : [to],
+    if (provider === 'resend') {
+      const { Resend } = require('resend');
+      const resend = new Resend(process.env.RESEND_API_KEY);
+      const { data: sent, error } = await resend.emails.send({
+        from: `${APP_NAME} <${APP_FROM}>`,
+        to: Array.isArray(to) ? to : [to],
+        subject: normalizedSubject,
+        html: professionalHtml,
+        text,
+      });
+      if (error) throw new Error(error.message || JSON.stringify(error));
+      await recordEmailLog({ to, subject: normalizedSubject, templateName, data, statut: 'success', provider, messageId: sent?.id });
+      return { id: sent?.id };
+    }
+
+    const transporter = await createTransporter();
+    const sent = await transporter.sendMail({
+      from: `"${APP_NAME}" <${APP_FROM}>`,
+      to,
       subject: normalizedSubject,
       html: professionalHtml,
       text,
     });
-    if (error) throw new Error(error.message || JSON.stringify(error));
-    return { id: sent?.id };
+    await recordEmailLog({ to, subject: normalizedSubject, templateName, data, statut: 'success', provider, messageId: sent?.messageId });
+    return sent;
+  } catch (error) {
+    await recordEmailLog({ to, subject: normalizedSubject, templateName, data, statut: 'failed', provider, error });
+    throw error;
   }
-
-  const transporter = await createTransporter();
-  return transporter.sendMail({
-    from: `"${APP_NAME}" <${APP_FROM}>`,
-    to,
-    subject: normalizedSubject,
-    html: professionalHtml,
-    text,
-  });
 }
 
 /**
@@ -304,7 +351,12 @@ async function notifyUser({
       await sendEmail({
         to: utilisateur.email,
         subject: emailSubject || type,
-        html: emailHtml || `<p>${message}</p>`
+        html: emailHtml || `<p>${message}</p>`,
+        data: {
+          email_type: type,
+          entreprise_id: utilisateur.entreprise_id,
+          utilisateur_id: utilisateur.id,
+        },
       });
     } catch (error) {
       logger.error('Erreur envoi email:', error.message);

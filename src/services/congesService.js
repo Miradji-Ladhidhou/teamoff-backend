@@ -5,6 +5,7 @@ const { auditConge, auditEntity, logAudit: _logAudit } = require('./auditHelper'
 const auditActions = require('./auditActions');
 const { logMouvement, descriptionConge } = require('./mouvementSoldeService');
 const { ensureCounter } = require('./quotasService');
+const { getLeaveNotificationRecipients } = require('./leaveNotificationRecipients');
 const LeavePolicyService = require('./leavePolicyService');
 const joursFeriesService = require('./joursFeriesService');
 const { getLeaveRules, getEffectiveLeaveRules, getRequiredNotice } = require('./politiqueConges');
@@ -127,7 +128,6 @@ async function allocateCongeToAvailableCounters(conge, joursConge, transaction, 
     ),
   };
 }
-
 async function refundCongeImputations(conge, joursConge, transaction) {
   const imputations = await CongeImputation.findAll({
     where: { conge_id: conge.id },
@@ -144,7 +144,10 @@ async function refundCongeImputations(conge, joursConge, transaction) {
       lock: transaction.LOCK.UPDATE,
     });
     if (!compteur) {
-      throw Object.assign(new Error(`Compteur ${imputation.annee} introuvable pour l'annulation`), { statusCode: 409 });
+      throw Object.assign(
+        new Error(`Compteur ${imputation.annee} introuvable pour l'annulation`),
+        { statusCode: 409 }
+      );
     }
 
     refundLIFO(compteur, jours);
@@ -169,7 +172,10 @@ async function refundCongeImputations(conge, joursConge, transaction) {
   }
 
   if (restant > 0) {
-    throw Object.assign(new Error(`Imputation incomplète : ${restant.toFixed(2)} jour(s) à restituer`), { statusCode: 409 });
+    throw Object.assign(
+      new Error(`Imputation incomplète : ${restant.toFixed(2)} jour(s) à restituer`),
+      { statusCode: 409 }
+    );
   }
 }
 
@@ -946,21 +952,19 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       });
     }
 
-    // Notification à tous les managers et à l'admin entreprise
-    const managers = await Utilisateur.findAll({
-      where: { entreprise_id: utilisateur.entreprise_id, role: 'manager', statut: 'actif' }
-    });
-    const admins = await Utilisateur.findAll({
-      where: { entreprise_id: utilisateur.entreprise_id, role: 'admin_entreprise' }
-    });
-
     const shouldNotifyOnCreate = leaveRules.notification_settings.on_create;
+    const createRecipients = await getLeaveNotificationRecipients({
+      entrepriseId: utilisateur.entreprise_id,
+      service: utilisateur.service,
+      workflow: approvalWorkflow,
+      stage: statutConge === 'valide_manager' ? 'admin' : 'manager',
+      reservation: isReservation,
+      transaction: t,
+    });
 
     const utilisateurNomComplet = `${utilisateur.prenom || ''} ${utilisateur.nom || ''}`.trim() || utilisateur.nom;
 
     if (shouldNotifyOnCreate && !isReservation) {
-      // admin_only : seuls les admins reçoivent la demande, les managers ne sont pas concernés
-      const createRecipients = approvalWorkflow === 'admin_only' ? admins : [...managers, ...admins];
       for (const recipient of createRecipients) {
         if (!recipient.email) continue;
         emailQueue.push({
@@ -1019,8 +1023,8 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
           transaction: t
         });
         // Notifier admins et managers de la réservation (managers exclus en admin_only)
-        const allRecipients = approvalWorkflow === 'admin_only' ? [...admins] : [...managers, ...admins];
-        for (const recipient of allRecipients) {
+        for (const recipient of createRecipients) {
+          if (!recipient.email) continue;
           emailQueue.push({
             to: recipient.email,
             subject: `Réservation de congé - ${utilisateurNomComplet}`,
@@ -2354,7 +2358,12 @@ async function updateConge(id, data, user, req = null) {
       const nextCommentaireEmploye = (updates.commentaire_employe ?? conge.commentaire_employe ?? '').toString().trim();
 
       const updateWorkflow = conge.effective_approval_workflow || 'manager_admin';
-      const recipients = (updateWorkflow === 'admin_only' ? admins : [...managers, ...admins]).filter((recipient) => recipient?.email);
+      const recipients = (await getLeaveNotificationRecipients({
+        entrepriseId: conge.entreprise_id,
+        service: employe.service,
+        workflow: updateWorkflow,
+        transaction: t,
+      })).filter((recipient) => recipient?.email);
 
       for (const recipient of recipients) {
         fireEmail({
@@ -2441,8 +2450,10 @@ async function updateConge(id, data, user, req = null) {
       const workflowNeedsManager = ['manager_only', 'manager', 'manager_admin'].includes(leaveRulesUpdate.approval_workflow);
 
       if (workflowNeedsManager) {
-        const managers = await Utilisateur.findAll({
-          where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
+        const managers = await getLeaveNotificationRecipients({
+          entrepriseId: conge.entreprise_id,
+          service: employe.service,
+          workflow: 'manager',
           transaction: t,
         });
         for (const manager of managers) {
@@ -2483,15 +2494,12 @@ async function updateConge(id, data, user, req = null) {
       const nextPeriod = `${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)}`;
       const nextCommentaireEmploye = (updates.commentaire_employe ?? conge.commentaire_employe ?? '').toString().trim();
 
-      const managers = await Utilisateur.findAll({
-        where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
+      const recipients = (await getLeaveNotificationRecipients({
+        entrepriseId: conge.entreprise_id,
+        service: employe.service,
+        workflow: conge.effective_approval_workflow || 'manager_admin',
         transaction: t,
-      });
-      const adminsValide = await Utilisateur.findAll({
-        where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise' },
-        transaction: t,
-      });
-      const recipients = [...managers, ...adminsValide].filter((recipient) => recipient?.email);
+      })).filter((recipient) => recipient?.email);
 
       for (const recipient of recipients) {
         fireEmail({
@@ -2536,7 +2544,7 @@ async function deleteConge(id, user, options = {}) {
     if (!conge) throw new Error('Congé introuvable');
 
     const employe = await Utilisateur.findByPk(conge.utilisateur_id, {
-      attributes: ['id', 'prenom', 'nom', 'email'],
+      attributes: ['id', 'prenom', 'nom', 'email', 'service'],
       transaction: t,
     });
     if (!employe) throw new Error('Employé introuvable');
@@ -2661,16 +2669,13 @@ async function deleteConge(id, user, options = {}) {
 
     if (isPending && !isAdminLevel) {
       const employe_nom = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || 'Un employé';
-      const managers = await Utilisateur.findAll({
-        where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
-        attributes: ['id', 'prenom', 'nom', 'email'],
-      });
-      const adminsPending = await Utilisateur.findAll({
-        where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise', statut: 'actif' },
-        attributes: ['id', 'prenom', 'nom', 'email'],
-      });
       const cancelPendingWorkflow = conge.effective_approval_workflow || 'manager_admin';
-      const recipients = cancelPendingWorkflow === 'admin_only' ? adminsPending : [...managers, ...adminsPending];
+      const recipients = await getLeaveNotificationRecipients({
+        entrepriseId: conge.entreprise_id,
+        service: employe.service,
+        workflow: cancelPendingWorkflow,
+        transaction: t,
+      });
       for (const recipient of recipients) {
         if (recipient.email) {
           fireEmail({
@@ -2740,16 +2745,14 @@ async function deleteConge(id, user, options = {}) {
     if ((isManagerValidated || isFinalValidated) && !isAdminLevel) {
       const employe_nom = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || 'Un employé';
       const statutLabel = isFinalValidated ? 'congé validé définitivement' : 'congé validé par le manager';
-      const managers = await Utilisateur.findAll({
-        where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
-        attributes: ['id', 'prenom', 'nom', 'email'],
-      });
-      const adminsValidated = await Utilisateur.findAll({
-        where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise', statut: 'actif' },
-        attributes: ['id', 'prenom', 'nom', 'email'],
-      });
       const cancelValidatedWorkflow = conge.effective_approval_workflow || 'manager_admin';
-      const recipients = cancelValidatedWorkflow === 'admin_only' ? adminsValidated : [...managers, ...adminsValidated];
+      const recipients = await getLeaveNotificationRecipients({
+        entrepriseId: conge.entreprise_id,
+        service: employe.service,
+        workflow: cancelValidatedWorkflow,
+        reservation: true,
+        transaction: t,
+      });
       for (const recipient of recipients) {
         if (recipient.email) {
           fireEmail({
@@ -2814,11 +2817,15 @@ async function deleteConge(id, user, options = {}) {
         url: `/conges/${conge.id}`,
         transaction: t
       });
-      const managers = await Utilisateur.findAll({
-        where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
-        attributes: ['id', 'prenom', 'nom', 'email'],
+      const cancelWorkflow = conge.effective_approval_workflow || 'manager_admin';
+      const managers = await getLeaveNotificationRecipients({
+        entrepriseId: conge.entreprise_id,
+        service: employe.service,
+        workflow: cancelWorkflow,
+        reservation: true,
+        transaction: t,
       });
-      for (const manager of managers) {
+      for (const manager of managers.filter((recipient) => recipient.role === 'manager')) {
         if (manager.email) {
           emailService.sendLeaveCancelledByAdmin(
             manager,
@@ -3040,16 +3047,14 @@ async function activerReservation(congeId, reqUser) {
 
     // C-2 : notifier managers et admin si validation requise
     if (newStatut === 'en_attente_manager') {
-      const managers = await Utilisateur.findAll({
-        where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
-        transaction: t,
-      });
-      const adminsReserve = await Utilisateur.findAll({
-        where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise' },
-        transaction: t,
-      });
       const activationWorkflow = conge.effective_approval_workflow || leaveRules.approval_workflow || 'manager_admin';
-      const activationRecipients = activationWorkflow === 'admin_only' ? adminsReserve : [...managers, ...adminsReserve];
+      const activationRecipients = await getLeaveNotificationRecipients({
+        entrepriseId: conge.entreprise_id,
+        service: employe?.service,
+        workflow: activationWorkflow,
+        reservation: true,
+        transaction: t,
+      });
       for (const recipient of activationRecipients) {
         await notificationService.creerNotification({
           entreprise_id: conge.entreprise_id,
@@ -3059,7 +3064,7 @@ async function activerReservation(congeId, reqUser) {
           url: `/conges/${conge.id}`,
           transaction: t,
         });
-        emailQueue.push({
+        if (recipient.email) emailQueue.push({
           to: recipient.email,
           subject: `Nouvelle demande de congé – ${employeNom}`,
           templateName: 'leave-new-request-manager',
@@ -3283,16 +3288,14 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
 
         // Notification managers/admin si validation requise
         if (newStatut === 'en_attente_manager') {
-          const managers = await Utilisateur.findAll({
-            where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
-            transaction: t,
-          });
-          const adminsTryActivate = await Utilisateur.findAll({
-            where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise' },
-            transaction: t,
-          });
           const tryWorkflow = conge.effective_approval_workflow || 'manager_admin';
-          const tryRecipients = tryWorkflow === 'admin_only' ? adminsTryActivate : [...managers, ...adminsTryActivate];
+          const tryRecipients = await getLeaveNotificationRecipients({
+            entrepriseId: conge.entreprise_id,
+            service: employe?.service,
+            workflow: tryWorkflow,
+            stage: 'manager',
+            transaction: t,
+          });
           for (const recipient of tryRecipients) {
             await notificationService.creerNotification({
               entreprise_id: conge.entreprise_id,
@@ -3301,6 +3304,26 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
               message: `La réservation de ${employeNom} (${formatDateFR(conge.date_debut)} - ${formatDateFR(conge.date_fin)}) est maintenant en attente de validation.`,
               url: `/conges/${conge.id}`,
               transaction: t,
+            });
+          }
+
+          const congeType = await CongeType.findByPk(conge.conge_type_id, { transaction: t });
+          for (const recipient of tryRecipients) {
+            if (!recipient.email) continue;
+            emailQueue.push({
+              to: recipient.email,
+              subject: `Nouvelle demande de congé – ${employeNom}`,
+              templateName: 'leave-new-request-manager',
+              data: {
+                destinataire_prenom: recipient.prenom || 'Responsable',
+                demandeur_nom: employeNom,
+                date_debut: formatDateFR(conge.date_debut),
+                date_fin: formatDateFR(conge.date_fin),
+                type_conge: congeType?.libelle || 'Congé',
+                commentaire_employe: conge.commentaire_employe || 'Aucun',
+                overlap_warning_html: '',
+                action_url: buildCongeUrl(conge.id),
+              },
             });
           }
         }

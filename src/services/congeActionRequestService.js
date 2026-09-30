@@ -3,6 +3,7 @@
 const { CongeActionRequest, Conge, Utilisateur, CongeType, Entreprise, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const congesService = require('./congesService');
+const { getLeaveNotificationRecipients } = require('./leaveNotificationRecipients');
 const notificationService = require('./notificationService');
 const { formatDateFR } = require('../utils/dateFormatter');
 const logger = require('../utils/logger');
@@ -244,7 +245,11 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
 
   // Email aux managers — action requise ou pour information selon workflow
   if (managerCanAct) {
-    const managers = await Utilisateur.findAll({ where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' } });
+    const managers = await getLeaveNotificationRecipients({
+      entrepriseId: conge.entreprise_id,
+      service: employe.service,
+      workflow: 'manager',
+    });
     for (const mgr of managers) {
       if (mgr.email) {
         fireEmail({
@@ -480,7 +485,11 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
     const effectiveWorkflow = conge?.effective_approval_workflow;
     // null = congé créé avant que le champ existe → on notifie par défaut (plus sûr)
     if (!effectiveWorkflow || MANAGER_ALLOWED_WORKFLOWS.includes(effectiveWorkflow)) {
-      const managers = await Utilisateur.findAll({ where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' } });
+      const managers = await getLeaveNotificationRecipients({
+        entrepriseId: conge.entreprise_id,
+        service: request.utilisateur?.service,
+        workflow: 'manager',
+      });
       for (const mgr of managers) {
         if (mgr.email) {
           const managerMessage = request.type === 'cancel'
@@ -618,7 +627,11 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
     const effectiveWorkflow = conge?.effective_approval_workflow;
     // null = congé créé avant que le champ existe → on notifie par défaut (plus sûr)
     if (!effectiveWorkflow || MANAGER_ALLOWED_WORKFLOWS.includes(effectiveWorkflow)) {
-      const managers = await Utilisateur.findAll({ where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' } });
+      const managers = await getLeaveNotificationRecipients({
+        entrepriseId: conge.entreprise_id,
+        service: request.utilisateur?.service,
+        workflow: 'manager',
+      });
       for (const mgr of managers) {
         if (mgr.email) {
           const managerMessage = request.type === 'cancel'

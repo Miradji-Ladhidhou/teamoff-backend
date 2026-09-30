@@ -19,6 +19,7 @@
 
 const sseManager            = require('../src/services/sseManager');
 const notificationService   = require('../src/services/notificationService');
+const emailService          = require('../src/services/emailService');
 const systemSettingsService = require('../src/services/systemSettingsService');
 const { Entreprise, Utilisateur, Notification } = require('../src/models');
 const bcrypt = require('bcrypt');
@@ -141,14 +142,21 @@ describe('Fix #47 — emailNotifications=false supprime l\'envoi email', () => {
     getSettingsSpy.mockRestore();
   });
 
-  it('AVANT fix : sendEmail tente l\'envoi (erreur SMTP ou résultat) / APRÈS fix : retourne undefined', async () => {
+  it('les deux chemins email respectent le réglage global désactivé', async () => {
     const result = await notificationService.sendEmail({
       to: `dest.47.${TS}@test.internal`,
       subject: 'Test emailNotifications désactivé',
       html: '<p>Ne doit pas être envoyé</p>',
     });
-    // Après fix : early return avant tout accès SMTP/Gmail/Resend → undefined
+    const directResult = await emailService.sendEmail(
+      `dest.47.direct.${TS}@test.internal`,
+      'Test emailNotifications désactivé',
+      'system-alert',
+      { severity: 'Faible', alert_type: 'test', message: 'Ne doit pas partir' }
+    );
+
     expect(result).toBeUndefined();
+    expect(directResult).toBeUndefined();
   });
 });
 

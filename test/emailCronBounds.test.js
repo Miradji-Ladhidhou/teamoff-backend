@@ -33,7 +33,7 @@ function daysAgo(n) {
   return dayjs().subtract(n, 'day').subtract(1, 'hour').toDate(); // milieu du créneau
 }
 
-let ctx; // { entreprise, manager, employe, congeType }
+let ctx; // { entreprise, manager, admin, employe, congeType }
 
 beforeAll(async () => {
   const entreprise = await Entreprise.create({
@@ -55,6 +55,15 @@ beforeAll(async () => {
     service: 'dev',
   });
 
+  const admin = await Utilisateur.create({
+    entreprise_id: entreprise.id,
+    prenom: 'Admin', nom: 'Cron',
+    email: `admin.cron.${Date.now()}@test.internal`,
+    role: 'admin_entreprise',
+    password_hash: passwordHash,
+    statut: 'actif',
+  });
+
   const employe = await Utilisateur.create({
     entreprise_id: entreprise.id,
     prenom: 'Employe', nom: 'Cron',
@@ -73,7 +82,7 @@ beforeAll(async () => {
     demi_journee_autorisee: true,
   });
 
-  ctx = { entreprise, manager, employe, congeType };
+  ctx = { entreprise, manager, admin, employe, congeType };
 });
 
 afterAll(async () => {
@@ -105,6 +114,31 @@ async function createPendingConge(createdDaysAgo) {
   await sequelize.query(
     `UPDATE conge SET created_at = :ts WHERE id = :id`,
     { replacements: { ts: daysAgo(createdDaysAgo), id: conge.id } }
+  );
+  return conge;
+}
+
+async function createManagerValidatedConge(createdDaysAgo, validatedDaysAgo) {
+  const conge = await Conge.create({
+    entreprise_id: ctx.entreprise.id,
+    utilisateur_id: ctx.employe.id,
+    conge_type_id: ctx.congeType.id,
+    date_debut: dayjs().add(10, 'day').format('YYYY-MM-DD'),
+    date_fin: dayjs().add(12, 'day').format('YYYY-MM-DD'),
+    debut_demi_journee: 'matin',
+    fin_demi_journee: 'apres_midi',
+    statut: 'valide_manager',
+    effective_approval_workflow: 'manager_admin',
+  });
+  await sequelize.query(
+    `UPDATE conge SET created_at = :createdAt, updated_at = :updatedAt WHERE id = :id`,
+    {
+      replacements: {
+        createdAt: daysAgo(createdDaysAgo),
+        updatedAt: daysAgo(validatedDaysAgo),
+        id: conge.id,
+      },
+    }
   );
   return conge;
 }
@@ -178,7 +212,27 @@ describe('runPendingLeaveReminders — bornage des relances', () => {
 
     // Avec 5 conges en attente (1j, 3j, 7j, 10j, 30j), seuls les 2 bons doivent être ramassés.
     // 1 manager dans le service → 1 email par conge = 2 emails max.
-    expect(emailService.sendLeavePendingReminder.mock.calls.length).toBeLessThanOrEqual(2);
+    const fixtureIds = new Set([conge30.id, conge10.id, conge3.id, conge7.id, conge1.id]);
+    const fixtureCalls = emailService.sendLeavePendingReminder.mock.calls.filter(
+      ([conge]) => fixtureIds.has(conge.id)
+    );
+    expect(fixtureCalls.length).toBeLessThanOrEqual(2);
+  });
+
+  it('démarre la relance admin à la validation manager, pas à la création', async () => {
+    const conge = await createManagerValidatedConge(30, 3);
+
+    try {
+      await runPendingLeaveReminders();
+
+      const adminReminder = emailService.sendLeavePendingReminder.mock.calls.find(
+        ([calledConge, recipient]) => calledConge.id === conge.id && recipient.id === ctx.admin.id
+      );
+      expect(adminReminder).toBeDefined();
+      expect(adminReminder[2]).toBe(3);
+    } finally {
+      await Conge.destroy({ where: { id: conge.id } });
+    }
   });
 });
 

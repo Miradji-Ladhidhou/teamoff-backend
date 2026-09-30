@@ -3,6 +3,7 @@ const dayjs = require('dayjs');
 const { Op } = require('sequelize');
 const { Conge, Utilisateur, Entreprise, CompteurConges, CongeType } = require('../models');
 const emailService = require('../services/emailService');
+const { getLeaveNotificationRecipients } = require('../services/leaveNotificationRecipients');
 const logger = require('../utils/logger');
 const { formatDateFR } = require('../utils/dateFormatter');
 
@@ -55,13 +56,26 @@ async function runPendingLeaveReminders() {
   // Fenêtre J+7 : created_at entre 8 j et 7 j ago
   const j7End   = dayjs().subtract(7, 'day').toDate();
   const j7Start = dayjs().subtract(8, 'day').toDate();
+  const createdAtWindows = [
+    { created_at: { [Op.gt]: j3Start, [Op.lte]: j3End } },
+    { created_at: { [Op.gt]: j7Start, [Op.lte]: j7End } },
+  ];
+  const validatedAtWindows = [
+    { updated_at: { [Op.gt]: j3Start, [Op.lte]: j3End } },
+    { updated_at: { [Op.gt]: j7Start, [Op.lte]: j7End } },
+  ];
 
   const conges = await Conge.findAll({
     where: {
-      statut: 'en_attente_manager',
       [Op.or]: [
-        { created_at: { [Op.gt]: j3Start, [Op.lte]: j3End } },
-        { created_at: { [Op.gt]: j7Start, [Op.lte]: j7End } },
+        {
+          statut: 'en_attente_manager',
+          [Op.or]: createdAtWindows,
+        },
+        {
+          statut: 'valide_manager',
+          [Op.or]: validatedAtWindows,
+        },
       ],
     },
     include: [
@@ -72,42 +86,22 @@ async function runPendingLeaveReminders() {
 
   for (const conge of conges) {
     if (!conge.utilisateur) continue;
-    const joursAttente = dayjs().diff(dayjs(conge.created_at), 'day');
+    const waitingSince = conge.statut === 'valide_manager' ? conge.updated_at : conge.created_at;
+    const joursAttente = dayjs().diff(dayjs(waitingSince), 'day');
 
-    // admin_only : seuls les admins doivent être relancés
     const pendingWorkflow = conge.effective_approval_workflow || 'manager_admin';
-    let recipients;
-    if (pendingWorkflow === 'admin_only') {
-      recipients = await Utilisateur.findAll({
-        where: { entreprise_id: conge.utilisateur.entreprise_id, role: 'admin_entreprise', statut: 'actif' },
-        attributes: ['id', 'email', 'prenom', 'nom'],
-      });
-    } else {
-      // Trouver le manager du même service
-      const managers = await Utilisateur.findAll({
-        where: {
-          entreprise_id: conge.utilisateur.entreprise_id,
-          role: 'manager',
-          service: conge.utilisateur.service || null,
-          statut: 'actif',
-        },
-        attributes: ['id', 'email', 'prenom', 'nom'],
-      });
-      // Fallback : tous les managers + admins si aucun manager de service
-      recipients = managers.length > 0 ? managers : await Utilisateur.findAll({
-        where: {
-          entreprise_id: conge.utilisateur.entreprise_id,
-          role: { [Op.in]: ['manager', 'admin_entreprise'] },
-          statut: 'actif',
-        },
-        attributes: ['id', 'email', 'prenom', 'nom'],
-      });
-    }
+    const recipients = await getLeaveNotificationRecipients({
+      entrepriseId: conge.utilisateur.entreprise_id,
+      service: conge.utilisateur.service,
+      workflow: pendingWorkflow,
+      stage: conge.statut === 'valide_manager' ? 'admin' : 'manager',
+    });
 
-    for (const manager of recipients) {
+    for (const recipient of recipients) {
+      if (!recipient.email) continue;
       try {
-        await emailService.sendLeavePendingReminder(conge, manager, joursAttente);
-        logger.info(`[email-cron] Relance demande en attente → ${manager.email} (congé ${conge.id})`);
+        await emailService.sendLeavePendingReminder(conge, recipient, joursAttente);
+        logger.info(`[email-cron] Relance demande en attente → ${recipient.email} (congé ${conge.id})`);
       } catch (e) {
         logger.error('[email-cron] sendLeavePendingReminder error', { error: e.message, congeId: conge.id });
       }
@@ -278,7 +272,7 @@ async function runReservationReminders() {
         [flagField]: null,
       },
       include: [
-        { model: Utilisateur, as: 'utilisateur', attributes: ['id', 'email', 'prenom', 'nom', 'entreprise_id'] },
+        { model: Utilisateur, as: 'utilisateur', attributes: ['id', 'email', 'prenom', 'nom', 'entreprise_id', 'service'] },
         { model: CongeType, as: 'conge_type', attributes: ['libelle'] },
       ],
     });
@@ -295,28 +289,25 @@ async function runReservationReminders() {
       if (rowsClaimed === 0) continue;
 
       const reservationWorkflow = conge.effective_approval_workflow || 'manager_admin';
-      const admins = await Utilisateur.findAll({
-        where: {
-          entreprise_id: conge.utilisateur.entreprise_id,
-          role: reservationWorkflow === 'admin_only'
-            ? 'admin_entreprise'
-            : { [Op.in]: ['admin_entreprise', 'manager'] },
-          statut: 'actif',
-        },
-        attributes: ['id', 'email', 'prenom', 'nom'],
+      const recipients = await getLeaveNotificationRecipients({
+        entrepriseId: conge.utilisateur.entreprise_id,
+        service: conge.utilisateur.service,
+        workflow: reservationWorkflow,
+        reservation: true,
       });
 
       const demandeurNom = `${conge.utilisateur.prenom || ''} ${conge.utilisateur.nom || ''}`.trim();
       const actionUrl = `${process.env.FRONTEND_URL?.split(',')[0] || ''}/conges/${conge.id}`;
 
-      for (const admin of admins) {
+      for (const recipient of recipients) {
+        if (!recipient.email) continue;
         try {
           await emailService.sendEmail(
-            admin.email,
+            recipient.email,
             `Rappel réservation congé dans ${label} - ${demandeurNom}`,
             'leave-reservation-reminder',
             {
-              destinataire_prenom: admin.prenom || 'Responsable',
+              destinataire_prenom: recipient.prenom || 'Responsable',
               demandeur_nom: demandeurNom,
               date_debut: formatDateFR(conge.date_debut),
               date_fin: formatDateFR(conge.date_fin),
@@ -326,7 +317,7 @@ async function runReservationReminders() {
               action_url: actionUrl,
             }
           );
-          logger.info(`[email-cron] Rappel réservation J-${days} → ${admin.email} (congé ${conge.id})`);
+          logger.info(`[email-cron] Rappel réservation J-${days} → ${recipient.email} (congé ${conge.id})`);
         } catch (e) {
           logger.error('[email-cron] sendReservationReminder error', { error: e.message, congeId: conge.id });
         }

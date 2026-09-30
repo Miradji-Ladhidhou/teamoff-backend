@@ -63,7 +63,22 @@ router.get('/', authorizeRole(['super_admin']), async (req, res, next) => {
       subQuery: false,
     });
 
-    res.json({ logs, total, page: pageNum, totalPages: Math.ceil(total / limitNum), limit: limitNum });
+    const loggedTypes = await EmailLog.findAll({
+      attributes: ['type'],
+      where: { type: { [Op.not]: null } },
+      group: ['type'],
+      order: [['type', 'ASC']],
+      raw: true,
+    });
+
+    res.json({
+      logs,
+      types: loggedTypes.map(({ type: emailType }) => emailType),
+      total,
+      page: pageNum,
+      totalPages: Math.ceil(total / limitNum),
+      limit: limitNum,
+    });
   } catch (err) { next(err); }
 });
 
