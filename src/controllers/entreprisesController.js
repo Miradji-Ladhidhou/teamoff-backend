@@ -50,6 +50,9 @@ function normalizeServicePolicy(policy = {}) {
     notice_urgency_threshold: threshold,
     notice_urgent_days: Math.max(0, Number(policy.notice_urgent_days) || 0),
     notice_normal_days: Math.max(0, Number(policy.notice_normal_days) || 0),
+    manager_can_view_all_services: policy.manager_can_view_all_services === true
+      || policy.manager_can_validate_all_services === true,
+    manager_can_validate_all_services: policy.manager_can_validate_all_services === true,
   };
 }
 

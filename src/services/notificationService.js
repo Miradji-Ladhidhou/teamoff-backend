@@ -6,6 +6,7 @@ const dns = require('dns').promises;
 const fs = require('fs').promises;
 const systemSettingsService = require('./systemSettingsService');
 const path = require('path');
+const { prepareEmailNotificationMode } = require('../utils/emailNotificationMode');
 
 const APP_NAME = process.env.EMAIL_NAME || 'TeamOff';
 const APP_FROM = process.env.EMAIL_FROM || process.env.MAIL_USER;
@@ -194,6 +195,8 @@ async function sendEmail({ to, subject, html, templateName, data }) {
   // Fix #47 : respecter le flag emailNotifications configuré par l'admin.
   const { emailNotifications } = await systemSettingsService.getSettings();
   if (!emailNotifications) return;
+
+  ({ subject, data } = prepareEmailNotificationMode(subject, templateName, data));
 
   const normalizedSubject = normalizeSubject(subject);
   const provider = process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN

@@ -15,6 +15,7 @@
 const request      = require('supertest');
 const app          = require('../src/index');
 const emailService = require('../src/services/emailService');
+const notificationService = require('../src/services/notificationService');
 const { seed }     = require('./helpers/seed');
 const { Conge, CompteurConges, LeavePolicy } = require('../src/models');
 
@@ -22,6 +23,14 @@ let ctx;
 
 beforeAll(async () => {
   ctx = await seed();
+  await ctx.manager.update({ service: 'Finance' });
+  await ctx.employe.update({ service: 'Finance' });
+  await ctx.entreprise.update({
+    politique_conges: {
+      approval_workflow: 'manager_admin',
+      service_policies: { Finance: { approval_workflow: 'manager_admin' } },
+    },
+  });
 
   // Politique : autorise l'annulation de congés validés, sans délai de préavis
   await LeavePolicy.create({
@@ -45,6 +54,7 @@ afterAll(async () => {
 
 describe('CAS A — annulation congé en_attente_manager → sendLeaveCancelledSelfConfirm appelé', () => {
   let spy;
+  let emailSpy;
   let res;
 
   beforeAll(async () => {
@@ -71,13 +81,17 @@ describe('CAS A — annulation congé en_attente_manager → sendLeaveCancelledS
     });
 
     spy = jest.spyOn(emailService, 'sendLeaveCancelledSelfConfirm').mockResolvedValue(undefined);
+    emailSpy = jest.spyOn(notificationService, 'sendEmail').mockResolvedValue(undefined);
 
     res = await request(app)
       .delete(`/api/conges/${conge.id}`)
       .set('Authorization', `Bearer ${ctx.tokens.employe}`);
   });
 
-  afterAll(() => spy.mockRestore());
+  afterAll(() => {
+    spy.mockRestore();
+    emailSpy.mockRestore();
+  });
 
   it('retourne 200', () => {
     expect(res.status).toBe(204);
@@ -95,6 +109,15 @@ describe('CAS A — annulation congé en_attente_manager → sendLeaveCancelledS
   it('le statut transmis est celui d\'une demande en attente', () => {
     const [, , , statutLabel] = spy.mock.calls[0];
     expect(statutLabel).toBe('demande de congé en attente');
+  });
+
+  it('l’email manager d’annulation est informatif et non actionnable', () => {
+    const managerEmail = emailSpy.mock.calls
+      .map(([payload]) => payload)
+      .find((payload) => payload.templateName === 'leave-cancelled-by-employee');
+    expect(managerEmail).toBeDefined();
+    expect(managerEmail.to).toBe(ctx.manager.email);
+    expect(managerEmail.data.notification_mode).toBe('information');
   });
 });
 

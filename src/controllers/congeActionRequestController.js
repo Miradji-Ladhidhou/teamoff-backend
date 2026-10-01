@@ -27,6 +27,7 @@ async function list(req, res, next) {
       statut: statut || undefined,
       page: Number(page),
       limit: Number(limit),
+      user: req.user,
     });
     res.json(result);
   } catch (err) { next(err); }
@@ -34,7 +35,7 @@ async function list(req, res, next) {
 
 async function getOne(req, res, next) {
   try {
-    const request = await svc.getRequest(req.params.requestId, req.user.entreprise_id);
+    const request = await svc.getRequest(req.params.requestId, req.user);
     res.json(request);
   } catch (err) { next(err); }
 }

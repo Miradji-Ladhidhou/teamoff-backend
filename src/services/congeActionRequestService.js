@@ -7,11 +7,48 @@ const { getLeaveNotificationRecipients } = require('./leaveNotificationRecipient
 const notificationService = require('./notificationService');
 const { formatDateFR } = require('../utils/dateFormatter');
 const logger = require('../utils/logger');
+const {
+  getLeaveRules,
+  getEffectiveLeaveRules,
+  getManagerServicePermissions,
+  canManagerAccessService,
+} = require('./politiqueConges');
 
 const FRONTEND_URL = (process.env.FRONTEND_URL || 'http://localhost:3001').split(',')[0].trim();
 
 // Workflows qui autorisent le manager à traiter les demandes d'action
 const MANAGER_ALLOWED_WORKFLOWS = ['manager_only', 'manager', 'manager_admin'];
+
+async function getManagerScopeContext(user, entrepriseId) {
+  const [manager, entreprise] = await Promise.all([
+    Utilisateur.findByPk(user.id, { attributes: ['id', 'role', 'service'] }),
+    Entreprise.findByPk(entrepriseId, { attributes: ['politique_conges'] }),
+  ]);
+  const leaveRules = getLeaveRules(entreprise);
+  return { manager: manager || user, leaveRules };
+}
+
+async function assertManagerCanValidateService(user, conge, employeeService) {
+  if (user.role !== 'manager') return;
+  const { manager, leaveRules } = await getManagerScopeContext(user, conge.entreprise_id);
+  if (manager.id === conge.utilisateur_id) {
+    const err = new Error('Un manager ne peut pas traiter sa propre demande.');
+    err.statusCode = 403;
+    throw err;
+  }
+  const workflow = conge.effective_approval_workflow
+    || getEffectiveLeaveRules(leaveRules, employeeService || null).approval_workflow;
+  if (!MANAGER_ALLOWED_WORKFLOWS.includes(workflow)) {
+    const err = new Error('Le workflow de ce congé ne permet pas au manager de traiter cette demande.');
+    err.statusCode = 403;
+    throw err;
+  }
+  if (!canManagerAccessService(manager, employeeService, leaveRules, 'validate')) {
+    const err = new Error('Vous ne pouvez pas traiter les demandes des autres services.');
+    err.statusCode = 403;
+    throw err;
+  }
+}
 
 function fireEmail(params) {
   notificationService.sendEmail(params).catch(err =>
@@ -258,6 +295,7 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
           templateName: 'leave-action-request-admin',
           data: {
             destinataire_prenom: mgr.prenom || 'Manager',
+            notification_mode: mgr.notification_mode || 'action',
             titre_email: `Demande ${deAction(action)} — action requise`,
             sous_titre: 'Vous devez approuver ou refuser cette demande',
             message_role: 'Veuillez examiner et traiter cette demande depuis votre espace.',
@@ -288,9 +326,26 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
 // ---------------------------------------------------------------------------
 // Lister les demandes (admin + manager)
 // ---------------------------------------------------------------------------
-async function listRequests({ entrepriseId, statut, page = 1, limit = 20 }) {
+async function listRequests({ entrepriseId, statut, page = 1, limit = 20, user = null }) {
   const where = { entreprise_id: entrepriseId };
   if (statut) where.statut = statut;
+  const managerContext = user?.role === 'manager'
+    ? await getManagerScopeContext(user, entrepriseId)
+    : null;
+
+  const employeeInclude = {
+    model: Utilisateur,
+    as: 'utilisateur',
+    attributes: ['id', 'prenom', 'nom', 'email', 'service'],
+    required: false,
+  };
+  if (managerContext) {
+    const { manager, leaveRules } = managerContext;
+    if (!getManagerServicePermissions(leaveRules, manager).canViewAllServices) {
+      employeeInclude.where = manager.service ? { service: manager.service } : { id: manager.id };
+      employeeInclude.required = true;
+    }
+  }
 
   const offset = (page - 1) * limit;
   const { rows, count } = await CongeActionRequest.findAndCountAll({
@@ -301,20 +356,53 @@ async function listRequests({ entrepriseId, statut, page = 1, limit = 20 }) {
         as: 'conge',
         include: [{ model: CongeType, as: 'conge_type', attributes: ['id', 'libelle'] }],
       },
-      { model: Utilisateur, as: 'utilisateur', attributes: ['id', 'prenom', 'nom', 'email', 'service'] },
+      employeeInclude,
     ],
     order: [['created_at', 'DESC']],
     limit,
     offset,
   });
 
-  return { requests: rows, total: count, totalPages: Math.ceil(count / limit) };
+  const requests = rows.map((request) => {
+    if (managerContext) {
+      const employeeService = request.utilisateur?.service || null;
+      const workflow = request.conge?.effective_approval_workflow
+        || getEffectiveLeaveRules(managerContext.leaveRules, employeeService).approval_workflow;
+      request.setDataValue('manager_can_validate', Boolean(
+        managerContext.manager.id !== request.utilisateur_id
+        &&
+        MANAGER_ALLOWED_WORKFLOWS.includes(workflow)
+        && canManagerAccessService(managerContext.manager, employeeService, managerContext.leaveRules, 'validate')
+      ));
+    }
+    return request;
+  });
+
+  return { requests, total: count, totalPages: Math.ceil(count / limit) };
 }
 
 // ---------------------------------------------------------------------------
 // Obtenir une demande (admin + manager)
 // ---------------------------------------------------------------------------
-async function getRequest(requestId, entrepriseId) {
+async function getRequest(requestId, user) {
+  const entrepriseId = user.entreprise_id;
+  const employeeInclude = {
+    model: Utilisateur,
+    as: 'utilisateur',
+    attributes: ['id', 'prenom', 'nom', 'email', 'service'],
+    required: false,
+  };
+  const managerContext = user.role === 'manager'
+    ? await getManagerScopeContext(user, entrepriseId)
+    : null;
+  if (managerContext) {
+    const { manager, leaveRules } = managerContext;
+    if (!getManagerServicePermissions(leaveRules, manager).canViewAllServices) {
+      employeeInclude.where = manager.service ? { service: manager.service } : { id: manager.id };
+      employeeInclude.required = true;
+    }
+  }
+
   const req = await CongeActionRequest.findOne({
     where: { id: requestId, entreprise_id: entrepriseId },
     include: [
@@ -323,10 +411,21 @@ async function getRequest(requestId, entrepriseId) {
         as: 'conge',
         include: [{ model: CongeType, as: 'conge_type' }],
       },
-      { model: Utilisateur, as: 'utilisateur', attributes: ['id', 'prenom', 'nom', 'email', 'service'] },
+      employeeInclude,
     ],
   });
   if (!req) { const err = new Error('Demande introuvable'); err.statusCode = 404; throw err; }
+  if (managerContext) {
+    const employeeService = req.utilisateur?.service || null;
+    const workflow = req.conge?.effective_approval_workflow
+      || getEffectiveLeaveRules(managerContext.leaveRules, employeeService).approval_workflow;
+    req.setDataValue('manager_can_validate', Boolean(
+      managerContext.manager.id !== req.utilisateur_id
+      &&
+      MANAGER_ALLOWED_WORKFLOWS.includes(workflow)
+      && canManagerAccessService(managerContext.manager, employeeService, managerContext.leaveRules, 'validate')
+    ));
+  }
   return req;
 }
 
@@ -349,6 +448,7 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
   if (!conge) {
     const err = new Error('Le congé associé à cette demande n\'existe plus'); err.statusCode = 422; throw err;
   }
+  await assertManagerCanValidateService(actingUser, conge, request.utilisateur?.service);
 
   // Vérifier que le manager est autorisé par le workflow figé
   // null = congé créé avant l'introduction du champ → on autorise par défaut (fallback permissif)
@@ -501,6 +601,7 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
             templateName: 'leave-action-approved',
             data: {
               destinataire_prenom: mgr.prenom || 'Manager',
+              notification_mode: 'information',
               type_action: action,
               type_conge: conge.conge_type?.libelle || 'Congé',
               employe_nom,
@@ -538,7 +639,7 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
     where: { id: requestId, entreprise_id: actingUser.entreprise_id, statut: 'pending' },
     include: [
       { model: Conge, as: 'conge', include: [{ model: CongeType, as: 'conge_type' }] },
-      { model: Utilisateur, as: 'utilisateur', attributes: ['id', 'prenom', 'nom', 'email'] },
+      { model: Utilisateur, as: 'utilisateur', attributes: ['id', 'prenom', 'nom', 'email', 'service'] },
     ],
   });
   if (!request) { const err = new Error('Demande introuvable ou déjà traitée'); err.statusCode = 404; throw err; }
@@ -547,6 +648,7 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
   if (!conge) {
     const err = new Error('Le congé associé à cette demande n\'existe plus'); err.statusCode = 422; throw err;
   }
+  await assertManagerCanValidateService(actingUser, conge, request.utilisateur?.service);
 
   // Vérifier que le manager est autorisé par le workflow figé
   // null = congé créé avant l'introduction du champ → on autorise par défaut (fallback permissif)
@@ -643,6 +745,7 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
             templateName: 'leave-action-rejected',
             data: {
               destinataire_prenom: mgr.prenom || 'Manager',
+              notification_mode: 'information',
               type_action: action,
               type_conge: conge.conge_type?.libelle || 'Congé',
               employe_nom,

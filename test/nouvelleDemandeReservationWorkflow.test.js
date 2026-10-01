@@ -48,12 +48,14 @@ async function createFixture(label, approvalWorkflow = 'manager_admin', allowRes
       prenom: 'Employee', nom: label,
       email: `employee.${label}.${RUN_ID}@test.internal`,
       role: 'employe', password_hash: passwordHash, statut: 'actif',
+      service: 'Operations',
     }),
     Utilisateur.create({
       entreprise_id: company.id,
       prenom: 'Manager', nom: label,
       email: `manager.${label}.${RUN_ID}@test.internal`,
       role: 'manager', password_hash: passwordHash, statut: 'actif',
+      service: 'Operations',
     }),
     Utilisateur.create({
       entreprise_id: company.id,
@@ -247,6 +249,29 @@ describe('Nouvelles demandes de réservation N+1', () => {
       expect(result.activated.map((item) => item.conge_id)).toContain(leave.id);
       expect(approverEmails).toContain(fixture.manager.email);
       expect(approverEmails).not.toContain(fixture.admin.email);
+    } finally {
+      sendEmailSpy.mockRestore();
+    }
+  });
+
+  it('marque l’email du validateur comme action requise lors d’une activation manuelle', async () => {
+    const fixture = await createFixture('ManualActivationEmail', 'manager_admin');
+    await createCounter(fixture, CURRENT_YEAR, 0);
+    const leave = await createFutureLeave(fixture);
+    const sendEmailSpy = jest.spyOn(notificationService, 'sendEmail').mockResolvedValue(undefined);
+
+    try {
+      await activerReservation(leave.id, fixture.admin);
+
+      const managerMail = sendEmailSpy.mock.calls
+        .map(([params]) => params)
+        .find((params) => params.templateName === 'leave-new-request-manager' && params.to === fixture.manager.email);
+      const adminMail = sendEmailSpy.mock.calls
+        .map(([params]) => params)
+        .find((params) => params.templateName === 'leave-new-request-manager' && params.to === fixture.admin.email);
+
+      expect(managerMail?.data.notification_mode).toBe('action');
+      expect(adminMail?.data.notification_mode).toBe('information');
     } finally {
       sendEmailSpy.mockRestore();
     }

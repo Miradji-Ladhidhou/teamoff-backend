@@ -204,6 +204,30 @@ function getEffectiveLeaveRules(baseRules, service) {
   return effective;
 }
 
+function getManagerServicePermissions(baseRules, manager) {
+  const managerService = String(manager?.service || '').trim();
+  const servicePolicy = managerService ? baseRules?.service_policies?.[managerService] || {} : {};
+  const canValidateAllServices = servicePolicy.manager_can_validate_all_services === true;
+
+  return {
+    canViewAllServices: canValidateAllServices || servicePolicy.manager_can_view_all_services === true,
+    canValidateAllServices,
+  };
+}
+
+function canManagerAccessService(manager, targetService, baseRules, action = 'view') {
+  if (manager?.role !== 'manager') return true;
+
+  const managerService = String(manager.service || '').trim();
+  const leaveService = String(targetService || '').trim();
+  if (managerService && leaveService && managerService === leaveService) return true;
+
+  const permissions = getManagerServicePermissions(baseRules, manager);
+  if (action === 'view') return permissions.canViewAllServices;
+  if (action === 'validate') return permissions.canValidateAllServices;
+  return false;
+}
+
 /**
  * Récupère la politique de congé pour un type
  * @param {Object} entreprise - objet entreprise Sequelize
@@ -262,5 +286,7 @@ module.exports = {
   getToutesPolitiques,
   getLeaveRules,
   getEffectiveLeaveRules,
+  getManagerServicePermissions,
+  canManagerAccessService,
   getRequiredNotice,
 };

@@ -6,6 +6,7 @@ const validateUUIDParam = require('../middlewares/validateUUIDParam');
 const { checkUsageLimit } = require('../middlewares/usageLimiter');
 const { advancedRateLimiter } = require('../middlewares/advancedRateLimiter');
 const congeController = require('../controllers/congeController');
+const congeService = require('../services/congesService');
 const { importCongesCSV, getCongesImportTemplate, importReservationsCSV, getReservationsImportTemplate } = require('../controllers/congesImportController');
 const actionRequestController = require('../controllers/congeActionRequestController');
 const { AuditLog, Conge, Utilisateur } = require('../models');
@@ -41,6 +42,13 @@ router.get('/:id/history', authorizeRole(['employe','apprenti','manager','admin_
     if (['employe', 'apprenti'].includes(req.user.role)) {
       const conge = await Conge.findOne({ where: { id: req.params.id, utilisateur_id: req.user.id } });
       if (!conge) return res.status(403).json({ message: 'Accès interdit' });
+    } else if (req.user.role === 'manager') {
+      const conge = await Conge.findByPk(req.params.id, {
+        include: [{ model: Utilisateur, as: 'utilisateur', attributes: ['id', 'service'] }],
+      });
+      if (!conge) return res.status(403).json({ message: 'Accès interdit' });
+      if (conge.entreprise_id !== req.user.entreprise_id) return res.status(403).json({ message: 'Accès interdit' });
+      await congeService.assertManagerCanAccessConge(req.user, conge, 'view');
     } else if (req.user.role !== 'super_admin') {
       const conge = await Conge.findOne({ where: { id: req.params.id, entreprise_id: req.user.entreprise_id } });
       if (!conge) return res.status(403).json({ message: 'Accès interdit' });

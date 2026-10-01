@@ -22,6 +22,31 @@ function findJourFerie(dateStr, joursFeries) {
   });
 }
 
+function buildAttestationDayDetails(conge, joursFeries, blockedDays) {
+  const breakdown = congeService.calculateLeaveBreakdownWithHolidays(conge, joursFeries, blockedDays);
+  return breakdown.dates_non_prises
+    .filter(({ cause }) => cause === 'Jour férié exclu' || cause.startsWith('Week-end'))
+    .map(({ date, cause, quantite }) => {
+      if (cause === 'Jour férié exclu') {
+        return {
+          date,
+          type: 'ferie',
+          label: findJourFerie(date, joursFeries)?.libelle || 'Jour férié',
+          inclus: false,
+          quantite,
+        };
+      }
+
+      return {
+        date,
+        type: 'weekend',
+        label: DAY_LABELS[dayjs(date).day()],
+        inclus: false,
+        quantite,
+      };
+    });
+}
+
 async function checkOverlap(req, res, next) {
   try {
     const result = await congeService.checkOverlapConge({ ...req.body, reqUser: req.user });
@@ -41,7 +66,7 @@ async function checkValidationOverlap(req, res, next) {
 async function create(req, res, next) {
   try {
     const conge = await congeService.createConge({ ...req.body, reqUser: req.user, req });
-    notificationService.notifyCompany(req.user.entreprise_id, 'conge-created', { conge, user: req.user });
+    await notificationService.notifyCompany(conge.entreprise_id, 'conge-created', { conge, user: req.user });
     res.status(201).json(conge);
   }
   catch(err) { next(err); }
@@ -72,8 +97,9 @@ async function update(req, res, next) {
 async function remove(req, res, next) {
   try {
     const commentaire = req.body?.commentaire ?? null;
+    const conge = await congeService.getCongeById(req.params.id, req.user);
     await congeService.deleteConge(req.params.id, req.user, { commentaire, req });
-    notificationService.notifyCompany(req.user.entreprise_id, 'conge-deleted', { congeId: req.params.id, user: req.user });
+    await notificationService.notifyCompany(conge.entreprise_id, 'conge-deleted', { conge, congeId: req.params.id, user: req.user });
     res.status(204).send();
   }
   catch(err) { next(err); }
@@ -84,7 +110,7 @@ async function validate(req, res, next) {
     const commentaire = req.body?.commentaire ?? null;
     const conge = await congeService.validerConge(req.params.id, req.user, commentaire, req);
     notificationService.notifyUser(conge.utilisateur_id, 'conge-validated', { conge, validatedBy: req.user, commentaire });
-    notificationService.notifyCompany(req.user.entreprise_id, 'conge-status-changed', { conge, action: 'validated', by: req.user });
+    await notificationService.notifyCompany(conge.entreprise_id, 'conge-status-changed', { conge, action: 'validated', by: req.user });
     res.json(conge);
   }
   catch(err) { next(err); }
@@ -95,7 +121,7 @@ async function reject(req, res, next) {
     const commentaire = req.body?.commentaire ?? null;
     const conge = await congeService.rejeterConge(req.params.id, req.user, commentaire, req);
     notificationService.notifyUser(conge.utilisateur_id, 'conge-rejected', { conge, rejectedBy: req.user, commentaire });
-    notificationService.notifyCompany(req.user.entreprise_id, 'conge-status-changed', { conge, action: 'rejected', by: req.user });
+    await notificationService.notifyCompany(conge.entreprise_id, 'conge-status-changed', { conge, action: 'rejected', by: req.user });
     res.json(conge);
   }
   catch(err) { next(err); }
@@ -128,6 +154,7 @@ async function getAttestationData(req, res, next) {
       if (['employe', 'apprenti'].includes(user.role) && user.id !== conge.utilisateur_id)
         return res.status(403).json({ message: 'Accès interdit' });
     }
+    if (user.role === 'manager') await congeService.assertManagerCanAccessConge(user, conge, 'view');
 
     if (conge.statut !== 'valide_final')
       return res.status(422).json({ message: 'L\'attestation ne peut être générée que pour un congé validé (statut valide_final).' });
@@ -149,20 +176,7 @@ async function getAttestationData(req, res, next) {
     const end = dayjs(conge.date_fin);
     const jours_calendaires = end.diff(start, 'day') + 1;
 
-    const detail = [];
-    for (let d = start; d.isSameOrBefore(end, 'day'); d = d.add(1, 'day')) {
-      const dow = d.day();
-      const dateStr = d.format('YYYY-MM-DD');
-
-      if (dow === 0) {
-        detail.push({ date: dateStr, type: 'weekend', label: 'Dimanche', inclus: count_sunday === true });
-      } else if (dow === 6) {
-        detail.push({ date: dateStr, type: 'weekend', label: 'Samedi', inclus: count_saturday === true });
-      } else {
-        const jf = findJourFerie(dateStr, joursFeries);
-        if (jf) detail.push({ date: dateStr, type: 'ferie', label: jf.libelle, inclus: false });
-      }
-    }
+    const detail = buildAttestationDayDetails(conge, joursFeries, leaveRules.blocked_days || {});
 
     res.json({
       reference: `ATT-${dayjs(conge.date_debut).year()}-${String(conge.id).substring(0, 6).toUpperCase()}`,
@@ -239,6 +253,7 @@ async function sendAttestationEmail(req, res, next) {
       if (['employe', 'apprenti'].includes(user.role) && user.id !== conge.utilisateur_id)
         return res.status(403).json({ message: 'Accès interdit' });
     }
+    if (user.role === 'manager') await congeService.assertManagerCanAccessConge(user, conge, 'view');
 
     const recipientEmail = conge.utilisateur?.email;
     if (!recipientEmail) return res.status(400).json({ message: 'Adresse email de l\'employé introuvable' });
@@ -264,24 +279,12 @@ async function sendAttestationEmail(req, res, next) {
     // Calcul du décompte des jours (même logique que getAttestationData)
     const joursFeries = await joursFeriesService.getJoursFeriesEntreprise(conge.entreprise_id);
     const leaveRules = getLeaveRules(conge.entreprise);
-    const { count_saturday, count_sunday } = leaveRules.blocked_days || {};
+    const blockedDays = leaveRules.blocked_days || {};
     const start = dayjs(conge.date_debut);
     const end = dayjs(conge.date_fin);
     const jours_calendaires = end.diff(start, 'day') + 1;
     const jours_ouvres = parseFloat(conge.jours_calcules) || 0;
-    const detail = [];
-    for (let d = start; d.isSameOrBefore(end, 'day'); d = d.add(1, 'day')) {
-      const dow = d.day();
-      const dateStr = d.format('YYYY-MM-DD');
-      if (dow === 0) {
-        detail.push({ date: dateStr, type: 'weekend', label: 'Dimanche', inclus: count_sunday === true });
-      } else if (dow === 6) {
-        detail.push({ date: dateStr, type: 'weekend', label: 'Samedi', inclus: count_saturday === true });
-      } else {
-        const jf = findJourFerie(dateStr, joursFeries);
-        if (jf) detail.push({ date: dateStr, type: 'ferie', label: jf.libelle, inclus: false });
-      }
-    }
+    const detail = buildAttestationDayDetails(conge, joursFeries, blockedDays);
 
     // period label (avec demi-journée si applicable)
     const DEMI_LABELS_EMAIL = { matin: 'matin', apres_midi: 'après-midi' };

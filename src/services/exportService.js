@@ -3,8 +3,32 @@ const { Op } = require('sequelize');
 const { Parser } = require('json2csv');
 const PDFDocument = require('pdfkit');
 const pdfTemplate = require('./pdfTemplate');
+const { getLeaveRules, getManagerServicePermissions } = require('./politiqueConges');
 
 class ExportService {
+  static async getExportUserWhere(entrepriseId, filters, userContext) {
+    const user = userContext && typeof userContext === 'object' ? userContext : null;
+    const role = user?.role || userContext;
+    const conditions = [];
+
+    if (filters.service) conditions.push({ service: filters.service });
+    if (role === 'manager') {
+      conditions.push({ role: { [Op.notIn]: ['admin_entreprise', 'super_admin'] } });
+      if (user?.id && entrepriseId) {
+        const [manager, entreprise] = await Promise.all([
+          Utilisateur.findByPk(user.id, { attributes: ['id', 'service'] }),
+          Entreprise.findByPk(entrepriseId, { attributes: ['politique_conges'] }),
+        ]);
+        if (!getManagerServicePermissions(getLeaveRules(entreprise), manager || user).canViewAllServices) {
+          conditions.push(manager?.service ? { service: manager.service } : { id: user.id });
+        }
+      }
+    }
+
+    if (!conditions.length) return undefined;
+    return conditions.length === 1 ? conditions[0] : { [Op.and]: conditions };
+  }
+
   static async generateEntreprisesCSV() {
     const rows = (await Entreprise.findAll({
       attributes: ['id', 'nom', 'statut'],
@@ -150,10 +174,8 @@ class ExportService {
   // =========================
   // CONGES
   // =========================
-  static async getCongesPreview(entrepriseId, filters = {}, limit = 50, role = null) {
-    const userWhere = {};
-    if (filters.service) userWhere.service = filters.service;
-    if (role === 'manager') userWhere.role = { [Op.notIn]: ['admin_entreprise', 'super_admin'] };
+  static async getCongesPreview(entrepriseId, filters = {}, limit = 50, userContext = null) {
+    const userWhere = await this.getExportUserWhere(entrepriseId, filters, userContext);
 
     const rowsDB = await Conge.findAll({
       where: {
@@ -165,7 +187,7 @@ class ExportService {
           model: Utilisateur,
           as: 'utilisateur',
           attributes: ['prenom','nom','email','service'],
-          where: Object.keys(userWhere).length ? userWhere : undefined
+          where: userWhere
         },
         { model: CongeType, as: 'conge_type', attributes: ['libelle'] }
       ],
@@ -195,15 +217,15 @@ class ExportService {
     };
   }
 
-  static async generateCongesCSV(id, filters, role = null) {
-    const preview = await this.getCongesPreview(id, filters, 1000, role);
+  static async generateCongesCSV(id, filters, userContext = null) {
+    const preview = await this.getCongesPreview(id, filters, 1000, userContext);
     const numCols = preview.columns.length || 7;
     if (!preview.rows.length) return this.buildCsvHeader(filters, 'Congés', numCols) + '"Aucune donnée"';
     return this.buildCsvHeader(filters, 'Congés', numCols) + new Parser({ fields: preview.columns }).parse(this.sanitizeCsvRows(preview.rows));
   }
 
-  static async generateCongesPDF(id, filters, entreprise = null, role = null) {
-    const preview = await this.getCongesPreview(id, filters, 1000, role);
+  static async generateCongesPDF(id, filters, entreprise = null, userContext = null) {
+    const preview = await this.getCongesPreview(id, filters, 1000, userContext);
     // Définir les colonnes avec largeur et label pro
     const columns = [
       { key: 'employe', label: 'Employé', width: 120 },
@@ -228,10 +250,8 @@ class ExportService {
   // =========================
   // ABSENCES
   // =========================
-  static async getAbsencesPreview(entrepriseId, filters = {}, limit = 50, role = null) {
-    const userWhere = {};
-    if (filters.service) userWhere.service = filters.service;
-    if (role === 'manager') userWhere.role = { [Op.notIn]: ['admin_entreprise', 'super_admin'] };
+  static async getAbsencesPreview(entrepriseId, filters = {}, limit = 50, userContext = null) {
+    const userWhere = await this.getExportUserWhere(entrepriseId, filters, userContext);
 
     const rowsDB = await Absence.findAll({
       where: {
@@ -244,7 +264,7 @@ class ExportService {
           model: Utilisateur,
           as: 'utilisateur',
           attributes: ['prenom','nom','email','service'],
-          where: Object.keys(userWhere).length ? userWhere : undefined
+          where: userWhere
         }
       ],
       order: this.buildOrder(filters.sortBy, filters.sortOrder),
@@ -273,15 +293,15 @@ class ExportService {
     };
   }
 
-  static async generateAbsencesCSV(id, filters, role = null) {
-    const preview = await this.getAbsencesPreview(id, filters, 1000, role);
+  static async generateAbsencesCSV(id, filters, userContext = null) {
+    const preview = await this.getAbsencesPreview(id, filters, 1000, userContext);
     const numCols = preview.columns.length || 6;
     if (!preview.rows.length) return this.buildCsvHeader(filters, 'Absences', numCols) + '"Aucune donnée"';
     return this.buildCsvHeader(filters, 'Absences', numCols) + new Parser({ fields: preview.columns }).parse(this.sanitizeCsvRows(preview.rows));
   }
 
-  static async generateAbsencesPDF(id, filters, entreprise = null, role = null) {
-    const preview = await this.getAbsencesPreview(id, filters, 1000, role);
+  static async generateAbsencesPDF(id, filters, entreprise = null, userContext = null) {
+    const preview = await this.getAbsencesPreview(id, filters, 1000, userContext);
     const columns = [
       { key: 'employe', label: 'Employé', width: 120 },
       { key: 'email', label: 'Email', width: 140 },
@@ -304,11 +324,9 @@ class ExportService {
   // =========================
   // ARRETS MALADIE
   // =========================
-  static async getArretsMaladiePreview(entrepriseId, filters = {}, limit = 50, role = null) {
+  static async getArretsMaladiePreview(entrepriseId, filters = {}, limit = 50, userContext = null) {
     // Fix #51 : même pattern que getAbsencesPreview pour le filtre service.
-    const userWhere = {};
-    if (filters.service) userWhere.service = filters.service;
-    if (role === 'manager') userWhere.role = { [Op.notIn]: ['admin_entreprise', 'super_admin'] };
+    const userWhere = await this.getExportUserWhere(entrepriseId, filters, userContext);
 
     const rowsDB = await Absence.findAll({
       where: {
@@ -320,7 +338,7 @@ class ExportService {
         model: Utilisateur,
         as: 'utilisateur',
         attributes: ['prenom','nom','email','service'],
-        where: Object.keys(userWhere).length ? userWhere : undefined,
+        where: userWhere,
       }],
       order: this.buildOrder(filters.sortBy, filters.sortOrder),
       limit
@@ -342,15 +360,15 @@ class ExportService {
     };
   }
 
-  static async generateArretsMaladieCSV(id, filters, role = null) {
-    const preview = await this.getArretsMaladiePreview(id, filters, 1000, role);
+  static async generateArretsMaladieCSV(id, filters, userContext = null) {
+    const preview = await this.getArretsMaladiePreview(id, filters, 1000, userContext);
     const numCols = preview.columns.length || 4;
     if (!preview.rows.length) return this.buildCsvHeader(filters, 'Arrêts maladie', numCols) + '"Aucune donnée"';
     return this.buildCsvHeader(filters, 'Arrêts maladie', numCols) + new Parser({ fields: preview.columns }).parse(this.sanitizeCsvRows(preview.rows));
   }
 
-  static async generateArretsMaladiePDF(id, filters, entreprise = null, role = null) {
-    const preview = await this.getArretsMaladiePreview(id, filters, 1000, role);
+  static async generateArretsMaladiePDF(id, filters, entreprise = null, userContext = null) {
+    const preview = await this.getArretsMaladiePreview(id, filters, 1000, userContext);
     const columns = [
       { key: 'employe', label: 'Employé', width: 120 },
       { key: 'email', label: 'Email', width: 140 },
@@ -511,13 +529,13 @@ static async getUsagePreview(entrepriseId, filters = {}, limit = 50) {
   // =========================
   // TOUT (congés + absences + arrêts maladie)
   // =========================
-  static async getToutPreview(entrepriseId, filters = {}, limit = 50, role = null) {
+  static async getToutPreview(entrepriseId, filters = {}, limit = 50, userContext = null) {
     const COLS = ['categorie', 'employe', 'email', 'service', 'type', 'debut', 'fin', 'statut'];
 
     const [congesP, absencesP, arretsP] = await Promise.all([
-      this.getCongesPreview(entrepriseId, filters, limit, role),
-      this.getAbsencesPreview(entrepriseId, filters, limit, role),
-      this.getArretsMaladiePreview(entrepriseId, filters, limit, role),
+      this.getCongesPreview(entrepriseId, filters, limit, userContext),
+      this.getAbsencesPreview(entrepriseId, filters, limit, userContext),
+      this.getArretsMaladiePreview(entrepriseId, filters, limit, userContext),
     ]);
 
     const toISO = (ddmmyyyy) => {
@@ -545,8 +563,8 @@ static async getUsagePreview(entrepriseId, filters = {}, limit = 50) {
     };
   }
 
-  static async generateToutCSV(entrepriseId, filters, role = null) {
-    const preview = await this.getToutPreview(entrepriseId, filters, 1000, role);
+  static async generateToutCSV(entrepriseId, filters, userContext = null) {
+    const preview = await this.getToutPreview(entrepriseId, filters, 1000, userContext);
     const numCols = preview.columns.length;
     if (!preview.rows.length) {
       return this.buildCsvHeader(filters, 'Congés, absences & arrêts maladie', numCols) + '"Aucune donnée"';
@@ -558,19 +576,19 @@ static async getUsagePreview(entrepriseId, filters = {}, limit = 50) {
   // =========================
 // PREVIEW GLOBAL (CORRIGÉ)
 // =========================
-static async getPreview(type, entrepriseId, filters, limit, role = null) {
+static async getPreview(type, entrepriseId, filters, limit, userContext = null) {
   switch (type) {
     case 'conges':
-      return this.getCongesPreview(entrepriseId, filters, limit, role);
+      return this.getCongesPreview(entrepriseId, filters, limit, userContext);
 
     case 'absences':
-      return this.getAbsencesPreview(entrepriseId, filters, limit, role);
+      return this.getAbsencesPreview(entrepriseId, filters, limit, userContext);
 
     case 'arrets_maladie':
-      return this.getArretsMaladiePreview(entrepriseId, filters, limit, role);
+      return this.getArretsMaladiePreview(entrepriseId, filters, limit, userContext);
 
     case 'tout':
-      return this.getToutPreview(entrepriseId, filters, limit, role);
+      return this.getToutPreview(entrepriseId, filters, limit, userContext);
 
     case 'audit':
       return this.getAuditPreview(entrepriseId, filters, limit);

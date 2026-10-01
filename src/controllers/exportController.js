@@ -70,7 +70,7 @@ class ExportController {
       // Fix #52 : borner limit pour éviter un LIMIT 999999 en base (DoS).
       const rawLimit = parseInt(req.query.limit, 10);
       const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 500) : 50;
-      const preview = await ExportService.getPreview(type, entrepriseId, req.query, limit, role);
+      const preview = await ExportService.getPreview(type, entrepriseId, req.query, limit, req.user);
       res.json({ type, ...preview });
     } catch (err) { handleExportError(next, err); }
   }
@@ -81,7 +81,7 @@ class ExportController {
   static async exportCongesCSV(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
-      const data = await ExportService.generateCongesCSV(entrepriseId, req.query, req.user.role);
+      const data = await ExportService.generateCongesCSV(entrepriseId, req.query, req.user);
       auditExport.csvGenerated('conges', req.user, req, { entreprise_id: entrepriseId }).catch(() => {});
       sendCSV(res, data, 'conges.csv');
     } catch (err) { handleExportError(next, err); }
@@ -95,7 +95,7 @@ class ExportController {
         const ent = await Entreprise.findByPk(req.user.entreprise_id);
         entrepriseName = ent?.nom || null;
       }
-      const data = await ExportService.generateCongesPDF(entrepriseId, req.query, entrepriseName, req.user.role);
+      const data = await ExportService.generateCongesPDF(entrepriseId, req.query, entrepriseName, req.user);
       sendPDF(res, data, 'conges.pdf');
     } catch (err) { handleExportError(next, err); }
   }
@@ -106,7 +106,7 @@ class ExportController {
   static async exportAbsencesCSV(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
-      const data = await ExportService.generateAbsencesCSV(entrepriseId, req.query, req.user.role);
+      const data = await ExportService.generateAbsencesCSV(entrepriseId, req.query, req.user);
       auditExport.csvGenerated('absences', req.user, req, { entreprise_id: entrepriseId }).catch(() => {});
       sendCSV(res, data, 'absences.csv');
     } catch (err) { handleExportError(next, err); }
@@ -120,7 +120,7 @@ class ExportController {
         const ent = await Entreprise.findByPk(req.user.entreprise_id);
         entrepriseName = ent?.nom || null;
       }
-      const data = await ExportService.generateAbsencesPDF(entrepriseId, req.query, entrepriseName, req.user.role);
+      const data = await ExportService.generateAbsencesPDF(entrepriseId, req.query, entrepriseName, req.user);
       sendPDF(res, data, 'absences.pdf');
     } catch (err) { handleExportError(next, err); }
   }
@@ -131,7 +131,7 @@ class ExportController {
   static async exportArretsMaladieCSV(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
-      const data = await ExportService.generateArretsMaladieCSV(entrepriseId, req.query, req.user.role);
+      const data = await ExportService.generateArretsMaladieCSV(entrepriseId, req.query, req.user);
       sendCSV(res, data, 'arrets-maladie.csv');
     } catch (err) { handleExportError(next, err); }
   }
@@ -144,7 +144,7 @@ class ExportController {
         const ent = await Entreprise.findByPk(req.user.entreprise_id);
         entrepriseName = ent?.nom || null;
       }
-      const data = await ExportService.generateArretsMaladiePDF(entrepriseId, req.query, entrepriseName, req.user.role);
+      const data = await ExportService.generateArretsMaladiePDF(entrepriseId, req.query, entrepriseName, req.user);
       sendPDF(res, data, 'arrets-maladie.pdf');
     } catch (err) { handleExportError(next, err); }
   }
@@ -177,7 +177,7 @@ class ExportController {
   static async exportToutCSV(req, res, next) {
     try {
       const entrepriseId = await resolveEntrepriseId(req);
-      const data = await ExportService.generateToutCSV(entrepriseId, req.query, req.user?.role);
+      const data = await ExportService.generateToutCSV(entrepriseId, req.query, req.user);
       sendCSV(res, data, 'absences-conges.csv');
     } catch (err) { handleExportError(next, err); }
   }

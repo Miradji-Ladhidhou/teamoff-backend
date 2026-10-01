@@ -6,6 +6,7 @@ const { Utilisateur, Entreprise } = require('../models');
 const systemSettingsService = require('./systemSettingsService');
 const logger = require('../utils/logger');
 const { formatDateFR } = require('../utils/dateFormatter');
+const { prepareEmailNotificationMode } = require('../utils/emailNotificationMode');
 
 const isEmailDebug = process.env.EMAIL_DEBUG === 'true';
 
@@ -121,6 +122,7 @@ class EmailService {
   // Méthode générique d'envoi d'email
   // attachments: tableau nodemailer [{ filename, content (Buffer), contentType }]
   async sendEmail(to, subject, templateName, data = {}, attachments = []) {
+    ({ subject, data } = prepareEmailNotificationMode(subject, templateName, data));
     const fromAddr = process.env.EMAIL_FROM || process.env.MAIL_USER || 'noreply@teamoff.app';
     let logEntry = null;
     try {
@@ -724,13 +726,14 @@ class EmailService {
   // ---------------------------
   // Relance demande en attente (cron)
   // ---------------------------
-  async sendLeavePendingReminder(conge, manager, joursAttente) {
+  async sendLeavePendingReminder(conge, manager, joursAttente, notificationMode = 'action') {
     return this.sendEmail(
       manager.email,
       `Rappel : demande de congé en attente depuis ${joursAttente} jour(s)`,
       'leave-pending-reminder',
       {
         destinataire_prenom: manager.prenom || 'Manager',
+        notification_mode: notificationMode,
         demandeur_nom: `${conge.utilisateur?.prenom || ''} ${conge.utilisateur?.nom || ''}`.trim(),
         type_conge: conge.conge_type?.libelle || 'Congé',
         date_debut: formatDateFR(conge.date_debut),
@@ -921,13 +924,14 @@ class EmailService {
     );
   }
 
-  async sendLeaveCancelledByAdmin(manager, employeNom, adminNom, dateDebut, dateFin, commentaire) {
+  async sendLeaveCancelledByAdmin(manager, employeNom, adminNom, dateDebut, dateFin, commentaire, notificationMode = 'information') {
     return this.sendEmail(
       manager.email,
       `Congé de ${employeNom} annulé par l'administration`,
       'leave-cancelled-by-admin',
       {
         destinataire_prenom: manager.prenom || 'Responsable',
+        notification_mode: notificationMode,
         employe_nom: employeNom,
         admin_nom: adminNom,
         date_debut: dateDebut,
@@ -978,6 +982,7 @@ class EmailService {
       `Pour information — congé de ${employe_nom} refusé par l'administrateur`,
       'leave-rejected-manager-info',
       {
+        notification_mode: 'information',
         destinataire_prenom: manager.prenom || 'Manager',
         employe_nom,
         admin_nom,

@@ -8,7 +8,13 @@ const { ensureCounter } = require('./quotasService');
 const { getLeaveNotificationRecipients } = require('./leaveNotificationRecipients');
 const LeavePolicyService = require('./leavePolicyService');
 const joursFeriesService = require('./joursFeriesService');
-const { getLeaveRules, getEffectiveLeaveRules, getRequiredNotice } = require('./politiqueConges');
+const {
+  getLeaveRules,
+  getEffectiveLeaveRules,
+  getManagerServicePermissions,
+  canManagerAccessService,
+  getRequiredNotice,
+} = require('./politiqueConges');
 const { Op } = require('sequelize');
 const dayjs = require('dayjs');
 const isSameOrBefore = require('dayjs/plugin/isSameOrBefore');
@@ -390,6 +396,10 @@ function calculateLeaveBreakdown(conge, joursFeriesLookup, blockedDays) {
   };
 }
 
+function calculateLeaveBreakdownWithHolidays(conge, joursFeries, blockedDays) {
+  return calculateLeaveBreakdown(conge, buildJoursFeriesLookup(joursFeries), blockedDays);
+}
+
 async function resolveCongeDays(conge) {
   const persisted = Number.parseFloat(conge.jours_calcules);
   if (Number.isFinite(persisted) && persisted > 0) {
@@ -425,6 +435,24 @@ async function getEntrepriseLeaveRules(entrepriseId, transaction = null) {
   }
 
   return getLeaveRules(entreprise);
+}
+
+async function assertManagerServiceAccess(manager, targetService, leaveRules, action = 'view', transaction = null) {
+  const currentManager = manager?.role === 'manager'
+    ? await Utilisateur.findByPk(manager.id, { attributes: ['id', 'role', 'service'], transaction })
+    : manager;
+  if (!canManagerAccessService(currentManager, targetService, leaveRules, action)) {
+    const actionLabel = action === 'validate' ? 'traiter' : action === 'modify' ? 'modifier ou supprimer' : 'consulter';
+    const err = new Error(`Vous ne pouvez pas ${actionLabel} les congés des autres services.`);
+    err.statusCode = 403;
+    throw err;
+  }
+}
+
+async function assertManagerCanAccessConge(manager, conge, action = 'view') {
+  if (manager?.role !== 'manager' || manager.id === conge?.utilisateur_id) return;
+  const leaveRules = await getEntrepriseLeaveRules(conge.entreprise_id);
+  await assertManagerServiceAccess(manager, conge.utilisateur?.service, leaveRules, action);
 }
 
 async function computeOverlapContext({ entrepriseId, utilisateurId, dateDebut, dateFin, userService = null, transaction = null, excludeCongeId = null }) {
@@ -633,6 +661,9 @@ async function getValidationOverlapStatus(congeId, reqUser) {
   if (!utilisateur) throw new Error('Utilisateur introuvable');
 
   const baseLeaveRules = await getEntrepriseLeaveRules(conge.entreprise_id);
+  if (reqUser?.role === 'manager' && reqUser.id !== conge.utilisateur_id) {
+    await assertManagerServiceAccess(reqUser, utilisateur.service, baseLeaveRules, 'validate');
+  }
   const leaveRules = getEffectiveLeaveRules(baseLeaveRules, utilisateur.service || null);
 
   const overlapContext = await computeOverlapContext({
@@ -972,6 +1003,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
           subject: `Nouvelle demande de conge - ${utilisateurNomComplet}`,
           templateName: 'leave-new-request-manager',
           data: {
+            notification_mode: recipient.notification_mode,
             destinataire_prenom: recipient.prenom || (recipient.role === 'admin_entreprise' ? 'Administrateur' : 'Manager'),
             demandeur_nom: utilisateurNomComplet,
             date_debut: formatDateFR(date_debut),
@@ -1030,6 +1062,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
             subject: `Réservation de congé - ${utilisateurNomComplet}`,
             templateName: 'leave-reservation-admin',
             data: {
+              notification_mode: 'information',
               destinataire_prenom: recipient.prenom || 'Responsable',
               demandeur_nom: utilisateurNomComplet,
               date_debut: formatDateFR(date_debut),
@@ -1132,6 +1165,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
 
     // Résoudre le rôle effectif pour les délégués
     let effectiveRole = reqUser.role;
+    let effectiveManager = reqUser;
     if (!['manager', 'admin_entreprise', 'super_admin'].includes(effectiveRole)) {
       const delegatingUser = await Utilisateur.findOne({
         where: {
@@ -1142,13 +1176,18 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         },
         transaction: t,
       });
-      if (delegatingUser) effectiveRole = delegatingUser.role;
+      if (delegatingUser) {
+        effectiveRole = delegatingUser.role;
+        effectiveManager = delegatingUser;
+      }
     }
 
     if (effectiveRole === 'manager') {
       if (reqUser.id === conge.utilisateur_id) {
         throw new Error('Un manager ne peut pas valider son propre congé');
       }
+
+      await assertManagerServiceAccess(effectiveManager, utilisateur?.service, baseLeaveRules, 'validate', t);
 
       if (leaveRules.approval_workflow === 'auto') {
         throw new Error('Workflow auto: aucune validation manuelle nécessaire');
@@ -1511,6 +1550,7 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
 
     if (reqUser.role === 'manager') {
       if (reqUser.id === conge.utilisateur_id) throw Object.assign(new Error('Un manager ne peut pas refuser son propre congé'), { statusCode: 403 });
+      await assertManagerServiceAccess(reqUser, utilisateur?.service, baseLeaveRules, 'validate', t);
       if (leaveRules.approval_workflow === 'admin_only') {
         const err = new Error('Workflow admin_only: refus par administrateur uniquement');
         err.statusCode = 403;
@@ -1612,9 +1652,12 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
     ) {
       const adminNomRefus = `${reqUser?.prenom || ''} ${reqUser?.nom || ''}`.trim() || "L'administrateur";
       const employeNomRefus = `${utilisateur?.prenom || ''} ${utilisateur?.nom || ''}`.trim() || 'Un employé';
-      const managersToNotify = await Utilisateur.findAll({
-        where: { entreprise_id: conge.entreprise_id, role: 'manager', statut: 'actif' },
-        attributes: ['id', 'prenom', 'nom', 'email'],
+      const managersToNotify = await getLeaveNotificationRecipients({
+        entrepriseId: conge.entreprise_id,
+        service: utilisateur?.service,
+        workflow: 'manager',
+        stage: 'manager',
+        transaction: t,
       });
       for (const mgr of managersToNotify) {
         if (mgr.email) {
@@ -1645,11 +1688,30 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
 async function getConges(user, query = {}) {
   const where = {};
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let managerVisibleUserIds = null;
+  let managerProfile = null;
 
   if (user.role === 'employe' || user.role === 'apprenti') {
     where.utilisateur_id = user.id;
   } else if (user.role === 'manager' || user.role === 'admin_entreprise') {
     where.entreprise_id = user.entreprise_id;
+    if (user.role === 'manager') {
+      const managerLeaveRules = await getEntrepriseLeaveRules(user.entreprise_id);
+      managerProfile = await Utilisateur.findByPk(user.id, { attributes: ['id', 'role', 'service'] });
+      const managerPermissions = getManagerServicePermissions(managerLeaveRules, managerProfile || user);
+      if (!managerPermissions.canViewAllServices) {
+        const visibleUsers = await Utilisateur.findAll({
+          where: {
+            entreprise_id: user.entreprise_id,
+            ...(managerProfile?.service ? { service: managerProfile.service } : { id: user.id }),
+          },
+          attributes: ['id'],
+          raw: true,
+        });
+        managerVisibleUserIds = new Set([...visibleUsers.map((employee) => employee.id), user.id]);
+        where.utilisateur_id = { [Op.in]: [...managerVisibleUserIds] };
+      }
+    }
   } else if (user.role === 'super_admin') {
     if (query.entreprise_id) {
       if (!UUID_RE.test(query.entreprise_id)) { const e = new Error('entreprise_id invalide'); e.statusCode = 400; throw e; }
@@ -1671,6 +1733,9 @@ async function getConges(user, query = {}) {
   const canFilterUser = !['employe', 'apprenti'].includes(user.role);
   if (query.utilisateur_id && canFilterUser) {
     if (!UUID_RE.test(query.utilisateur_id)) { const e = new Error('utilisateur_id invalide'); e.statusCode = 400; throw e; }
+    if (managerVisibleUserIds && !managerVisibleUserIds.has(query.utilisateur_id)) {
+      const e = new Error('Vous ne pouvez pas consulter les congés de ce service.'); e.statusCode = 403; throw e;
+    }
     where.utilisateur_id = query.utilisateur_id;
   }
   if (query.annee) {
@@ -1775,6 +1840,13 @@ async function getConges(user, query = {}) {
     const blockedDays = blockedDaysByEntreprise.get(conge.entreprise_id) || {};
     const entrepriseLeaveRules = leaveRulesByEntreprise.get(conge.entreprise_id) || {};
     const effectiveLeaveRules = getEffectiveLeaveRules(entrepriseLeaveRules, plainConge.utilisateur?.service || null);
+    const effectiveWorkflow = plainConge.effective_approval_workflow || effectiveLeaveRules.approval_workflow || null;
+    const managerCanValidate = user.role === 'manager'
+      && managerProfile
+      && user.id !== conge.utilisateur_id
+      && ['en_attente_manager', 'reserve'].includes(conge.statut)
+      && ['manager', 'manager_only', 'manager_admin'].includes(effectiveWorkflow)
+      && canManagerAccessService(managerProfile, plainConge.utilisateur?.service, entrepriseLeaveRules, 'validate');
     const joursPris = Number.parseFloat(plainConge.jours_calcules);
     const joursPrisValue = Number.isFinite(joursPris)
       ? joursPris
@@ -1787,7 +1859,8 @@ async function getConges(user, query = {}) {
         : null,
       entreprise_nom: plainConge.entreprise?.nom || null,
       conge_type_libelle: plainConge.conge_type?.libelle || null,
-      effective_approval_workflow: plainConge.effective_approval_workflow || effectiveLeaveRules.approval_workflow || null,
+      effective_approval_workflow: effectiveWorkflow,
+      ...(user.role === 'manager' ? { manager_can_validate: Boolean(managerCanValidate) } : {}),
       jours_pris: Number.isFinite(joursPrisValue) ? joursPrisValue : null,
       jours_restants: soldeByKey.has(compteurKey) ? soldeByKey.get(compteurKey) : null,
       date_demande: plainConge.created_at || plainConge.createdAt || null
@@ -1821,6 +1894,10 @@ async function getCongeById(id, user) {
     throw new Error('Accès interdit');
   if ((user.role === 'employe' || user.role === 'apprenti') && user.id !== conge.utilisateur_id)
     throw new Error('Accès interdit');
+  if (user.role === 'manager' && user.id !== conge.utilisateur_id) {
+    const managerLeaveRules = await getEntrepriseLeaveRules(conge.entreprise_id);
+    await assertManagerServiceAccess(user, conge.utilisateur?.service, managerLeaveRules, 'view');
+  }
 
   const annee = getCongeCompteurAnnee(conge);
   const compteur = await CompteurConges.findOne({
@@ -1847,6 +1924,18 @@ async function getCongeById(id, user) {
     joursFeriesLookup = EMPTY_FERIES_LOOKUP;
   }
 
+  let managerCanValidate = false;
+  if (user.role === 'manager' && user.id !== conge.utilisateur_id) {
+    const manager = await Utilisateur.findByPk(user.id, { attributes: ['id', 'role', 'service'] });
+    const workflow = conge.effective_approval_workflow || effectiveApprovalWorkflow;
+    managerCanValidate = Boolean(
+      manager
+      && ['en_attente_manager', 'reserve'].includes(conge.statut)
+      && ['manager', 'manager_only', 'manager_admin'].includes(workflow)
+      && canManagerAccessService(manager, conge.utilisateur?.service, await getEntrepriseLeaveRules(conge.entreprise_id), 'validate')
+    );
+  }
+
   const plainConge = conge.toJSON();
   const joursPris = Number.parseFloat(plainConge.jours_calcules);
   const leaveBreakdown = calculateLeaveBreakdown(conge, joursFeriesLookup, blockedDays);
@@ -1867,6 +1956,7 @@ async function getCongeById(id, user) {
     entreprise_nom: plainConge.entreprise?.nom || null,
     conge_type_libelle: plainConge.conge_type?.libelle || null,
     effective_approval_workflow: plainConge.effective_approval_workflow || effectiveApprovalWorkflow,
+    ...(user.role === 'manager' ? { manager_can_validate: managerCanValidate } : {}),
     calcul_details: leaveBreakdown,
     jours_pris: Number.isFinite(joursPrisValue) ? joursPrisValue : null,
     jours_restants: Number.isFinite(joursRestants) ? joursRestants : null,
@@ -1889,6 +1979,11 @@ async function updateConge(id, data, user, req = null) {
       attributes: ['id', 'prenom', 'nom', 'email', 'service']
     });
     if (!employe) throw new Error('Employé introuvable');
+
+    if (user?.role === 'manager' && user.id !== employe.id) {
+      const managerLeaveRules = await getEntrepriseLeaveRules(conge.entreprise_id, t);
+      await assertManagerServiceAccess(user, employe.service, managerLeaveRules, 'modify', t);
+    }
 
     // Fix #44 : super_admin omis de la liste → 403 sur updateConge.
     if (!['admin_entreprise', 'super_admin', 'manager'].includes(user?.role) && user?.id !== conge.utilisateur_id) {
@@ -2371,6 +2466,7 @@ async function updateConge(id, data, user, req = null) {
           subject: `${isReserved ? 'Réservation' : 'Demande de conge'} modifiee - ${demandeurNom}`,
           templateName: isReserved ? 'leave-reservation-admin' : 'leave-updated-before-approval',
           data: {
+              notification_mode: recipient.notification_mode,
             destinataire_prenom: recipient.prenom || 'Validateur',
             action_requise: isReserved ? 'Pour information' : 'Action requise',
             contexte_modif: isReserved ? 'sa réservation de congé' : 'sa demande de conge avant validation',
@@ -2463,6 +2559,7 @@ async function updateConge(id, data, user, req = null) {
               subject: `Conge valide modifie par l'admin - ${demandeurNom}`,
               templateName: 'leave-updated-before-approval',
               data: {
+                notification_mode: 'information',
                 destinataire_prenom: manager.prenom || 'Manager',
                 action_requise: 'Pour information',
                 contexte_modif: `son conge valide (modifie par ${adminNom})`,
@@ -2507,6 +2604,7 @@ async function updateConge(id, data, user, req = null) {
           subject: `Conge valide modifie - ${demandeurNom}`,
           templateName: 'leave-updated-before-approval',
           data: {
+            notification_mode: 'information',
             destinataire_prenom: recipient.prenom || 'Responsable',
             action_requise: 'Pour information',
             contexte_modif: 'son conge valide',
@@ -2548,6 +2646,11 @@ async function deleteConge(id, user, options = {}) {
       transaction: t,
     });
     if (!employe) throw new Error('Employé introuvable');
+
+    if (user?.role === 'manager' && user.id !== employe.id) {
+      const managerLeaveRules = await getEntrepriseLeaveRules(conge.entreprise_id, t);
+      await assertManagerServiceAccess(user, employe.service, managerLeaveRules, 'modify', t);
+    }
 
     const isAdminLevel = ['admin_entreprise', 'super_admin', 'manager'].includes(user?.role);
 
@@ -2683,6 +2786,7 @@ async function deleteConge(id, user, options = {}) {
             subject: `Annulation de demande de congé - ${employe_nom}`,
             templateName: 'leave-cancelled-by-employee',
             data: {
+                notification_mode: 'information',
               destinataire_prenom: recipient.prenom || 'Responsable',
               demandeur_nom: employe_nom,
               statut_conge_label: 'demande de congé en attente',
@@ -2760,6 +2864,7 @@ async function deleteConge(id, user, options = {}) {
             subject: `Annulation de congé validé - ${employe_nom}`,
             templateName: 'leave-cancelled-by-employee',
             data: {
+              notification_mode: 'information',
               destinataire_prenom: recipient.prenom || 'Responsable',
               demandeur_nom: employe_nom,
               statut_conge_label: statutLabel,
@@ -2833,7 +2938,8 @@ async function deleteConge(id, user, options = {}) {
             adminNom,
             formatDateFR(conge.date_debut),
             formatDateFR(conge.date_fin),
-            cancellationComment || null
+            cancellationComment || null,
+            'information'
           ).catch((e) => logger.error('sendLeaveCancelledByAdmin error', { error: e.message }));
         }
       }
@@ -2893,6 +2999,14 @@ async function activerReservation(congeId, reqUser) {
     const baseLeaveRules = await getEntrepriseLeaveRules(conge.entreprise_id, t);
     const employe = await Utilisateur.findByPk(conge.utilisateur_id, { transaction: t });
     const leaveRules = getEffectiveLeaveRules(baseLeaveRules, employe?.service || null);
+    if (reqUser.role === 'manager') {
+      if (!['manager', 'manager_only', 'manager_admin'].includes(leaveRules.approval_workflow)) {
+        const err = new Error(`Workflow ${leaveRules.approval_workflow}: activation par un manager non autorisée.`);
+        err.statusCode = 403;
+        throw err;
+      }
+      await assertManagerServiceAccess(reqUser, employe?.service, baseLeaveRules, 'validate', t);
+    }
     const joursConge = safeNumber(conge.jours_calcules);
     const annee = getCongeCompteurAnnee(conge);
 
@@ -3069,6 +3183,7 @@ async function activerReservation(congeId, reqUser) {
           subject: `Nouvelle demande de congé – ${employeNom}`,
           templateName: 'leave-new-request-manager',
           data: {
+                notification_mode: recipient.notification_mode,
             destinataire_prenom: recipient.prenom || 'Responsable',
             demandeur_nom: employeNom,
             date_debut: formatDateFR(conge.date_debut),
@@ -3315,6 +3430,7 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
               subject: `Nouvelle demande de congé – ${employeNom}`,
               templateName: 'leave-new-request-manager',
               data: {
+                notification_mode: recipient.notification_mode,
                 destinataire_prenom: recipient.prenom || 'Responsable',
                 demandeur_nom: employeNom,
                 date_debut: formatDateFR(conge.date_debut),
@@ -3364,6 +3480,7 @@ module.exports = {
   createConge,
   getConges,
   getCongeById,
+  assertManagerCanAccessConge,
   updateConge,
   deleteConge,
   validerConge,
@@ -3371,6 +3488,7 @@ module.exports = {
   activerReservation,
   tryActivateReservations,
   calcJoursConges,
+  calculateLeaveBreakdownWithHolidays,
   calculateDaysPreview,
   consumeN1First,
 };

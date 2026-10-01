@@ -100,7 +100,7 @@ async function runPendingLeaveReminders() {
     for (const recipient of recipients) {
       if (!recipient.email) continue;
       try {
-        await emailService.sendLeavePendingReminder(conge, recipient, joursAttente);
+        await emailService.sendLeavePendingReminder(conge, recipient, joursAttente, recipient.notification_mode);
         logger.info(`[email-cron] Relance demande en attente → ${recipient.email} (congé ${conge.id})`);
       } catch (e) {
         logger.error('[email-cron] sendLeavePendingReminder error', { error: e.message, congeId: conge.id });
@@ -314,6 +314,7 @@ async function runReservationReminders() {
               type_conge: conge.conge_type?.libelle || 'Congé',
               jours_calcules: conge.jours_calcules,
               jours_avant: days,
+              notification_mode: recipient.notification_mode,
               action_url: actionUrl,
             }
           );

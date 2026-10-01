@@ -1,7 +1,8 @@
-const { Conge, CongeType, Utilisateur, Absence } = require('../models');
+const { Conge, CongeType, Utilisateur, Entreprise, Absence } = require('../models');
 const logger = require('../utils/logger');
 const { Op } = require('sequelize');
 const dayjs = require('dayjs');
+const { getLeaveRules, getManagerServicePermissions } = require('../services/politiqueConges');
 
 /**
  * Retourne les congés ET les absences visibles selon le rôle de l'utilisateur.
@@ -59,6 +60,27 @@ async function getCalendrier(req, res, next) {
 
     const isEmployee = ['employe', 'apprenti'].includes(req.user.role);
     const canFilterByUser = ['super_admin', 'admin_entreprise', 'manager'].includes(req.user.role);
+    let managerVisibleUserIds = null;
+
+    if (req.user.role === 'manager') {
+      const [entreprise, manager] = await Promise.all([
+        Entreprise.findByPk(req.user.entreprise_id, { attributes: ['politique_conges'] }),
+        Utilisateur.findByPk(req.user.id, { attributes: ['id', 'role', 'service'] }),
+      ]);
+      const managerProfile = manager || req.user;
+      const permissions = getManagerServicePermissions(getLeaveRules(entreprise), managerProfile);
+      if (!permissions.canViewAllServices) {
+        const visibleUsers = await Utilisateur.findAll({
+          where: {
+            entreprise_id: req.user.entreprise_id,
+            ...(managerProfile.service ? { service: managerProfile.service } : { id: req.user.id }),
+          },
+          attributes: ['id'],
+          raw: true,
+        });
+        managerVisibleUserIds = [...new Set([...visibleUsers.map((employee) => employee.id), req.user.id])];
+      }
+    }
 
     // ═════════════════════════════════════════════════════════════════════════
     // 1. CONGÉS
@@ -73,8 +95,13 @@ async function getCalendrier(req, res, next) {
     }
 
     if (canFilterByUser && utilisateurId && utilisateurId !== 'all') {
+      if (managerVisibleUserIds && !managerVisibleUserIds.includes(utilisateurId)) {
+        return res.status(403).json({ message: 'Vous ne pouvez pas consulter les événements de ce service.' });
+      }
       congeWhere.utilisateur_id = utilisateurId;
     }
+
+    if (managerVisibleUserIds) congeWhere.utilisateur_id = { [Op.in]: managerVisibleUserIds };
 
     if (isEmployee) {
       congeWhere[Op.or] = [
@@ -121,8 +148,13 @@ async function getCalendrier(req, res, next) {
     if (targetEntrepriseId) absenceWhere.entreprise_id = targetEntrepriseId;
 
     if (canFilterByUser && utilisateurId && utilisateurId !== 'all') {
+      if (managerVisibleUserIds && !managerVisibleUserIds.includes(utilisateurId)) {
+        return res.status(403).json({ message: 'Vous ne pouvez pas consulter les événements de ce service.' });
+      }
       absenceWhere.utilisateur_id = utilisateurId;
     }
+
+    if (managerVisibleUserIds) absenceWhere.utilisateur_id = { [Op.in]: managerVisibleUserIds };
 
     if (dateFilter) {
       absenceWhere.date_debut = { [Op.lte]: dateFilter.lastDay };

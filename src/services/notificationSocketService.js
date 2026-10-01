@@ -1,6 +1,7 @@
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
-const { Utilisateur } = require('../models');
+const { Utilisateur, Entreprise, Conge } = require('../models');
+const { getLeaveRules, getEffectiveLeaveRules, getManagerServicePermissions } = require('./politiqueConges');
 const logger = require('../utils/logger');
 
 const isSocketDebug = process.env.SOCKET_DEBUG === 'true';
@@ -65,8 +66,13 @@ class NotificationService {
       });
 
       socket.on('join-room', (room) => {
-        socket.join(room);
-        socketLog(`User ${socket.userId} joined room: ${room}`);
+        const ownCompanyRoom = socket.user?.entreprise_id
+          ? `company-${socket.user.entreprise_id}`
+          : null;
+        if (room === ownCompanyRoom) {
+          socket.join(room);
+          socketLog(`User ${socket.userId} joined room: ${room}`);
+        }
       });
 
       socket.on('leave-room', (room) => {
@@ -89,8 +95,58 @@ class NotificationService {
   }
 
   // Envoyer une notification à tous les utilisateurs d'une entreprise
-  notifyCompany(companyId, event, data) {
-    this.io.to(`company-${companyId}`).emit(event, data);
+  async notifyCompany(companyId, event, data) {
+    if (!this.io || !companyId) return;
+
+    const congeId = data?.conge?.id || data?.congeId;
+    if (!congeId) return;
+
+    const conge = data.conge?.toJSON ? data.conge.toJSON() : data.conge || await Conge.findByPk(congeId);
+    if (!conge) return;
+
+    const [employee, entreprise, users] = await Promise.all([
+      conge.utilisateur?.id
+        ? Promise.resolve(conge.utilisateur)
+        : Utilisateur.findByPk(conge.utilisateur_id, { attributes: ['id', 'prenom', 'nom', 'service'] }),
+      Entreprise.findByPk(companyId, { attributes: ['politique_conges'] }),
+      Utilisateur.findAll({
+        where: { entreprise_id: companyId, statut: 'actif' },
+        attributes: ['id', 'role', 'service'],
+      }),
+    ]);
+
+    if (!employee) return;
+    const leaveService = employee.service || conge.utilisateur?.service || null;
+    const leaveRules = getLeaveRules(entreprise);
+    const workflow = conge.effective_approval_workflow
+      || getEffectiveLeaveRules(leaveRules, leaveService).approval_workflow;
+
+    for (const recipient of users) {
+      let managerCanValidate = true;
+
+      if (recipient.role === 'manager' && recipient.id !== employee.id) {
+        const isSameService = Boolean(recipient.service && leaveService && recipient.service === leaveService);
+        const permissions = getManagerServicePermissions(leaveRules, recipient);
+        if (!isSameService && !permissions.canViewAllServices) continue;
+        managerCanValidate = conge.statut === 'en_attente_manager'
+          && ['manager', 'manager_only', 'manager_admin'].includes(workflow)
+          && (isSameService || permissions.canValidateAllServices);
+      } else if (recipient.role === 'manager') {
+        managerCanValidate = false;
+      }
+
+      const eventConge = { ...conge, utilisateur: conge.utilisateur || employee };
+      if (recipient.id !== employee.id) {
+        eventConge.commentaire_employe = null;
+        eventConge.commentaire_manager = null;
+        eventConge.commentaire_admin = null;
+      }
+      const payload = { ...data, conge: eventConge };
+      if (recipient.role === 'manager') {
+        payload.notification_mode = managerCanValidate ? 'action' : 'information';
+      }
+      this.notifyUser(recipient.id, event, payload);
+    }
   }
 
   // Envoyer une notification à une salle spécifique
