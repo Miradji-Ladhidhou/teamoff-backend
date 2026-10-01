@@ -618,7 +618,9 @@ class EmailService {
       }
 
       // Préparer le contenu de l'email
-      const topAbsences = Array.isArray(reportData.top_absences) ? reportData.top_absences : [];
+      const topAbsences = Array.isArray(reportData.top_absences) && reportData.top_absences.length > 0
+        ? reportData.top_absences.join(', ')
+        : 'Aucune';
 
       return this.sendEmail(
         email,
@@ -628,10 +630,13 @@ class EmailService {
           entreprise_nom: entreprise.nom,
           mois: reportData.mois,
           annee: reportData.annee,
+          periode_debut: reportData.periode_debut,
+          periode_fin: reportData.periode_fin,
           total_conges: reportData.total_conges,
+          total_jours: reportData.total_jours,
           total_employes: reportData.total_employes,
-          taux_absenteeisme: reportData.taux_absenteeisme,
-          top_absences: topAbsences.join(', '),
+          total_absences: reportData.total_absences,
+          top_absences: topAbsences,
         }
       );
     } catch (error) {

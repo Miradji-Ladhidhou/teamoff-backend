@@ -1,7 +1,7 @@
 const cron = require('node-cron');
 const dayjs = require('dayjs');
 const { Op } = require('sequelize');
-const { Conge, Utilisateur, Entreprise, CompteurConges, CongeType } = require('../models');
+const { Absence, Conge, Utilisateur, Entreprise, CompteurConges, CongeType } = require('../models');
 const emailService = require('../services/emailService');
 const { getLeaveNotificationRecipients } = require('../services/leaveNotificationRecipients');
 const logger = require('../utils/logger');
@@ -114,10 +114,12 @@ async function runPendingLeaveReminders() {
 // ---------------------------------------------------------------------------
 async function runMonthlyReports() {
   const now = dayjs();
-  const year = now.year();
-  const month = now.month() + 1;
-  const startOfLastMonth = now.subtract(1, 'month').startOf('month').toDate();
-  const endOfLastMonth = now.subtract(1, 'month').endOf('month').toDate();
+  const reportMonth = now.subtract(1, 'month').startOf('month');
+  const startOfLastMonth = reportMonth.format('YYYY-MM-DD');
+  const endOfLastMonth = reportMonth.endOf('month').format('YYYY-MM-DD');
+  const mois = new Intl.DateTimeFormat('fr-FR', { month: 'long', timeZone: 'UTC' })
+    .format(new Date(`${startOfLastMonth}T12:00:00Z`));
+  const annee = reportMonth.year();
 
   const entreprises = await Entreprise.findAll({
     where: { statut: 'active' },
@@ -125,29 +127,56 @@ async function runMonthlyReports() {
   });
 
   for (const entreprise of entreprises) {
-    const conges = await Conge.findAll({
-      where: {
-        entreprise_id: entreprise.id,
-        date_debut: { [Op.between]: [startOfLastMonth, endOfLastMonth] },
-        statut: 'valide_final',
-      },
-      include: [
-        { model: Utilisateur, as: 'utilisateur', attributes: ['prenom', 'nom'] },
-        { model: CongeType, as: 'conge_type', attributes: ['libelle'] },
-      ],
-    });
+    const [conges, absences, totalEmployes, admins] = await Promise.all([
+      Conge.findAll({
+        where: {
+          entreprise_id: entreprise.id,
+          date_debut: { [Op.between]: [startOfLastMonth, endOfLastMonth] },
+          statut: 'valide_final',
+        },
+        include: [{ model: CongeType, as: 'conge_type', attributes: ['libelle'] }],
+      }),
+      Absence.findAll({
+        where: {
+          entreprise_id: entreprise.id,
+          date_debut: { [Op.between]: [startOfLastMonth, endOfLastMonth] },
+          statut: { [Op.in]: ['signalée', 'approuvée'] },
+        },
+        attributes: ['type_absence'],
+      }),
+      Utilisateur.count({
+        where: {
+          entreprise_id: entreprise.id,
+          role: { [Op.in]: ['employe', 'apprenti', 'manager'] },
+          statut: 'actif',
+        },
+      }),
+      Utilisateur.findAll({
+        where: { entreprise_id: entreprise.id, role: 'admin_entreprise', statut: 'actif' },
+        attributes: ['id', 'email', 'prenom', 'nom'],
+      }),
+    ]);
 
-    const admins = await Utilisateur.findAll({
-      where: { entreprise_id: entreprise.id, role: 'admin_entreprise', statut: 'actif' },
-      attributes: ['id', 'email', 'prenom', 'nom'],
-    });
+    const absencesByType = new Map();
+    for (const absence of absences) {
+      const label = absence.type_absence === 'maladie' ? 'Maladie' : 'Absence exceptionnelle';
+      absencesByType.set(label, (absencesByType.get(label) || 0) + 1);
+    }
+    const topAbsences = [...absencesByType]
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'fr'))
+      .map(({ label, count }) => `${label} (${count})`);
 
     const reportData = {
-      periode: now.subtract(1, 'month').format('MMMM YYYY'),
+      mois,
+      annee,
+      periode_debut: formatDateFR(startOfLastMonth),
+      periode_fin: formatDateFR(endOfLastMonth),
       total_conges: conges.length,
-      total_valides: conges.length,
-      total_annules: 0,
-      total_jours: conges.reduce((s, c) => s + (c.jours_calcules || 0), 0),
+      total_jours: Number(conges.reduce((sum, conge) => sum + (Number(conge.jours_calcules) || 0), 0).toFixed(2)),
+      total_employes: totalEmployes,
+      total_absences: absences.length,
+      top_absences: topAbsences,
     };
 
     for (const admin of admins) {
