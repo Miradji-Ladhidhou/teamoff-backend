@@ -14,7 +14,7 @@ jest.mock('../src/services/emailService', () => ({
   sendInvitationReminder:    jest.fn().mockResolvedValue(undefined),
   sendLeaveReminder:         jest.fn().mockResolvedValue(undefined),
   sendMonthlyReport:         jest.fn().mockResolvedValue(undefined),
-  sendWeeklyManagerSummary:  jest.fn().mockResolvedValue(undefined),
+  sendWeeklySummary:         jest.fn().mockResolvedValue(undefined),
   sendEmail:                 jest.fn().mockResolvedValue(undefined),
   getSmtpConfig:             jest.fn().mockResolvedValue({}),
 }));

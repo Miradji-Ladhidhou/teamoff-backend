@@ -11,7 +11,21 @@
       </td></tr>
       <tr><td style="padding:24px;line-height:1.6;">
         <p style="color:#374151;">Bonjour <strong>{{prenom}}</strong>,</p>
-        <p style="color:#374151;">Voici les <strong>{{total}} congé(s)</strong> validé(s) pour votre équipe cette semaine.</p>
+        <p style="color:#374151;">Cette semaine sur votre périmètre : <strong>{{total_conges}} congé(s)</strong> validé(s) et <strong>{{total_absences}} absence(s)</strong> signalée(s) ou approuvée(s).</p>
+        <p style="color:#374151;">Les périodes qui chevauchent la semaine sont incluses. Les dates affichées correspondent aux dates réelles de début et de fin, même en dehors de cette semaine.</p>
+        <h2 style="margin:20px 0 8px;font-size:16px;color:#374151;">Récapitulatif par service</h2>
+        <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin:12px 0;">
+          <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;min-width:320px;">
+            <thead>
+              <tr style="background:#f9fafb;">
+                <th style="padding:8px 6px;text-align:left;font-size:12px;color:#6b7280;border-bottom:2px solid #e5e7eb;">Service</th>
+                <th style="padding:8px 6px;text-align:left;font-size:12px;color:#6b7280;border-bottom:2px solid #e5e7eb;">Congés</th>
+                <th style="padding:8px 6px;text-align:left;font-size:12px;color:#6b7280;border-bottom:2px solid #e5e7eb;">Absences</th>
+              </tr>
+            </thead>
+            <tbody>{{service_summary_rows}}</tbody>
+          </table>
+        </div>
         <!-- Tableau scrollable horizontalement sur mobile -->
         <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin:16px 0;">
           <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;min-width:480px;">

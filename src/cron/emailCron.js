@@ -4,6 +4,7 @@ const { Op } = require('sequelize');
 const { Absence, Conge, Utilisateur, Entreprise, CompteurConges, CongeType } = require('../models');
 const emailService = require('../services/emailService');
 const { getLeaveNotificationRecipients } = require('../services/leaveNotificationRecipients');
+const { getLeaveRules, getManagerServicePermissions } = require('../services/politiqueConges');
 const logger = require('../utils/logger');
 const { formatDateFR } = require('../utils/dateFormatter');
 
@@ -241,41 +242,82 @@ async function runInvitationReminders() {
 }
 
 // ---------------------------------------------------------------------------
-// Résumé hebdomadaire managers
+// Résumé hebdomadaire managers et administrateurs entreprise
 // ---------------------------------------------------------------------------
 async function runWeeklyManagerSummary() {
   const startOfWeek = dayjs().startOf('week').add(1, 'day').toDate(); // lundi
   const endOfWeek = dayjs().startOf('week').add(7, 'day').toDate();   // dimanche
+  const weekStartDate = dayjs(startOfWeek).format('YYYY-MM-DD');
+  const weekEndDate = dayjs(endOfWeek).format('YYYY-MM-DD');
 
-  const managers = await Utilisateur.findAll({
-    where: { role: 'manager', statut: 'actif' },
-    attributes: ['id', 'email', 'prenom', 'nom', 'entreprise_id', 'service'],
-  });
+  const [managers, admins] = await Promise.all([
+    Utilisateur.findAll({
+      where: { role: 'manager', statut: 'actif' },
+      attributes: ['id', 'email', 'prenom', 'nom', 'entreprise_id', 'service', 'role'],
+    }),
+    Utilisateur.findAll({
+      where: { role: 'admin_entreprise', statut: 'actif' },
+      attributes: ['id', 'email', 'prenom', 'nom', 'entreprise_id', 'role'],
+    }),
+  ]);
+  const managerCompanyIds = [...new Set(managers.map(manager => manager.entreprise_id).filter(Boolean))];
+  const companies = managerCompanyIds.length
+    ? await Entreprise.findAll({
+      where: { id: { [Op.in]: managerCompanyIds } },
+      attributes: ['id', 'politique_conges'],
+    })
+    : [];
+  const leaveRulesByCompany = new Map(
+    companies.map(company => [company.id, getLeaveRules(company)])
+  );
 
-  for (const manager of managers) {
+  for (const recipient of [...managers, ...admins]) {
     try {
-      const allConges = await Conge.findAll({
-        where: {
-          entreprise_id: manager.entreprise_id,
-          statut: 'valide_final',
-          date_debut: { [Op.between]: [startOfWeek, endOfWeek] },
-        },
-        include: [
-          { model: Utilisateur, as: 'utilisateur', attributes: ['prenom', 'nom', 'service'] },
-          { model: CongeType, as: 'conge_type', attributes: ['libelle'] },
-        ],
-      });
-      // Filtrer par service du manager (un manager ne voit que son service)
-      const conges = manager.service
-        ? allConges.filter(c => c.utilisateur?.service === manager.service)
+      const [allConges, allAbsences] = await Promise.all([
+        Conge.findAll({
+          where: {
+            entreprise_id: recipient.entreprise_id,
+            statut: 'valide_final',
+            date_debut: { [Op.lte]: weekEndDate },
+            date_fin: { [Op.gte]: weekStartDate },
+          },
+          include: [
+            { model: Utilisateur, as: 'utilisateur', attributes: ['prenom', 'nom', 'service'] },
+            { model: CongeType, as: 'conge_type', attributes: ['libelle'] },
+          ],
+        }),
+        Absence.findAll({
+          where: {
+            entreprise_id: recipient.entreprise_id,
+            statut: { [Op.in]: ['signalée', 'approuvée'] },
+            date_debut: { [Op.lte]: weekEndDate },
+            date_fin: { [Op.gte]: weekStartDate },
+          },
+          include: [
+            { model: Utilisateur, as: 'utilisateur', attributes: ['prenom', 'nom', 'service'] },
+          ],
+        }),
+      ]);
+      // Les managers n'accèdent aux autres services que si la politique de leur service l'autorise.
+      const canViewAllServices = recipient.role === 'manager'
+        && getManagerServicePermissions(leaveRulesByCompany.get(recipient.entreprise_id), recipient).canViewAllServices;
+      const isManagerWithoutCrossServiceAccess = recipient.role === 'manager' && !canViewAllServices;
+      const isSameService = item => (item.utilisateur?.service || '') === (recipient.service || '');
+      const conges = isManagerWithoutCrossServiceAccess
+        ? allConges.filter(isSameService)
         : allConges;
+      const absences = isManagerWithoutCrossServiceAccess
+        ? allAbsences.filter(isSameService)
+        : allAbsences;
 
-      if (conges.length === 0) continue;
-
-      await emailService.sendWeeklyManagerSummary(manager, conges, startOfWeek, endOfWeek);
-      logger.info(`[email-cron] Résumé hebdo → ${manager.email} (${conges.length} congés)`);
+      await emailService.sendWeeklySummary(recipient, conges, absences, startOfWeek, endOfWeek);
+      logger.info(`[email-cron] Résumé hebdo → ${recipient.email} (${conges.length} congés, ${absences.length} absences)`);
     } catch (e) {
-      logger.error('[email-cron] sendWeeklyManagerSummary error', { error: e.message, managerId: manager.id });
+      logger.error('[email-cron] sendWeeklySummary error', {
+        error: e.message,
+        recipientId: recipient.id,
+        recipientRole: recipient.role,
+      });
     }
   }
 }

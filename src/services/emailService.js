@@ -1041,30 +1041,48 @@ class EmailService {
     );
   }
 
-  async sendWeeklyManagerSummary(manager, conges, startOfWeek, endOfWeek) {
+  async sendWeeklySummary(recipient, conges, absences, startOfWeek, endOfWeek) {
     const dayjs = require('dayjs');
-    const rows = conges.map((c) => {
-      const name = `${c.utilisateur?.prenom || ''} ${c.utilisateur?.nom || ''}`.trim();
-      const service = c.utilisateur?.service || '-';
-      const type = c.conge_type?.libelle || 'Congé';
+    const byService = new Map();
+    for (const item of [...conges, ...absences]) {
+      const service = item.utilisateur?.service || 'Sans service';
+      const counts = byService.get(service) || { conges: 0, absences: 0 };
+      if (item.type_absence) counts.absences += 1;
+      else counts.conges += 1;
+      byService.set(service, counts);
+    }
+    const serviceSummaryRows = [...byService.entries()]
+      .sort(([a], [b]) => a.localeCompare(b, 'fr'))
+      .map(([service, counts]) =>
+        `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${service}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${counts.conges}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${counts.absences}</td></tr>`
+      )
+      .join('');
+    const rows = [...conges, ...absences].map((item) => {
+      const name = `${item.utilisateur?.prenom || ''} ${item.utilisateur?.nom || ''}`.trim();
+      const service = item.utilisateur?.service || '-';
+      const type = item.conge_type?.libelle || (
+        item.type_absence === 'maladie' ? 'Absence maladie' : 'Absence exceptionnelle'
+      );
       const fmtD = (d) => { if (!d) return ''; const p = String(d).split('T')[0].split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : d; };
-      return `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${name}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${service}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${type}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${fmtD(c.date_debut)}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${fmtD(c.date_fin)}</td></tr>`;
+      return `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${name}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${service}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${type}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${fmtD(item.date_debut)}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${fmtD(item.date_fin)}</td></tr>`;
     }).join('');
 
     const periode = `${dayjs(startOfWeek).format('DD/MM')} – ${dayjs(endOfWeek).format('DD/MM/YYYY')}`;
 
     return this.sendEmail(
-      manager.email,
-      `Résumé de la semaine — ${conges.length} congé(s) à venir`,
+      recipient.email,
+      `Résumé de la semaine — ${conges.length} congé(s), ${absences.length} absence(s)`,
       'weekly-manager-summary',
       {
-        prenom: manager.prenom,
-        nom: manager.nom,
+        prenom: recipient.prenom,
+        nom: recipient.nom,
         periode,
-        total: String(conges.length),
+        total_conges: String(conges.length),
+        total_absences: String(absences.length),
+        service_summary_rows: serviceSummaryRows,
         table_rows: rows,
         dashboard_url: `${getFrontendUrl()}/conges`,
-        content: `<p>Bonjour ${manager.prenom},</p><p>${conges.length} congé(s) validé(s) pour la semaine ${periode}.</p>`,
+        content: `<p>Bonjour ${recipient.prenom},</p><p>${conges.length} congé(s) validé(s) et ${absences.length} absence(s) sur votre périmètre pour la semaine ${periode}.</p>`,
       }
     );
   }
