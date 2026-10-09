@@ -55,7 +55,7 @@ function escapeHtml(str) {
 }
 
 // Keys whose values are pre-built server-side HTML and must NOT be escaped.
-const SAFE_HTML_KEYS = new Set(['content', 'table_rows', 'comments_rows', 'decompte_rows', 'employe_context']);
+const SAFE_HTML_KEYS = new Set(['content', 'table_rows', 'comments_rows', 'decompte_rows', 'employe_context', 'bouton_action', 'service_summary_rows', 'nouvelle_periode_row', 'detail_rows']);
 
 class EmailService {
   constructor() {
@@ -1054,7 +1054,7 @@ class EmailService {
     const serviceSummaryRows = [...byService.entries()]
       .sort(([a], [b]) => a.localeCompare(b, 'fr'))
       .map(([service, counts]) =>
-        `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${service}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${counts.conges}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${counts.absences}</td></tr>`
+        `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb">${escapeHtml(service)}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${counts.conges}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb">${counts.absences}</td></tr>`
       )
       .join('');
     const rows = [...conges, ...absences].map((item) => {

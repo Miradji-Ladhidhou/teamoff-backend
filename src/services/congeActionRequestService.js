@@ -526,8 +526,8 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
   }
 
   const employeMessage = request.type === 'cancel'
-    ? `Votre demande d'annulation a été approuvée par <strong>${actingNom}</strong>. Votre congé a été annulé et votre solde recalculé.`
-    : `Votre demande de modification a été approuvée par <strong>${actingNom}</strong>.`;
+    ? `Votre demande d'annulation a été approuvée par ${actingNom}. Votre congé a été annulé et votre solde recalculé.`
+    : `Votre demande de modification a été approuvée par ${actingNom}.`;
 
   // Email à l'employé
   if (employe?.email) {
@@ -561,8 +561,8 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
     for (const adminUser of adminsApprove) {
       if (adminUser.email) {
         const adminMessage = request.type === 'cancel'
-          ? `La demande d'annulation de <strong>${employe_nom}</strong> a été approuvée par le manager <strong>${actingNom}</strong>. Le congé a été supprimé.`
-          : `La demande de modification de <strong>${employe_nom}</strong> a été approuvée par le manager <strong>${actingNom}</strong>.`;
+          ? `La demande d'annulation de ${employe_nom} a été approuvée par le manager ${actingNom}. Le congé a été supprimé.`
+          : `La demande de modification de ${employe_nom} a été approuvée par le manager ${actingNom}.`;
         fireEmail({
           to: adminUser.email,
           subject: `Pour information — demande ${deAction(action)} approuvée par le manager`,
@@ -593,8 +593,8 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
       for (const mgr of managers) {
         if (mgr.email) {
           const managerMessage = request.type === 'cancel'
-            ? `La demande d'annulation de <strong>${employe_nom}</strong> a été approuvée par ${actingNom}. Le congé a été supprimé.`
-            : `La demande de modification de <strong>${employe_nom}</strong> a été approuvée par ${actingNom}.`;
+            ? `La demande d'annulation de ${employe_nom} a été approuvée par ${actingNom}. Le congé a été supprimé.`
+            : `La demande de modification de ${employe_nom} a été approuvée par ${actingNom}.`;
           fireEmail({
             to: mgr.email,
             subject: `Pour information — demande ${deAction(action)} approuvée`,
@@ -669,8 +669,8 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
   const isManager = actingUser.role === 'manager';
 
   const employeMessage = request.type === 'cancel'
-    ? `Votre demande d'annulation a été refusée par <strong>${actingNom}</strong>. Votre congé reste inchangé.`
-    : `Votre demande de modification a été refusée par <strong>${actingNom}</strong>. Votre congé reste inchangé.`;
+    ? `Votre demande d'annulation a été refusée par ${actingNom}. Votre congé reste inchangé.`
+    : `Votre demande de modification a été refusée par ${actingNom}. Votre congé reste inchangé.`;
 
   if (employe?.email) {
     fireEmail({
@@ -704,8 +704,8 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
     for (const adminUser of adminsReject) {
       if (adminUser.email) {
         const adminMessage = request.type === 'cancel'
-          ? `La demande d'annulation de <strong>${employe_nom}</strong> a été refusée par le manager <strong>${actingNom}</strong>. Le congé reste inchangé.`
-          : `La demande de modification de <strong>${employe_nom}</strong> a été refusée par le manager <strong>${actingNom}</strong>. Le congé reste inchangé.`;
+          ? `La demande d'annulation de ${employe_nom} a été refusée par le manager ${actingNom}. Le congé reste inchangé.`
+          : `La demande de modification de ${employe_nom} a été refusée par le manager ${actingNom}. Le congé reste inchangé.`;
         fireEmail({
           to: adminUser.email,
           subject: `Pour information — demande ${deAction(action)} refusée par le manager`,
@@ -737,8 +737,8 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
       for (const mgr of managers) {
         if (mgr.email) {
           const managerMessage = request.type === 'cancel'
-            ? `La demande d'annulation de <strong>${employe_nom}</strong> a été refusée par ${actingNom}. Le congé reste inchangé.`
-            : `La demande de modification de <strong>${employe_nom}</strong> a été refusée par ${actingNom}. Le congé reste inchangé.`;
+            ? `La demande d'annulation de ${employe_nom} a été refusée par ${actingNom}. Le congé reste inchangé.`
+            : `La demande de modification de ${employe_nom} a été refusée par ${actingNom}. Le congé reste inchangé.`;
           fireEmail({
             to: mgr.email,
             subject: `Pour information — demande ${deAction(action)} refusée`,
