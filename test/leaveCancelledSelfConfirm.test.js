@@ -1,4 +1,10 @@
 'use strict';
+
+jest.mock('../src/services/notificationService', () => ({
+  ...jest.requireActual('../src/services/notificationService'),
+  sendEmail: async () => undefined,
+}));
+
 /**
  * leaveCancelledSelfConfirm.test.js
  *

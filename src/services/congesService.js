@@ -1970,7 +1970,8 @@ async function getCongeById(id, user) {
 // ----------------------------
 async function updateConge(id, data, user, req = null) {
   const sanitizeHtml = require('sanitize-html');
-  return sequelize.transaction(async (t) => {
+  const emailQueue = [];
+  const result = await sequelize.transaction(async (t) => {
     const conge = await Conge.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
     if (!conge) throw new Error('Congé introuvable');
 
@@ -2461,7 +2462,7 @@ async function updateConge(id, data, user, req = null) {
       })).filter((recipient) => recipient?.email);
 
       for (const recipient of recipients) {
-        fireEmail({
+        emailQueue.push({
           to: recipient.email,
           subject: `${isReserved ? 'Réservation' : 'Demande de conge'} modifiee - ${demandeurNom}`,
           templateName: isReserved ? 'leave-reservation-admin' : 'leave-updated-before-approval',
@@ -2482,55 +2483,65 @@ async function updateConge(id, data, user, req = null) {
           }
         });
       }
-      if (employe.email) {
-        if (isReserved) {
-          fireEmail({
-            to: employe.email,
-            subject: 'Votre réservation de congé a été modifiée',
-            templateName: 'leave-reservation-employee',
-            data: {
-              destinataire_prenom: employe.prenom || 'Collaborateur',
-              date_debut: formatDateFR(nextDateDebut),
-              date_fin: formatDateFR(nextDateFin),
-              type_conge: nextCongeType.libelle || 'Congé',
-              jours_calcules: newDays,
-              action_url: buildCongeUrl(conge.id),
-            },
-          });
-        } else {
-          emailService.sendLeaveUpdatedSelfConfirm(
-            employe,
-            nextCongeType.libelle || 'Congé',
-            previousPeriod,
-            nextPeriod,
-            previousCommentaireEmploye || null,
-            nextCommentaireEmploye || null
-          ).catch((e) => logger.error('sendLeaveUpdatedSelfConfirm error', { error: e.message }));
+    }
+
+    if (isReserved && employe.email) {
+      emailQueue.push({
+        to: employe.email,
+        subject: 'Votre réservation de congé a été modifiée',
+        templateName: 'leave-reservation-employee',
+        data: {
+          destinataire_prenom: employe.prenom || 'Collaborateur',
+          date_debut: formatDateFR(nextDateDebut),
+          date_fin: formatDateFR(nextDateFin),
+          type_conge: nextCongeType.libelle || 'Congé',
+          jours_calcules: newDays,
+          action_url: buildCongeUrl(conge.id),
+        },
+      });
+    }
+
+    if ((isPending || isManagerValidated) && employe.email) {
+      const previousPeriod = `${formatDateFR(previousDateDebut)} au ${formatDateFR(previousDateFin)}`;
+      const nextPeriod = `${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)}`;
+      const nextCommentaireEmploye = (updates.commentaire_employe ?? conge.commentaire_employe ?? '').toString().trim();
+
+      t.afterCommit(() => {
+        emailService.sendLeaveUpdatedSelfConfirm(
+          employe,
+          nextCongeType.libelle || 'Congé',
+          previousPeriod,
+          nextPeriod,
+          previousCommentaireEmploye || null,
+          nextCommentaireEmploye || null
+        ).catch((e) => logger.error('sendLeaveUpdatedSelfConfirm error', { error: e.message }));
+      });
+    }
+
+    if (isFinalValidated && employe.email) {
+      const auteurNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim()
+        || (user?.role === 'manager' ? 'Manager'
+          : ['admin_entreprise', 'super_admin'].includes(user?.role) ? 'Administrateur' : 'Collaborateur');
+      const anciennePeriode = `${formatDateFR(previousDateDebut)} au ${formatDateFR(previousDateFin)}`;
+      const nouvellePeriode = `${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)}`;
+      emailQueue.push({
+        to: employe.email,
+        subject: 'Mise a jour de votre conge valide',
+        templateName: 'leave-updated-employee',
+        data: {
+          destinataire_prenom: employe.prenom || 'Collaborateur',
+          auteur_action: auteurNom,
+          type_conge: nextCongeType.libelle || 'Congé',
+          ancienne_periode: anciennePeriode,
+          nouvelle_periode: nouvellePeriode,
+          action_url: buildCongeUrl(conge.id),
         }
-      }
+      });
     }
 
     if (isFinalValidated && (user?.role === 'admin_entreprise' || user?.role === 'super_admin')) {
       const adminNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Administrateur';
       const demandeurNom = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || 'Employé';
-      const anciennePeriode = `${formatDateFR(previousDateDebut)} au ${formatDateFR(previousDateFin)}`;
-      const nouvellePeriode = `${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)}`;
-
-      if (employe.email) {
-        fireEmail({
-          to: employe.email,
-          subject: 'Mise a jour de votre conge valide',
-          templateName: 'leave-updated-employee',
-          data: {
-            destinataire_prenom: employe.prenom || 'Collaborateur',
-            auteur_action: adminNom,
-            type_conge: nextCongeType.libelle || 'Congé',
-            ancienne_periode: anciennePeriode,
-            nouvelle_periode: nouvellePeriode,
-            action_url: buildCongeUrl(conge.id),
-          }
-        });
-      }
       await notificationService.creerNotification({
         entreprise_id: conge.entreprise_id,
         utilisateur_id: employe.id,
@@ -2554,7 +2565,7 @@ async function updateConge(id, data, user, req = null) {
         });
         for (const manager of managers) {
           if (manager.email) {
-            fireEmail({
+            emailQueue.push({
               to: manager.email,
               subject: `Conge valide modifie par l'admin - ${demandeurNom}`,
               templateName: 'leave-updated-before-approval',
@@ -2564,8 +2575,8 @@ async function updateConge(id, data, user, req = null) {
                 action_requise: 'Pour information',
                 contexte_modif: `son conge valide (modifie par ${adminNom})`,
                 demandeur_nom: demandeurNom,
-                ancienne_periode: anciennePeriode,
-                nouvelle_periode: nouvellePeriode,
+                ancienne_periode: `${formatDateFR(previousDateDebut)} au ${formatDateFR(previousDateFin)}`,
+                nouvelle_periode: `${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)}`,
                 type_conge: nextCongeType.libelle || 'Congé',
                 ancien_commentaire_employe: previousCommentaireEmploye || 'Aucun',
                 commentaire_employe: (updates.commentaire_employe ?? conge.commentaire_employe ?? '').toString().trim() || 'Aucun',
@@ -2599,7 +2610,7 @@ async function updateConge(id, data, user, req = null) {
       })).filter((recipient) => recipient?.email);
 
       for (const recipient of recipients) {
-        fireEmail({
+        emailQueue.push({
           to: recipient.email,
           subject: `Conge valide modifie - ${demandeurNom}`,
           templateName: 'leave-updated-before-approval',
@@ -2632,10 +2643,13 @@ async function updateConge(id, data, user, req = null) {
     if (updateOverlapWarning) congeResult.overlap_warning = updateOverlapWarning;
     return congeResult;
   });
+  emailQueue.forEach(payload => fireEmail(payload));
+  return result;
 }
 
 async function deleteConge(id, user, options = {}) {
   const cancellationComment = (options?.commentaire || '').trim();
+  const emailQueue = [];
 
   await sequelize.transaction(async (t) => {
     const conge = await Conge.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
@@ -2770,18 +2784,20 @@ async function deleteConge(id, user, options = {}) {
       }
     }
 
-    if (isPending && !isAdminLevel) {
+    if ((isReserved || isPending) && !isAdminLevel) {
       const employe_nom = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || 'Un employé';
+      const statutLabel = isReserved ? 'réservation de congé' : 'demande de congé en attente';
       const cancelPendingWorkflow = conge.effective_approval_workflow || 'manager_admin';
       const recipients = await getLeaveNotificationRecipients({
         entrepriseId: conge.entreprise_id,
         service: employe.service,
         workflow: cancelPendingWorkflow,
+        reservation: isReserved,
         transaction: t,
       });
       for (const recipient of recipients) {
         if (recipient.email) {
-          fireEmail({
+          emailQueue.push({
             to: recipient.email,
             subject: `Annulation de demande de congé - ${employe_nom}`,
             templateName: 'leave-cancelled-by-employee',
@@ -2789,7 +2805,7 @@ async function deleteConge(id, user, options = {}) {
                 notification_mode: 'information',
               destinataire_prenom: recipient.prenom || 'Responsable',
               demandeur_nom: employe_nom,
-              statut_conge_label: 'demande de congé en attente',
+              statut_conge_label: statutLabel,
               commentaire: 'Aucun',
               date_debut: formatDateFR(conge.date_debut),
               date_fin: formatDateFR(conge.date_fin),
@@ -2801,19 +2817,21 @@ async function deleteConge(id, user, options = {}) {
           entreprise_id: conge.entreprise_id,
           utilisateur_id: recipient.id,
           type: 'conge_annule_employe',
-          message: `${employe_nom} a annulé sa demande de congé du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)}`,
+          message: `${employe_nom} a annulé sa ${statutLabel} du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)}`,
           url: `/conges`,
           transaction: t,
         });
       }
       if (employe.email) {
-        emailService.sendLeaveCancelledSelfConfirm(
-          employe,
-          formatDateFR(conge.date_debut),
-          formatDateFR(conge.date_fin),
-          'demande de congé en attente',
-          null
-        ).catch((e) => logger.error('sendLeaveCancelledSelfConfirm error', { error: e.message }));
+        t.afterCommit(() => {
+          emailService.sendLeaveCancelledSelfConfirm(
+            employe,
+            formatDateFR(conge.date_debut),
+            formatDateFR(conge.date_fin),
+            statutLabel,
+            null
+          ).catch((e) => logger.error('sendLeaveCancelledSelfConfirm error', { error: e.message }));
+        });
       }
     }
 
@@ -2821,7 +2839,7 @@ async function deleteConge(id, user, options = {}) {
       const adminNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Administrateur';
       const employe_nom = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || 'Un employé';
       if (employe.email) {
-        fireEmail({
+        emailQueue.push({
           to: employe.email,
           subject: 'Votre demande de congé a été supprimée',
           templateName: 'leave-cancelled-employee',
@@ -2859,7 +2877,7 @@ async function deleteConge(id, user, options = {}) {
       });
       for (const recipient of recipients) {
         if (recipient.email) {
-          fireEmail({
+          emailQueue.push({
             to: recipient.email,
             subject: `Annulation de congé validé - ${employe_nom}`,
             templateName: 'leave-cancelled-by-employee',
@@ -2885,13 +2903,15 @@ async function deleteConge(id, user, options = {}) {
         });
       }
       if (employe.email) {
-        emailService.sendLeaveCancelledSelfConfirm(
-          employe,
-          formatDateFR(conge.date_debut),
-          formatDateFR(conge.date_fin),
-          statutLabel,
-          cancellationComment || null
-        ).catch((e) => logger.error('sendLeaveCancelledSelfConfirm error', { error: e.message }));
+        t.afterCommit(() => {
+          emailService.sendLeaveCancelledSelfConfirm(
+            employe,
+            formatDateFR(conge.date_debut),
+            formatDateFR(conge.date_fin),
+            statutLabel,
+            cancellationComment || null
+          ).catch((e) => logger.error('sendLeaveCancelledSelfConfirm error', { error: e.message }));
+        });
       }
     }
 
@@ -2899,7 +2919,7 @@ async function deleteConge(id, user, options = {}) {
       const adminNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Administrateur';
       const employe_nom = `${employe.prenom || ''} ${employe.nom || ''}`.trim() || 'Un employé';
       if (employe.email) {
-        fireEmail({
+        emailQueue.push({
           to: employe.email,
           subject: 'Annulation de votre conge valide',
           templateName: 'leave-cancelled-employee',
@@ -2932,21 +2952,24 @@ async function deleteConge(id, user, options = {}) {
       });
       for (const manager of managers.filter((recipient) => recipient.role === 'manager')) {
         if (manager.email) {
-          emailService.sendLeaveCancelledByAdmin(
-            manager,
-            employe_nom,
-            adminNom,
-            formatDateFR(conge.date_debut),
-            formatDateFR(conge.date_fin),
-            cancellationComment || null,
-            'information'
-          ).catch((e) => logger.error('sendLeaveCancelledByAdmin error', { error: e.message }));
+          t.afterCommit(() => {
+            emailService.sendLeaveCancelledByAdmin(
+              manager,
+              employe_nom,
+              adminNom,
+              formatDateFR(conge.date_debut),
+              formatDateFR(conge.date_fin),
+              cancellationComment || null,
+              'information'
+            ).catch((e) => logger.error('sendLeaveCancelledByAdmin error', { error: e.message }));
+          });
         }
       }
     }
 
     await conge.destroy({ transaction: t });
   });
+  emailQueue.forEach(payload => fireEmail(payload));
 }
 
 async function calculateDaysPreview({ date_debut, date_fin, debut_demi_journee, fin_demi_journee, entreprise_id: entrepriseIdParam }, reqUser) {

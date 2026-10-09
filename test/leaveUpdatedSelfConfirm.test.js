@@ -1,14 +1,20 @@
 'use strict';
+
+jest.mock('../src/services/notificationService', () => ({
+  ...jest.requireActual('../src/services/notificationService'),
+  sendEmail: async () => undefined,
+}));
+
 /**
  * leaveUpdatedSelfConfirm.test.js
  *
  * Vérifie que sendLeaveUpdatedSelfConfirm est envoyé à l'employé quand
- * il modifie lui-même sa demande en attente, et qu'il n'est PAS envoyé
- * quand c'est un admin qui modifie la demande.
+ * il modifie lui-même sa demande en attente ou quand un administrateur
+ * modifie cette demande.
  *
  * Cas testés :
  *   A) Employé modifie son propre congé en_attente_manager → email de confirmation envoyé
- *   B) Admin modifie le congé en attente d'un employé → sendLeaveUpdatedSelfConfirm NON envoyé
+ *   B) Admin modifie le congé en attente d'un employé → email de confirmation envoyé
  */
 
 const request      = require('supertest');
@@ -91,10 +97,12 @@ describe('CAS A — employé modifie congé en_attente_manager → sendLeaveUpda
   });
 });
 
-// ─── CAS B : admin modifie le congé → sendLeaveUpdatedSelfConfirm NON envoyé ──
+// ─── CAS B : admin modifie le congé en attente → email envoyé ────────────────
 
-describe('CAS B — admin modifie congé en_attente_manager → sendLeaveUpdatedSelfConfirm NON appelé', () => {
+describe('CAS B — admin modifie congé en_attente_manager → sendLeaveUpdatedSelfConfirm appelé', () => {
   let spy;
+  let conge;
+  let res;
 
   beforeAll(async () => {
     await CompteurConges.create({
@@ -109,7 +117,7 @@ describe('CAS B — admin modifie congé en_attente_manager → sendLeaveUpdated
       jours_annules: 0,
     });
 
-    const conge = await Conge.create({
+    conge = await Conge.create({
       entreprise_id: ctx.entreprise.id,
       utilisateur_id: ctx.employe.id,
       conge_type_id: ctx.congeType.id,
@@ -121,7 +129,7 @@ describe('CAS B — admin modifie congé en_attente_manager → sendLeaveUpdated
 
     spy = jest.spyOn(emailService, 'sendLeaveUpdatedSelfConfirm').mockResolvedValue(undefined);
 
-    await request(app)
+    res = await request(app)
       .put(`/api/conges/${conge.id}`)
       .set('Authorization', `Bearer ${ctx.tokens.admin}`)
       .send({ commentaire_employe: 'Note admin' });
@@ -129,7 +137,19 @@ describe('CAS B — admin modifie congé en_attente_manager → sendLeaveUpdated
 
   afterAll(() => spy.mockRestore());
 
-  it('sendLeaveUpdatedSelfConfirm n\'est pas appelé quand c\'est l\'admin qui modifie', () => {
-    expect(spy).not.toHaveBeenCalled();
+  it('retourne 200', () => {
+    expect(res.status).toBe(200);
+  });
+
+  it('envoie un email de confirmation au salarié concerné', () => {
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [employe] = spy.mock.calls[0];
+    expect(employe.id).toBe(ctx.employe.id);
+  });
+
+  it('transmet les périodes avant et après la modification', () => {
+    const [, , anciennePeriode, nouvellePeriode] = spy.mock.calls[0];
+    expect(anciennePeriode).toContain('01/09/2036');
+    expect(nouvellePeriode).toContain('01/09/2036');
   });
 });
