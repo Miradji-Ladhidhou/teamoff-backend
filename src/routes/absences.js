@@ -4,6 +4,7 @@ const express = require('express');
 const router = express.Router();
 const validateUUIDParam = require('../middlewares/validateUUIDParam');
 const absenceController = require('../controllers/absenceController');
+const { handleUploadJustificatif } = require('../middlewares/uploadJustificatif');
 
 // Middleware de droits pour la consultation des absences
 function canViewAbsences(req, res, next) {
@@ -21,7 +22,7 @@ function canViewAbsences(req, res, next) {
  * - type_absence, date_debut, date_fin, commentaire (dans body)
  * - justificatif (fichier, champ 'justificatif')
  */
-router.post('/', absenceController.createAbsence);
+router.post('/', handleUploadJustificatif, absenceController.createAbsence);
 
 /**
  * GET /api/absences

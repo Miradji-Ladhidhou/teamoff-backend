@@ -40,6 +40,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING(500),
       allowNull: true,
     },
+    justificatif_metadata: {
+      type: DataTypes.JSON,
+      allowNull: true,
+    },
     commentaire: {
       type: DataTypes.TEXT,
       allowNull: true,

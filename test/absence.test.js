@@ -184,4 +184,45 @@ describe('RGPD Art. 9 — commentaire arrêt maladie', () => {
 
     await Absence.destroy({ where: { id: exId } });
   });
+
+  test('POST /api/absences avec pièce jointe (photo/PDF) sauvegarde uniquement les métadonnées', async () => {
+    const fakeFileContent = Buffer.from('Contenu factice du certificat médical');
+    const res = await request(app)
+      .post('/api/absences')
+      .set('Authorization', `Bearer ${tokenEmploye}`)
+      .field('type_absence', 'maladie')
+      .field('date_debut', '2026-11-01')
+      .field('date_fin', '2026-11-03')
+      .field('commentaire', 'Arrêt maladie avec justificatif médical')
+      .attach('justificatif', fakeFileContent, { filename: 'arret_maladie.pdf', contentType: 'application/pdf' });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.body.justificatif).toBe('arret_maladie.pdf');
+    expect(res.body.justificatif_metadata).toBeDefined();
+    expect(res.body.justificatif_metadata.nom_original).toBe('arret_maladie.pdf');
+    expect(res.body.justificatif_metadata.type_mime).toBe('application/pdf');
+    expect(res.body.justificatif_metadata.taille_octets).toBe(fakeFileContent.length);
+    expect(res.body.justificatif_metadata.sha256).toBeDefined();
+
+    // Vérifier en base de données que le blob binaire n'est pas présent
+    const absenceInDb = await Absence.findByPk(res.body.id);
+    expect(absenceInDb.justificatif_metadata.nom_original).toBe('arret_maladie.pdf');
+    expect(absenceInDb.justificatif_metadata.buffer).toBeUndefined();
+
+    await Absence.destroy({ where: { id: res.body.id } });
+  });
+
+  test('POST /api/absences avec format de fichier non autorisé retourne 400', async () => {
+    const res = await request(app)
+      .post('/api/absences')
+      .set('Authorization', `Bearer ${tokenEmploye}`)
+      .field('type_absence', 'maladie')
+      .field('date_debut', '2026-12-01')
+      .field('date_fin', '2026-12-02')
+      .field('commentaire', 'Test fichier invalide')
+      .attach('justificatif', Buffer.from('fichier texte non permis'), { filename: 'test.txt', contentType: 'text/plain' });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toMatch(/Format de fichier non autorisé/);
+  });
 });

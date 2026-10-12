@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const absenceService = require('../services/absenceService');
 const { Absence, Utilisateur, sequelize } = require('../models');
 const logger = require('../utils/logger');
@@ -7,6 +8,15 @@ const { formatDateFR } = require('../utils/dateFormatter');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VALID_STATUTS = ['signalée', 'approuvée', 'rejetée'];
+
+function formatBytes(bytes, decimals = 1) {
+  if (!bytes || bytes === 0) return '0 Octet';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['Octets', 'Ko', 'Mo', 'Go'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
 
 // POST /api/absences
 exports.createAbsence = async (req, res, next) => {
@@ -33,12 +43,56 @@ exports.createAbsence = async (req, res, next) => {
       }
     }
 
+    let justificatif_metadata = null;
+    let attachment = null;
+    let justificatif = null;
+
+    if (req.file) {
+      const hash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+      justificatif = req.file.originalname;
+      justificatif_metadata = {
+        nom_original: req.file.originalname,
+        taille_octets: req.file.size,
+        taille_formatee: formatBytes(req.file.size),
+        type_mime: req.file.mimetype,
+        date_depot: new Date().toISOString(),
+        sha256: hash,
+      };
+      attachment = {
+        filename: req.file.originalname,
+        content: req.file.buffer,
+        contentType: req.file.mimetype,
+      };
+    }
+
     await absenceService.assertManagerAbsenceAction(req.user, utilisateur_id, type_absence);
     const absence = await absenceService.createAbsence({
-      utilisateur_id, entreprise_id, type_absence, date_debut, date_fin, commentaire,
+      utilisateur_id,
+      entreprise_id,
+      type_absence,
+      date_debut,
+      date_fin,
+      commentaire,
+      justificatif,
+      justificatif_metadata,
+      attachment,
     });
     // M-1: audit trail
-    await auditEntity({ action: 'ABSENCE_CREATED', entity: 'Absence', entityId: absence.id, performedBy: req.user, req, metadata: { type_absence, date_debut, date_fin, utilisateur_id } });
+    await auditEntity({
+      action: 'ABSENCE_CREATED',
+      entity: 'Absence',
+      entityId: absence.id,
+      performedBy: req.user,
+      req,
+      metadata: {
+        type_absence,
+        date_debut,
+        date_fin,
+        utilisateur_id,
+        has_justificatif: Boolean(req.file),
+        justificatif_nom: req.file?.originalname || null,
+      },
+    });
     res.status(201).json(absence);
   } catch (err) {
     if (err.status) return res.status(err.status).json({ message: err.message });

@@ -16,7 +16,7 @@ function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-async function notifyAbsenceCreated(absence, entreprise_id) {
+async function notifyAbsenceCreated(absence, entreprise_id, attachment = null) {
   try {
     // m-2: findAll pour notifier tous les admins actifs (findOne ne notifiait que le premier)
     const [employe, admins, entreprise, allManagers] = await Promise.all([
@@ -34,15 +34,30 @@ async function notifyAbsenceCreated(absence, entreprise_id) {
       }),
     })).filter(({ delivery }) => delivery.email || delivery.in_app);
 
+    const typeLibelle = absence.type_absence === 'maladie' ? 'Arrêt maladie' : 'Absence exceptionnelle';
+    const hasJustificatif = Boolean(absence.justificatif || absence.justificatif_metadata);
+    const justificatifNom = absence.justificatif_metadata?.nom_original || absence.justificatif || '';
+    const justificatifTaille = absence.justificatif_metadata?.taille_formatee || '';
+    const justificatifText = justificatifNom ? `${justificatifNom}${justificatifTaille ? ` (${justificatifTaille})` : ''}` : '';
+
+    const justificatifRowHtml = hasJustificatif
+      ? `<tr>
+          <td style="padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280;font-size:14px;">Justificatif</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;">📎 ${esc(justificatifText)} <span style="color:#059669;font-size:12px;font-style:italic;">(pièce jointe incluse)</span></td>
+        </tr>`
+      : '';
+
     const base = {
       prenom: employe?.prenom || '',
       nom: employe?.nom || '',
       type_absence: absence.type_absence,
+      type_absence_libelle: typeLibelle,
       date_debut: formatDateFR(absence.date_debut),
       date_fin: formatDateFR(absence.date_fin),
       commentaire: absence.commentaire,
       employe_email: employe?.email || '',
       entreprise_id,
+      justificatif_row_html: justificatifRowHtml,
     };
 
     const recipients = [];
@@ -52,7 +67,10 @@ async function notifyAbsenceCreated(absence, entreprise_id) {
         employe.email,
         'Nouvelle absence enregistrée',
         'absence-notification',
-        { ...base, content: `<p>Bonjour ${esc(employe.prenom)},<br>Votre absence (${esc(absence.type_absence)}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)} a bien été enregistrée.<br>Commentaire : ${esc(absence.commentaire)}</p>` }
+        {
+          ...base,
+          content: `<p>Bonjour ${esc(employe.prenom)},<br>Votre absence (${esc(typeLibelle)}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)} a bien été enregistrée.<br>Commentaire : ${esc(absence.commentaire)}${hasJustificatif ? `<br>Justificatif joint : ${esc(justificatifText)}` : ''}</p>`,
+        }
       ));
     }
 
@@ -62,28 +80,37 @@ async function notifyAbsenceCreated(absence, entreprise_id) {
           admin.email,
           'Nouvelle absence déclarée',
           'absence-notification',
-          { ...base, notification_mode: 'information', content: `<p>Nouvelle absence déclarée par ${esc(employe?.prenom)} ${esc(employe?.nom)} (${esc(employe?.email)}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.<br>Type : ${esc(absence.type_absence)}<br>Commentaire : ${esc(absence.commentaire)}</p>` }
+          {
+            ...base,
+            notification_mode: 'information',
+            content: `<p>Nouvelle absence déclarée par ${esc(employe?.prenom)} ${esc(employe?.nom)} (${esc(employe?.email)}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.<br>Type : ${esc(typeLibelle)}<br>Commentaire : ${esc(absence.commentaire)}${hasJustificatif ? `<br>Justificatif joint : ${esc(justificatifText)}` : ''}</p>`,
+          },
+          ...(attachment ? [[attachment]] : [])
         ));
       }
       recipients.push(notificationService.creerNotification({
         entreprise_id, utilisateur_id: admin.id, type: 'absence_declaree',
         notification_mode: 'information', url: '/absences/equipe',
-        message: `${employe?.prenom || ''} ${employe?.nom || ''} a déclaré une ${absence.type_absence === 'maladie' ? 'absence maladie' : 'absence exceptionnelle'} du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.`,
+        message: `${employe?.prenom || ''} ${employe?.nom || ''} a déclaré une ${absence.type_absence === 'maladie' ? 'absence maladie' : 'absence exceptionnelle'} du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}${hasJustificatif ? ' (avec justificatif)' : ''}.`,
       }));
     }
 
     for (const { manager, delivery } of managers) {
       if (delivery.email && manager.email) {
+        const managerAttachments = delivery.local && attachment ? [attachment] : [];
+        const managerJustificatifHtml = delivery.local ? justificatifRowHtml : '';
         recipients.push(emailService.sendEmail(
           manager.email,
           manager.service === employe?.service ? 'Nouvelle absence dans votre équipe' : 'Nouvelle absence dans un autre service',
           'absence-notification',
           {
             ...base,
+            justificatif_row_html: managerJustificatifHtml,
             notification_mode: delivery.local ? undefined : 'information',
             commentaire: delivery.local ? absence.commentaire : null,
-            content: `<p>Nouvelle absence déclarée par ${esc(employe?.prenom)} ${esc(employe?.nom)} (${esc(employe?.email)}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.<br>Type : ${esc(absence.type_absence)}${delivery.local ? `<br>Commentaire : ${esc(absence.commentaire)}` : '<br>Pour information : cette absence est enregistrée immédiatement, sans validation obligatoire.'}</p>`,
-          }
+            content: `<p>Nouvelle absence déclarée par ${esc(employe?.prenom)} ${esc(employe?.nom)} (${esc(employe?.email)}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.<br>Type : ${esc(typeLibelle)}${delivery.local ? `<br>Commentaire : ${esc(absence.commentaire)}${hasJustificatif ? `<br>Justificatif : ${esc(justificatifText)}` : ''}` : '<br>Pour information : cette absence est enregistrée immédiatement, sans validation obligatoire.'}</p>`,
+          },
+          ...(managerAttachments.length > 0 ? [managerAttachments] : [])
         ));
       }
       // The previous absence emails did not create in-app alerts for local managers.
@@ -93,7 +120,7 @@ async function notifyAbsenceCreated(absence, entreprise_id) {
           utilisateur_id: manager.id,
           type: 'absence_declaree',
           delivery,
-          message: `${employe?.prenom || ''} ${employe?.nom || ''} a déclaré une ${absence.type_absence === 'maladie' ? 'absence maladie' : 'absence exceptionnelle'} du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.`,
+          message: `${employe?.prenom || ''} ${employe?.nom || ''} a déclaré une ${absence.type_absence === 'maladie' ? 'absence maladie' : 'absence exceptionnelle'} du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}${hasJustificatif ? ' (avec justificatif)' : ''}.`,
           url: '/absences/equipe',
         }));
       }
@@ -112,7 +139,17 @@ async function notifyAbsenceCreated(absence, entreprise_id) {
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-async function createAbsence({ utilisateur_id, entreprise_id, type_absence, date_debut, date_fin, commentaire }) {
+async function createAbsence({
+  utilisateur_id,
+  entreprise_id,
+  type_absence,
+  date_debut,
+  date_fin,
+  commentaire,
+  justificatif = null,
+  justificatif_metadata = null,
+  attachment = null,
+}) {
   if (!type_absence || !date_debut || !date_fin || !commentaire?.trim()) {
     throw Object.assign(new Error('Tous les champs obligatoires doivent être remplis, y compris le commentaire.'), { status: 400 });
   }
@@ -157,9 +194,18 @@ async function createAbsence({ utilisateur_id, entreprise_id, type_absence, date
     );
   }
 
-  const absence = await Absence.create({ utilisateur_id, entreprise_id, type_absence, date_debut, date_fin, commentaire: safeCommentaire });
+  const absence = await Absence.create({
+    utilisateur_id,
+    entreprise_id,
+    type_absence,
+    date_debut,
+    date_fin,
+    commentaire: safeCommentaire,
+    justificatif: justificatif || null,
+    justificatif_metadata: justificatif_metadata || null,
+  });
 
-  notifyAbsenceCreated(absence, entreprise_id);
+  notifyAbsenceCreated(absence, entreprise_id, attachment);
 
   return absence;
 }
@@ -245,6 +291,8 @@ async function listAbsences({ role, id: userId, entreprise_id }, query) {
       const plain = absence.toJSON();
       plain.commentaire = null;
       plain.type_absence = 'confidentiel';
+      plain.justificatif = null;
+      plain.justificatif_metadata = null;
       return plain;
     }
     return absence;
