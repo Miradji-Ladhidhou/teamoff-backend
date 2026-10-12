@@ -6,7 +6,7 @@ const { Utilisateur, Entreprise } = require('../models');
 const systemSettingsService = require('./systemSettingsService');
 const logger = require('../utils/logger');
 const { formatDateFR } = require('../utils/dateFormatter');
-const { prepareEmailNotificationMode } = require('../utils/emailNotificationMode');
+const { prepareEmailNotificationMode, removeUnavailableRecordLinks } = require('../utils/emailNotificationMode');
 
 const isEmailDebug = process.env.EMAIL_DEBUG === 'true';
 
@@ -116,7 +116,7 @@ class EmailService {
       }
       html = await this.getDefaultTemplate();
     }
-    return this.replaceTemplateVariables(html, data);
+    return removeUnavailableRecordLinks(this.replaceTemplateVariables(html, data), data);
   }
 
   // Méthode générique d'envoi d'email
@@ -740,6 +740,7 @@ class EmailService {
         destinataire_prenom: manager.prenom || 'Manager',
         notification_mode: notificationMode,
         demandeur_nom: `${conge.utilisateur?.prenom || ''} ${conge.utilisateur?.nom || ''}`.trim(),
+        notification_delivery: manager.notification_delivery,
         type_conge: conge.conge_type?.libelle || 'Congé',
         date_debut: formatDateFR(conge.date_debut),
         date_fin: formatDateFR(conge.date_fin),
@@ -938,6 +939,7 @@ class EmailService {
         destinataire_prenom: manager.prenom || 'Responsable',
         notification_mode: notificationMode,
         employe_nom: employeNom,
+        notification_delivery: manager.notification_delivery,
         admin_nom: adminNom,
         date_debut: dateDebut,
         date_fin: dateFin,
@@ -989,6 +991,7 @@ class EmailService {
       {
         notification_mode: 'information',
         destinataire_prenom: manager.prenom || 'Manager',
+        notification_delivery: manager.notification_delivery,
         employe_nom,
         admin_nom,
         type_conge,

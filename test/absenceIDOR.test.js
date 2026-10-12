@@ -8,7 +8,7 @@
  * AVANT fix : un manager de l'entreprise A peut créer une absence
  *             pour un employé de l'entreprise B → 201 (bug)
  * APRÈS fix  : tentative cross-entreprise → 403 ;
- *              création dans la même entreprise → 201 (toujours)
+ *              création dans la même entreprise et le même service → 201
  */
 
 const request = require('supertest');
@@ -37,6 +37,7 @@ beforeAll(async () => {
     prenom: 'Manager', nom: 'A',
     email: `mgr.a.${suffix}@test.local`,
     role: 'manager', password_hash: 'hash', statut: 'actif',
+    service: 'Dev',
     entreprise_id: entrepriseA.id,
   });
 
@@ -89,7 +90,7 @@ describe('absenceController — IDOR cross-entreprise', () => {
     expect(res.status).toBe(403);
   });
 
-  it('manager A peut créer une absence pour employé A (même entreprise) — cas normal', async () => {
+  it('manager A peut créer une absence pour employé A (même entreprise et service) — cas normal', async () => {
     const token = generateToken(managerA);
     const res = await request(app)
       .post('/api/absences')

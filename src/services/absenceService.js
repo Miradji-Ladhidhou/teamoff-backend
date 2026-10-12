@@ -1,9 +1,13 @@
-const { Absence, Utilisateur } = require('../models');
+const { Absence, Utilisateur, Entreprise, sequelize } = require('../models');
 const emailService = require('./emailService');
 const logger = require('../utils/logger');
 const { Op } = require('sequelize');
 const { formatDateFR } = require('../utils/dateFormatter');
 const sanitizeHtml = require('sanitize-html');
+const { getLeaveRules, canManagerViewAllAbsences } = require('./politiqueConges');
+const { resolveManagerDelivery, getManagerAbsenceScope } = require('./managerCrossServicePolicy');
+const notificationService = require('./notificationService');
+const { notifyConfiguredManagerEvent, notifyAdminsInformationEvent } = require('./managerEventNotificationService');
 
 const VALID_ABSENCE_TYPES = ['maladie', 'absence_exceptionnelle'];
 
@@ -15,24 +19,20 @@ function esc(s) {
 async function notifyAbsenceCreated(absence, entreprise_id) {
   try {
     // m-2: findAll pour notifier tous les admins actifs (findOne ne notifiait que le premier)
-    const [employe, admins] = await Promise.all([
+    const [employe, admins, entreprise, allManagers] = await Promise.all([
       Utilisateur.findByPk(absence.utilisateur_id),
       Utilisateur.findAll({ where: { entreprise_id, role: 'admin_entreprise', statut: 'actif' } }),
+      Entreprise.findByPk(entreprise_id, { attributes: ['politique_conges'] }),
+      Utilisateur.findAll({ where: { entreprise_id, role: 'manager', statut: 'actif' } }),
     ]);
 
-    // Notifier en priorité les managers du même service que l'employé.
-    // Fallback : tous les managers actifs de l'entreprise si aucun n'est dans ce service.
-    let managers = [];
-    if (employe?.service) {
-      managers = await Utilisateur.findAll({
-        where: { entreprise_id, role: 'manager', service: employe.service, statut: 'actif' },
-      });
-    }
-    if (managers.length === 0) {
-      managers = await Utilisateur.findAll({
-        where: { entreprise_id, role: 'manager', statut: 'actif' },
-      });
-    }
+    const rules = getLeaveRules(entreprise);
+    const managers = allManagers.map(manager => ({
+      manager,
+      delivery: resolveManagerDelivery({
+        rules, manager, targetService: employe?.service, category: absence.type_absence,
+      }),
+    })).filter(({ delivery }) => delivery.email || delivery.in_app);
 
     const base = {
       prenom: employe?.prenom || '',
@@ -62,23 +62,49 @@ async function notifyAbsenceCreated(absence, entreprise_id) {
           admin.email,
           'Nouvelle absence déclarée',
           'absence-notification',
-          { ...base, content: `<p>Nouvelle absence déclarée par ${esc(employe?.prenom)} ${esc(employe?.nom)} (${esc(employe?.email)}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.<br>Type : ${esc(absence.type_absence)}<br>Commentaire : ${esc(absence.commentaire)}</p>` }
+          { ...base, notification_mode: 'information', content: `<p>Nouvelle absence déclarée par ${esc(employe?.prenom)} ${esc(employe?.nom)} (${esc(employe?.email)}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.<br>Type : ${esc(absence.type_absence)}<br>Commentaire : ${esc(absence.commentaire)}</p>` }
         ));
       }
+      recipients.push(notificationService.creerNotification({
+        entreprise_id, utilisateur_id: admin.id, type: 'absence_declaree',
+        notification_mode: 'information', url: '/absences/equipe',
+        message: `${employe?.prenom || ''} ${employe?.nom || ''} a déclaré une ${absence.type_absence === 'maladie' ? 'absence maladie' : 'absence exceptionnelle'} du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.`,
+      }));
     }
 
-    for (const manager of managers) {
-      if (manager.email) {
+    for (const { manager, delivery } of managers) {
+      if (delivery.email && manager.email) {
         recipients.push(emailService.sendEmail(
           manager.email,
-          'Nouvelle absence dans votre équipe',
+          manager.service === employe?.service ? 'Nouvelle absence dans votre équipe' : 'Nouvelle absence dans un autre service',
           'absence-notification',
-          { ...base, content: `<p>Nouvelle absence déclarée par ${esc(employe?.prenom)} ${esc(employe?.nom)} (${esc(employe?.email)}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.<br>Type : ${esc(absence.type_absence)}<br>Commentaire : ${esc(absence.commentaire)}</p>` }
+          {
+            ...base,
+            notification_mode: delivery.local ? undefined : 'information',
+            commentaire: delivery.local ? absence.commentaire : null,
+            content: `<p>Nouvelle absence déclarée par ${esc(employe?.prenom)} ${esc(employe?.nom)} (${esc(employe?.email)}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.<br>Type : ${esc(absence.type_absence)}${delivery.local ? `<br>Commentaire : ${esc(absence.commentaire)}` : '<br>Pour information : cette absence est enregistrée immédiatement, sans validation obligatoire.'}</p>`,
+          }
         ));
+      }
+      // The previous absence emails did not create in-app alerts for local managers.
+      if (!delivery.local && delivery.in_app) {
+        recipients.push(notificationService.creerNotification({
+          entreprise_id,
+          utilisateur_id: manager.id,
+          type: 'absence_declaree',
+          delivery,
+          message: `${employe?.prenom || ''} ${employe?.nom || ''} a déclaré une ${absence.type_absence === 'maladie' ? 'absence maladie' : 'absence exceptionnelle'} du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.`,
+          url: '/absences/equipe',
+        }));
       }
     }
 
-    await Promise.allSettled(recipients);
+    const results = await Promise.allSettled(recipients);
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        logger.error('Erreur envoi email absence', { error: result.reason?.message || String(result.reason) });
+      }
+    }
   } catch (err) {
     logger.error('Erreur envoi email absence', { error: err.message });
   }
@@ -143,6 +169,9 @@ const MEDICAL_ACCESS_ROLES = ['manager', 'admin_entreprise', 'super_admin'];
 
 async function listAbsences({ role, id: userId, entreprise_id }, query) {
   const { type_absence, date_debut, date_fin } = query;
+  if (type_absence && !VALID_ABSENCE_TYPES.includes(type_absence)) {
+    throw Object.assign(new Error('Type d’absence invalide.'), { status: 400 });
+  }
   const utilisateur_id_filter = query.utilisateur_id;
 
   const RESTRICTED_ROLES = ['employe', 'apprenti'];
@@ -164,6 +193,28 @@ async function listAbsences({ role, id: userId, entreprise_id }, query) {
     where.utilisateur_id = userId;
   } else if (utilisateur_id_filter) {
     where.utilisateur_id = utilisateur_id_filter;
+  }
+
+  if (role === 'manager') {
+    const [manager, entreprise] = await Promise.all([
+      Utilisateur.findByPk(userId, { attributes: ['id', 'service'] }),
+      Entreprise.findByPk(entreprise_id, { attributes: ['politique_conges'] }),
+    ]);
+    const rules = getLeaveRules(entreprise);
+    if (!canManagerViewAllAbsences(rules, manager)) {
+      const visibleUsers = await Utilisateur.findAll({
+        where: { entreprise_id, ...(manager?.service ? { service: manager.service } : { id: userId }) },
+        attributes: ['id'],
+        raw: true,
+      });
+      const visibleIds = [...new Set([...visibleUsers.map(user => user.id), userId])];
+      if (utilisateur_id_filter && !visibleIds.includes(utilisateur_id_filter)
+        && (type_absence ? !canManagerViewAllAbsences(rules, manager, type_absence)
+          : !['maladie', 'absence_exceptionnelle'].some(type => canManagerViewAllAbsences(rules, manager, type)))) {
+        throw Object.assign(new Error('Vous ne pouvez pas consulter les absences des autres services.'), { status: 403 });
+      }
+      Object.assign(where, getManagerAbsenceScope(rules, manager, visibleIds));
+    }
   }
 
   if (type_absence) where.type_absence = type_absence;
@@ -200,6 +251,26 @@ async function listAbsences({ role, id: userId, entreprise_id }, query) {
   });
 }
 
+async function assertManagerAbsenceAction(user, utilisateurId, type) {
+  if (user.role !== 'manager' || user.id === utilisateurId) return;
+  if (!VALID_ABSENCE_TYPES.includes(type)) {
+    throw Object.assign(new Error('Type d’absence invalide.'), { status: 400 });
+  }
+  const [manager, employee, entreprise] = await Promise.all([
+    Utilisateur.findByPk(user.id, { attributes: ['id', 'service'] }),
+    Utilisateur.findByPk(utilisateurId, { attributes: ['id', 'service', 'entreprise_id'] }),
+    Entreprise.findByPk(user.entreprise_id, { attributes: ['politique_conges'] }),
+  ]);
+  if (employee?.entreprise_id === user.entreprise_id && manager
+    && !manager.service && !employee.service) return;
+  if (!employee || employee.entreprise_id !== user.entreprise_id
+    || !resolveManagerDelivery({
+      rules: getLeaveRules(entreprise), manager, targetService: employee.service, category: type,
+    }).canAct) {
+    throw Object.assign(new Error('Vous ne pouvez pas agir sur les absences des autres services.'), { status: 403 });
+  }
+}
+
 async function deleteAbsence(id, user) {
   const absence = await Absence.findByPk(id);
   if (!absence) throw Object.assign(new Error('Absence non trouvée'), { status: 404 });
@@ -214,6 +285,7 @@ async function deleteAbsence(id, user) {
   if (!isSuperAdmin && !sameEntreprise) {
     throw Object.assign(new Error('Accès interdit'), { status: 403 });
   }
+  await assertManagerAbsenceAction(user, absence.utilisateur_id, absence.type_absence);
 
   // Un employé ne peut supprimer que sa propre absence encore non traitée
   if (!isSuperAdmin && !isAdminOrAbove && !isManager) {
@@ -226,7 +298,23 @@ async function deleteAbsence(id, user) {
     }
   }
 
-  await absence.destroy();
+  await sequelize.transaction(async transaction => {
+    await absence.destroy({ transaction });
+    const employee = await Utilisateur.findByPk(absence.utilisateur_id, {
+      attributes: ['id', 'prenom', 'nom', 'service'], transaction,
+    });
+    await notifyConfiguredManagerEvent({
+      entrepriseId: absence.entreprise_id, service: employee?.service, category: absence.type_absence,
+      type: 'absence_supprimee',
+      message: `L’absence ${absence.type_absence === 'maladie' ? 'maladie' : 'exceptionnelle'} de ${employee?.prenom || ''} ${employee?.nom || ''} du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)} a été supprimée.`,
+      url: '/absences/equipe', excludeUserIds: [user.id, absence.utilisateur_id], transaction,
+    });
+    await notifyAdminsInformationEvent({
+      entrepriseId: absence.entreprise_id, type: 'absence_supprimee',
+      message: `L’absence ${absence.type_absence === 'maladie' ? 'maladie' : 'exceptionnelle'} de ${employee?.prenom || ''} ${employee?.nom || ''} du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)} a été supprimée.`,
+      url: '/absences/equipe', excludeUserIds: [user.id, absence.utilisateur_id], transaction,
+    });
+  });
 }
 
-module.exports = { createAbsence, listAbsences, notifyAbsenceCreated, deleteAbsence };
+module.exports = { createAbsence, listAbsences, notifyAbsenceCreated, deleteAbsence, assertManagerAbsenceAction };

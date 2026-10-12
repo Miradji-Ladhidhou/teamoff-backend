@@ -16,6 +16,7 @@ beforeAll(async () => {
     role: 'employe',
     password_hash: 'hash',
     statut: 'actif',
+    service: 'RH',
   });
   manager = await Utilisateur.create({
     entreprise_id: entreprise.id,
@@ -25,6 +26,7 @@ beforeAll(async () => {
     role: 'manager',
     password_hash: 'hash',
     statut: 'actif',
+    service: 'RH',
   });
   // Générer des tokens JWT valides (à adapter selon ta logique)
   const jwt = require('jsonwebtoken');
@@ -75,7 +77,7 @@ describe('Absence API', () => {
     expect(res.body.commentaire).toBe('Modifié');
   });
 
-  test("GET /api/absences - manager voit toutes les absences de l'entreprise", async () => {
+  test("GET /api/absences - manager voit les absences de son service", async () => {
     const res = await request(app)
       .get('/api/absences')
       .set('Authorization', `Bearer ${tokenManager}`);
@@ -147,7 +149,7 @@ describe('RGPD Art. 9 — commentaire arrêt maladie', () => {
     expect(saPropreAbsence.commentaire).toBe('Post-opératoire — données médicales confidentielles');
   });
 
-  test('un manager voit le commentaire maladie de tous les employés', async () => {
+  test('un manager voit le commentaire maladie des employés de son service', async () => {
     const res = await request(app)
       .get('/api/absences')
       .set('Authorization', `Bearer ${tokenManager}`);

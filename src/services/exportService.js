@@ -3,10 +3,10 @@ const { Op } = require('sequelize');
 const { Parser } = require('json2csv');
 const PDFDocument = require('pdfkit');
 const pdfTemplate = require('./pdfTemplate');
-const { getLeaveRules, getManagerServicePermissions } = require('./politiqueConges');
+const { getLeaveRules, getManagerServicePermissions, canManagerViewAllAbsences } = require('./politiqueConges');
 
 class ExportService {
-  static async getExportUserWhere(entrepriseId, filters, userContext) {
+  static async getExportUserWhere(entrepriseId, filters, userContext, recordType = 'conge') {
     const user = userContext && typeof userContext === 'object' ? userContext : null;
     const role = user?.role || userContext;
     const conditions = [];
@@ -19,7 +19,11 @@ class ExportService {
           Utilisateur.findByPk(user.id, { attributes: ['id', 'service'] }),
           Entreprise.findByPk(entrepriseId, { attributes: ['politique_conges'] }),
         ]);
-        if (!getManagerServicePermissions(getLeaveRules(entreprise), manager || user).canViewAllServices) {
+        const rules = getLeaveRules(entreprise);
+        const canViewAll = recordType !== 'conge'
+          ? canManagerViewAllAbsences(rules, manager || user, recordType)
+          : getManagerServicePermissions(rules, manager || user).canViewAllServices;
+        if (!canViewAll) {
           conditions.push(manager?.service ? { service: manager.service } : { id: user.id });
         }
       }
@@ -251,7 +255,7 @@ class ExportService {
   // ABSENCES
   // =========================
   static async getAbsencesPreview(entrepriseId, filters = {}, limit = 50, userContext = null) {
-    const userWhere = await this.getExportUserWhere(entrepriseId, filters, userContext);
+    const userWhere = await this.getExportUserWhere(entrepriseId, filters, userContext, 'absence_exceptionnelle');
 
     const rowsDB = await Absence.findAll({
       where: {
@@ -326,7 +330,7 @@ class ExportService {
   // =========================
   static async getArretsMaladiePreview(entrepriseId, filters = {}, limit = 50, userContext = null) {
     // Fix #51 : même pattern que getAbsencesPreview pour le filtre service.
-    const userWhere = await this.getExportUserWhere(entrepriseId, filters, userContext);
+    const userWhere = await this.getExportUserWhere(entrepriseId, filters, userContext, 'maladie');
 
     const rowsDB = await Absence.findAll({
       where: {

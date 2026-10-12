@@ -1,10 +1,12 @@
 const cron = require('node-cron');
 const dayjs = require('dayjs');
 const { Op } = require('sequelize');
-const { Absence, Conge, Utilisateur, Entreprise, CompteurConges, CongeType } = require('../models');
+const { Absence, Conge, Utilisateur, Entreprise, CompteurConges, CongeType, Notification } = require('../models');
 const emailService = require('../services/emailService');
 const { getLeaveNotificationRecipients } = require('../services/leaveNotificationRecipients');
-const { getLeaveRules, getManagerServicePermissions } = require('../services/politiqueConges');
+const { getLeaveRules } = require('../services/politiqueConges');
+const { resolveManagerDelivery } = require('../services/managerCrossServicePolicy');
+const notificationService = require('../services/notificationService');
 const logger = require('../utils/logger');
 const { formatDateFR } = require('../utils/dateFormatter');
 
@@ -95,14 +97,29 @@ async function runPendingLeaveReminders() {
       entrepriseId: conge.utilisateur.entreprise_id,
       service: conge.utilisateur.service,
       workflow: pendingWorkflow,
+      requesterId: conge.utilisateur.id,
       stage: conge.statut === 'valide_manager' ? 'admin' : 'manager',
     });
 
     for (const recipient of recipients) {
-      if (!recipient.email) continue;
       try {
-        await emailService.sendLeavePendingReminder(conge, recipient, joursAttente, recipient.notification_mode);
-        logger.info(`[email-cron] Relance demande en attente → ${recipient.email} (congé ${conge.id})`);
+        if (recipient.email) {
+          await emailService.sendLeavePendingReminder(conge, recipient, joursAttente, recipient.notification_mode);
+          logger.info(`[email-cron] Relance demande en attente → ${recipient.email} (congé ${conge.id})`);
+        }
+        if ((recipient.has_explicit_cross_service_policy || recipient.role === 'admin_entreprise') && recipient.notification_delivery.in_app) {
+          const url = recipient.notification_delivery.canView ? `/conges/${conge.id}` : null;
+          const existing = await Notification.findOne({ where: {
+            utilisateur_id: recipient.id, type: 'conge_rappel_en_attente', url,
+            created_at: { [Op.gte]: dayjs().startOf('day').toDate() },
+            message: { [Op.like]: `%${conge.id}%` },
+          } });
+          if (!existing) await notificationService.creerNotification({
+            entreprise_id: conge.entreprise_id, utilisateur_id: recipient.id,
+            type: 'conge_rappel_en_attente', url, delivery: recipient.notification_delivery,
+            message: `La demande de ${conge.utilisateur.prenom || ''} ${conge.utilisateur.nom || ''} attend une décision depuis ${joursAttente} jour(s) (référence ${conge.id}).`,
+          });
+        }
       } catch (e) {
         logger.error('[email-cron] sendLeavePendingReminder error', { error: e.message, congeId: conge.id });
       }
@@ -298,17 +315,13 @@ async function runWeeklyManagerSummary() {
           ],
         }),
       ]);
-      // Les managers n'accèdent aux autres services que si la politique de leur service l'autorise.
-      const canViewAllServices = recipient.role === 'manager'
-        && getManagerServicePermissions(leaveRulesByCompany.get(recipient.entreprise_id), recipient).canViewAllServices;
-      const isManagerWithoutCrossServiceAccess = recipient.role === 'manager' && !canViewAllServices;
-      const isSameService = item => (item.utilisateur?.service || '') === (recipient.service || '');
-      const conges = isManagerWithoutCrossServiceAccess
-        ? allConges.filter(isSameService)
-        : allConges;
-      const absences = isManagerWithoutCrossServiceAccess
-        ? allAbsences.filter(isSameService)
-        : allAbsences;
+      const includeInEmail = (item, category) => recipient.role !== 'manager'
+        || resolveManagerDelivery({
+          rules: leaveRulesByCompany.get(recipient.entreprise_id), manager: recipient,
+          targetService: item.utilisateur?.service, category,
+        }).email;
+      const conges = allConges.filter(item => includeInEmail(item, 'conges'));
+      const absences = allAbsences.filter(item => includeInEmail(item, item.type_absence));
 
       await emailService.sendWeeklySummary(recipient, conges, absences, startOfWeek, endOfWeek);
       logger.info(`[email-cron] Résumé hebdo → ${recipient.email} (${conges.length} congés, ${absences.length} absences)`);
@@ -364,6 +377,7 @@ async function runReservationReminders() {
         entrepriseId: conge.utilisateur.entreprise_id,
         service: conge.utilisateur.service,
         workflow: reservationWorkflow,
+        requesterId: conge.utilisateur.id,
         reservation: true,
       });
 
@@ -371,9 +385,8 @@ async function runReservationReminders() {
       const actionUrl = `${process.env.FRONTEND_URL?.split(',')[0] || ''}/conges/${conge.id}`;
 
       for (const recipient of recipients) {
-        if (!recipient.email) continue;
         try {
-          await emailService.sendEmail(
+          if (recipient.email) await emailService.sendEmail(
             recipient.email,
             `Rappel réservation congé dans ${label} - ${demandeurNom}`,
             'leave-reservation-reminder',
@@ -386,10 +399,19 @@ async function runReservationReminders() {
               jours_calcules: conge.jours_calcules,
               jours_avant: days,
               notification_mode: recipient.notification_mode,
+              notification_delivery: recipient.notification_delivery,
               action_url: actionUrl,
             }
           );
-          logger.info(`[email-cron] Rappel réservation J-${days} → ${recipient.email} (congé ${conge.id})`);
+          if ((recipient.has_explicit_cross_service_policy || recipient.role === 'admin_entreprise') && recipient.notification_delivery.in_app) {
+            await notificationService.creerNotification({
+              entreprise_id: conge.entreprise_id, utilisateur_id: recipient.id,
+              type: 'conge_rappel_reservation', delivery: recipient.notification_delivery,
+              message: `La réservation de ${demandeurNom} du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)} commence dans ${days} jour(s).`,
+              url: `/conges/${conge.id}`,
+            });
+          }
+          if (recipient.email) logger.info(`[email-cron] Rappel réservation J-${days} → ${recipient.email} (congé ${conge.id})`);
         } catch (e) {
           logger.error('[email-cron] sendReservationReminder error', { error: e.message, congeId: conge.id });
         }

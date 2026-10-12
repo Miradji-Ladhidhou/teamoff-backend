@@ -5,6 +5,7 @@ jest.mock('../src/services/notificationService', () => ({
   creerNotification: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock('../src/services/emailService', () => ({
+  sendEmail: jest.fn().mockResolvedValue(undefined),
   sendLeaveUpdatedSelfConfirm: jest.fn().mockResolvedValue(undefined),
   sendLeaveCancelledSelfConfirm: jest.fn().mockResolvedValue(undefined),
   sendLeaveCancelledByAdmin: jest.fn().mockResolvedValue(undefined),

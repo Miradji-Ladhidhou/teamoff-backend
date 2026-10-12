@@ -1,3 +1,5 @@
+const { getManagerCategorySettings } = require('./managerCrossServicePolicy');
+
 const DEFAULT_LEAVE_POLICY = {
   overlap_behavior: 'block',
   max_employees_on_leave: {
@@ -205,14 +207,18 @@ function getEffectiveLeaveRules(baseRules, service) {
 }
 
 function getManagerServicePermissions(baseRules, manager) {
-  const managerService = String(manager?.service || '').trim();
-  const servicePolicy = managerService ? baseRules?.service_policies?.[managerService] || {} : {};
-  const canValidateAllServices = servicePolicy.manager_can_validate_all_services === true;
+  const settings = getManagerCategorySettings(baseRules, manager, 'conges');
+  const canValidateAllServices = settings.participation === 'action';
 
   return {
-    canViewAllServices: canValidateAllServices || servicePolicy.manager_can_view_all_services === true,
+    canViewAllServices: settings.view,
     canValidateAllServices,
   };
+}
+
+function canManagerViewAllAbsences(baseRules, manager, category) {
+  if (category) return getManagerCategorySettings(baseRules, manager, category).view;
+  return ['maladie', 'absence_exceptionnelle'].every(type => getManagerCategorySettings(baseRules, manager, type).view);
 }
 
 function canManagerAccessService(manager, targetService, baseRules, action = 'view') {
@@ -287,6 +293,7 @@ module.exports = {
   getLeaveRules,
   getEffectiveLeaveRules,
   getManagerServicePermissions,
+  canManagerViewAllAbsences,
   canManagerAccessService,
   getRequiredNotice,
 };

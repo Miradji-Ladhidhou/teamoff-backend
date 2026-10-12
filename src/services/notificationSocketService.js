@@ -1,7 +1,9 @@
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const { Utilisateur, Entreprise, Conge } = require('../models');
-const { getLeaveRules, getEffectiveLeaveRules, getManagerServicePermissions } = require('./politiqueConges');
+const { getLeaveRules, getEffectiveLeaveRules } = require('./politiqueConges');
+const { resolveManagerDelivery } = require('./managerCrossServicePolicy');
+const systemSettingsService = require('./systemSettingsService');
 const logger = require('../utils/logger');
 
 const isSocketDebug = process.env.SOCKET_DEBUG === 'true';
@@ -97,6 +99,8 @@ class NotificationService {
   // Envoyer une notification à tous les utilisateurs d'une entreprise
   async notifyCompany(companyId, event, data) {
     if (!this.io || !companyId) return;
+    const { pushNotifications } = await systemSettingsService.getSettings();
+    if (!pushNotifications) return;
 
     const congeId = data?.conge?.id || data?.congeId;
     if (!congeId) return;
@@ -118,24 +122,36 @@ class NotificationService {
     if (!employee) return;
     const leaveService = employee.service || conge.utilisateur?.service || null;
     const leaveRules = getLeaveRules(entreprise);
+    if (event === 'conge-created' && !leaveRules.notification_settings.on_create) return;
+    if (event === 'conge-status-changed'
+      && ((data.action === 'validated' && !leaveRules.notification_settings.on_validate)
+        || (data.action === 'rejected' && !leaveRules.notification_settings.on_reject))) return;
     const workflow = conge.effective_approval_workflow
       || getEffectiveLeaveRules(leaveRules, leaveService).approval_workflow;
 
     for (const recipient of users) {
       let managerCanValidate = true;
+      let managerCanView = true;
 
       if (recipient.role === 'manager' && recipient.id !== employee.id) {
-        const isSameService = Boolean(recipient.service && leaveService && recipient.service === leaveService);
-        const permissions = getManagerServicePermissions(leaveRules, recipient);
-        if (!isSameService && !permissions.canViewAllServices) continue;
-        managerCanValidate = conge.statut === 'en_attente_manager'
-          && ['manager', 'manager_only', 'manager_admin'].includes(workflow)
-          && (isSameService || permissions.canValidateAllServices);
+        const delivery = resolveManagerDelivery({
+          rules: leaveRules, manager: recipient, targetService: leaveService,
+          actionRequired: event === 'conge-created' && conge.statut === 'en_attente_manager'
+            && ['manager', 'manager_only', 'manager_admin'].includes(workflow),
+        });
+        if (!delivery.in_app) continue;
+        managerCanValidate = delivery.mode === 'action';
+        managerCanView = delivery.canView;
       } else if (recipient.role === 'manager') {
         managerCanValidate = false;
       }
 
-      const eventConge = { ...conge, utilisateur: conge.utilisateur || employee };
+      const eventConge = managerCanView
+        ? { ...conge, utilisateur: conge.utilisateur || employee }
+        : {
+          id: conge.id, statut: conge.statut, date_debut: conge.date_debut, date_fin: conge.date_fin,
+          utilisateur: { prenom: employee.prenom, nom: employee.nom, service: employee.service },
+        };
       if (recipient.id !== employee.id) {
         eventConge.commentaire_employe = null;
         eventConge.commentaire_manager = null;
@@ -144,6 +160,11 @@ class NotificationService {
       const payload = { ...data, conge: eventConge };
       if (recipient.role === 'manager') {
         payload.notification_mode = managerCanValidate ? 'action' : 'information';
+      } else if (recipient.role === 'admin_entreprise') {
+        const pendingAdmin = workflow === 'admin_only' && conge.statut === 'en_attente_manager'
+          || workflow === 'manager_admin' && conge.statut === 'valide_manager';
+        payload.notification_mode = recipient.id !== employee.id && pendingAdmin
+          && ['conge-created', 'conge-status-changed'].includes(event) ? 'action' : 'information';
       }
       this.notifyUser(recipient.id, event, payload);
     }

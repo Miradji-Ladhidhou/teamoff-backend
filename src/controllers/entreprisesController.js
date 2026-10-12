@@ -11,6 +11,7 @@ const { BCRYPT_COST } = require('../services/authService');
 const { calcJoursConges } = require('../services/congesService');
 const { logMouvement, descriptionConge } = require('../services/mouvementSoldeService');
 const { Op } = require('sequelize');
+const { normalizeManagerCrossServicePolicy, validateManagerCrossServicePolicy } = require('../services/managerCrossServicePolicy');
 
 const safeNum = (v) => parseFloat(v || 0);
 
@@ -32,6 +33,7 @@ function normalizeServiceName(value) {
 }
 
 function normalizeServicePolicy(policy = {}) {
+  validateManagerCrossServicePolicy(policy.manager_cross_service);
   const approvalWorkflow = ['manager_admin', 'manager_only', 'admin_only'].includes(policy.approval_workflow)
     ? policy.approval_workflow
     : DEFAULT_SERVICE_POLICY.approval_workflow;
@@ -40,6 +42,7 @@ function normalizeServicePolicy(policy = {}) {
     : DEFAULT_SERVICE_POLICY.overlap_behavior;
 
   const threshold = Math.max(0, Number(policy.notice_urgency_threshold) || 0);
+  const crossService = normalizeManagerCrossServicePolicy(policy);
 
   return {
     overlap_behavior: overlapBehavior,
@@ -50,9 +53,12 @@ function normalizeServicePolicy(policy = {}) {
     notice_urgency_threshold: threshold,
     notice_urgent_days: Math.max(0, Number(policy.notice_urgent_days) || 0),
     notice_normal_days: Math.max(0, Number(policy.notice_normal_days) || 0),
-    manager_can_view_all_services: policy.manager_can_view_all_services === true
-      || policy.manager_can_validate_all_services === true,
-    manager_can_validate_all_services: policy.manager_can_validate_all_services === true,
+    manager_can_view_all_services: crossService.conges.view,
+    manager_can_validate_all_services: crossService.conges.participation === 'action',
+    manager_can_view_all_absences: crossService.maladie.view && crossService.absence_exceptionnelle.view,
+    ...(policy.manager_cross_service !== undefined
+      ? { manager_cross_service: crossService }
+      : {}),
   };
 }
 
@@ -579,10 +585,20 @@ async function updateEntrepriseService(req, res, next) {
     }
 
     const previousServicePolicy = policy.service_policies[currentName] || {};
-    const mergedServicePolicy = normalizeServicePolicy({
+    const incomingServicePolicy = req.body?.policy || {};
+    validateManagerCrossServicePolicy(incomingServicePolicy.manager_cross_service);
+    const mergedPolicy = {
       ...previousServicePolicy,
-      ...(req.body?.policy || {}),
-    });
+      ...incomingServicePolicy,
+    };
+    if (incomingServicePolicy.manager_cross_service !== undefined) {
+      const previousCrossService = normalizeManagerCrossServicePolicy(previousServicePolicy);
+      mergedPolicy.manager_cross_service = { ...previousCrossService };
+      for (const [category, settings] of Object.entries(incomingServicePolicy.manager_cross_service)) {
+        mergedPolicy.manager_cross_service[category] = { ...previousCrossService[category], ...settings };
+      }
+    }
+    const mergedServicePolicy = normalizeServicePolicy(mergedPolicy);
 
     delete policy.service_policies[currentName];
     policy.service_policies[nextName] = mergedServicePolicy;

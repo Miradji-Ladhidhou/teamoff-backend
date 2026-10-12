@@ -6,7 +6,7 @@ const dns = require('dns').promises;
 const fs = require('fs').promises;
 const systemSettingsService = require('./systemSettingsService');
 const path = require('path');
-const { prepareEmailNotificationMode } = require('../utils/emailNotificationMode');
+const { prepareEmailNotificationMode, removeUnavailableRecordLinks } = require('../utils/emailNotificationMode');
 
 const APP_NAME = process.env.EMAIL_NAME || 'TeamOff';
 const APP_FROM = process.env.EMAIL_FROM || process.env.MAIL_USER;
@@ -97,7 +97,7 @@ function replaceTemplateVariables(template, data = {}) {
 async function renderEmailTemplate(templateName, data = {}) {
   const templatePath = path.join(__dirname, '../templates/emails', `${templateName}.html`);
   const template = await fs.readFile(templatePath, 'utf8');
-  return replaceTemplateVariables(template, data);
+  return removeUnavailableRecordLinks(replaceTemplateVariables(template, data), data);
 }
 
 async function recordEmailLog({ to, subject, templateName, data, statut, provider, messageId, error }) {
@@ -289,8 +289,14 @@ async function creerNotification({
   type,
   message,
   url = null,
-  transaction = null
+  transaction = null,
+  delivery = null,
+  notification_mode = delivery?.mode || null
 }) {
+  if (delivery?.in_app === false) return null;
+  if (delivery?.canView === false) url = null;
+  if (notification_mode === 'information') message = `Pour information — ${message}`;
+  if (notification_mode === 'action') message = `Action requise — ${message}`;
   const notif = await Notification.create({
     entreprise_id,
     utilisateur_id,
@@ -306,6 +312,7 @@ async function creerNotification({
     url: notif.url,
     lu: notif.lu,
     created_at: notif.created_at,
+    notification_mode,
   };
 
   // Fix #47 : respecter le flag pushNotifications configuré par l'admin.

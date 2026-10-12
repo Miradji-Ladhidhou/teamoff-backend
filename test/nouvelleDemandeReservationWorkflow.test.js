@@ -229,7 +229,7 @@ describe('Nouvelles demandes de réservation N+1', () => {
     ]);
   });
 
-  it('envoie un email au manager quand une réservation activée attend sa validation', async () => {
+  it('demande la validation au manager et informe l’admin à l’activation automatique', async () => {
     const fixture = await createFixture('AutoPendingEmail', 'manager_admin');
     const leave = await createFutureLeave(fixture);
     await createCounter(fixture, CURRENT_YEAR, 5);
@@ -248,7 +248,13 @@ describe('Nouvelles demandes de réservation N+1', () => {
 
       expect(result.activated.map((item) => item.conge_id)).toContain(leave.id);
       expect(approverEmails).toContain(fixture.manager.email);
-      expect(approverEmails).not.toContain(fixture.admin.email);
+      expect(approverEmails).toContain(fixture.admin.email);
+      const adminPayload = sendEmailSpy.mock.calls.find(([params]) =>
+        params.templateName === 'leave-new-request-manager' && params.to === fixture.admin.email)[0];
+      const managerPayload = sendEmailSpy.mock.calls.find(([params]) =>
+        params.templateName === 'leave-new-request-manager' && params.to === fixture.manager.email)[0];
+      expect(adminPayload.data.notification_mode).toBe('information');
+      expect(managerPayload.data.notification_mode).toBe('action');
     } finally {
       sendEmailSpy.mockRestore();
     }

@@ -207,19 +207,23 @@ describe('runPendingLeaveReminders — bornage des relances', () => {
     expect(calledCongeIds).toContain(conge7.id);
   });
 
-  it('borne maximale : au plus 2 relances envoyées (J+3 et J+7 uniquement)', async () => {
+  it('borne maximale : au plus 2 relances par destinataire (J+3 et J+7 uniquement)', async () => {
     await runPendingLeaveReminders();
 
     // Avec 5 conges en attente (1j, 3j, 7j, 10j, 30j), seuls les 2 bons doivent être ramassés.
-    // 1 manager dans le service → 1 email par conge = 2 emails max.
+    // Le manager agit et l'admin suit : la limite s'applique à chacun.
     const fixtureIds = new Set([conge30.id, conge10.id, conge3.id, conge7.id, conge1.id]);
     const fixtureCalls = emailService.sendLeavePendingReminder.mock.calls.filter(
       ([conge]) => fixtureIds.has(conge.id)
     );
-    expect(fixtureCalls.length).toBeLessThanOrEqual(2);
+    for (const recipient of [ctx.manager, ctx.admin]) {
+      const recipientCalls = fixtureCalls.filter(([, user]) => user.id === recipient.id);
+      expect(recipientCalls).toHaveLength(2);
+      expect(new Set(recipientCalls.map(([conge]) => conge.id)).size).toBe(2);
+    }
   });
 
-  it('démarre la relance admin à la validation manager, pas à la création', async () => {
+  it('démarre la relance d’action admin depuis la validation manager, pas depuis la création', async () => {
     const conge = await createManagerValidatedConge(30, 3);
 
     try {

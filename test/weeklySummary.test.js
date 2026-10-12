@@ -143,6 +143,50 @@ test('le résumé hebdomadaire est envoyé même sans congé ni absence', async 
   expect(sendWeeklySummary).toHaveBeenCalledWith(admin, [], [], expect.any(Date), expect.any(Date));
 });
 
+test.each([true, false])('le résumé sépare la portée des absences (%s) de celle des congés', async (enabled) => {
+  const manager = { id: 'scope-manager', email: 'scope@example.test', role: 'manager', service: 'RH', entreprise_id: 'scope-company' };
+  const conges = [{ utilisateur: { service: 'RH' } }, { utilisateur: { service: 'IT' } }];
+  const absences = [
+    { utilisateur: { service: 'RH' }, type_absence: 'absence_exceptionnelle' },
+    { utilisateur: { service: 'IT' }, type_absence: 'maladie' },
+  ];
+  jest.spyOn(Utilisateur, 'findAll').mockResolvedValueOnce([manager]).mockResolvedValueOnce([]);
+  jest.spyOn(Entreprise, 'findAll').mockResolvedValue([{
+    id: manager.entreprise_id,
+    politique_conges: { service_policies: { RH: {
+      manager_can_view_all_absences: enabled, manager_can_view_all_services: !enabled,
+    } } },
+  }]);
+  jest.spyOn(Conge, 'findAll').mockResolvedValue(conges);
+  jest.spyOn(Absence, 'findAll').mockResolvedValue(absences);
+  const send = jest.spyOn(emailService, 'sendWeeklySummary').mockResolvedValue(undefined);
+  await runWeeklyManagerSummary();
+  expect(send).toHaveBeenCalledWith(manager, enabled ? [conges[0]] : conges, enabled ? absences : [absences[0]], expect.any(Date), expect.any(Date));
+});
+
+test('le récapitulatif suit les canaux email par catégorie, pas les droits de consultation', async () => {
+  const manager = { id: 'email-scope', role: 'manager', service: 'RH', email: 'email-scope@example.test', entreprise_id: 'email-company' };
+  const conges = [{ utilisateur: { service: 'RH' } }, { utilisateur: { service: 'IT' } }];
+  const absences = [
+    { utilisateur: { service: 'RH' }, type_absence: 'maladie' },
+    { utilisateur: { service: 'IT' }, type_absence: 'maladie' },
+    { utilisateur: { service: 'IT' }, type_absence: 'absence_exceptionnelle' },
+  ];
+  jest.spyOn(Utilisateur, 'findAll').mockResolvedValueOnce([manager]).mockResolvedValueOnce([]);
+  jest.spyOn(Entreprise, 'findAll').mockResolvedValue([{
+    id: manager.entreprise_id, politique_conges: { service_policies: { RH: { manager_cross_service: {
+      conges: { view: true, email: false, in_app: true, participation: 'action' },
+      maladie: { view: false, email: true, in_app: false, participation: 'information' },
+      absence_exceptionnelle: { view: true, email: false, in_app: true, participation: 'information' },
+    } } } },
+  }]);
+  jest.spyOn(Conge, 'findAll').mockResolvedValue(conges);
+  jest.spyOn(Absence, 'findAll').mockResolvedValue(absences);
+  const send = jest.spyOn(emailService, 'sendWeeklySummary').mockResolvedValue(undefined);
+  await runWeeklyManagerSummary();
+  expect(send).toHaveBeenCalledWith(manager, [conges[0]], absences.slice(0, 2), expect.any(Date), expect.any(Date));
+});
+
 test('un manager autorisé reçoit les données de tous les services, avec un récapitulatif par service', async () => {
   const manager = {
     id: 'manager-cross-service',
@@ -162,7 +206,7 @@ test('un manager autorisé reçoit les données de tous les services, avec un r�
   jest.spyOn(Entreprise, 'findAll').mockResolvedValue([{
     id: manager.entreprise_id,
     politique_conges: {
-      service_policies: { RH: { manager_can_view_all_services: true } },
+      service_policies: { RH: { manager_can_view_all_services: true, manager_can_view_all_absences: true } },
     },
   }]);
   jest.spyOn(Conge, 'findAll').mockResolvedValue(conges);

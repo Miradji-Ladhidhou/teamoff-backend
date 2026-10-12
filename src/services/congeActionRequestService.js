@@ -4,6 +4,7 @@ const { CongeActionRequest, Conge, Utilisateur, CongeType, Entreprise, sequelize
 const { Op } = require('sequelize');
 const congesService = require('./congesService');
 const { getLeaveNotificationRecipients } = require('./leaveNotificationRecipients');
+const { notifyConfiguredManagerEvent, notifyAdminsInformationEvent } = require('./managerEventNotificationService');
 const notificationService = require('./notificationService');
 const { formatDateFR } = require('../utils/dateFormatter');
 const logger = require('../utils/logger');
@@ -247,6 +248,7 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
         templateName: 'leave-action-request-admin',
         data: {
           destinataire_prenom: adminUser.prenom || 'Administrateur',
+          notification_mode: adminActionRequired ? 'action' : 'information',
           titre_email: adminActionRequired
             ? `Demande ${deAction(action)} — action requise`
             : `Demande ${deAction(action)} — pour information`,
@@ -268,25 +270,26 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
             : `<p><a href="${buildCongeUrl(congeId)}" style="display:inline-block;background:#6b7280;color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:bold;">Voir le congé</a></p>`,
         }
       });
-      if (adminActionRequired) {
-        await notificationService.creerNotification({
-          entreprise_id: conge.entreprise_id,
-          utilisateur_id: adminUser.id,
-          type: 'conge_action_request',
-          message: `${employe_nom} demande ${laAction(action)} de son congé du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)}`,
-          url: '/conges/demandes',
-        });
-      }
     }
+    await notificationService.creerNotification({
+      entreprise_id: conge.entreprise_id,
+      utilisateur_id: adminUser.id,
+      type: 'conge_action_request',
+      notification_mode: adminActionRequired ? 'action' : 'information',
+      message: `${employe_nom} demande ${laAction(action)} de son congé du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)}`,
+      url: '/conges/demandes',
+    });
   }
 
   // Email aux managers — action requise ou pour information selon workflow
-  if (managerCanAct) {
-    const managers = await getLeaveNotificationRecipients({
+  {
+    const recipients = await getLeaveNotificationRecipients({
       entrepriseId: conge.entreprise_id,
       service: employe.service,
-      workflow: 'manager',
+      workflow: managerCanAct ? 'manager' : 'admin_only',
+      requesterId: employe.id,
     });
+    const managers = recipients.filter(recipient => recipient.role === 'manager');
     for (const mgr of managers) {
       if (mgr.email) {
         fireEmail({
@@ -296,6 +299,7 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
           data: {
             destinataire_prenom: mgr.prenom || 'Manager',
             notification_mode: mgr.notification_mode || 'action',
+            notification_delivery: mgr.notification_delivery,
             titre_email: `Demande ${deAction(action)} — action requise`,
             sous_titre: 'Vous devez approuver ou refuser cette demande',
             message_role: 'Veuillez examiner et traiter cette demande depuis votre espace.',
@@ -314,6 +318,7 @@ async function submitRequest({ congeId, type, commentaire, date_debut_demandee, 
         entreprise_id: conge.entreprise_id,
         utilisateur_id: mgr.id,
         type: 'conge_action_request',
+        delivery: mgr.notification_delivery,
         message: `${employe_nom} demande ${laAction(action)} de son congé du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)}`,
         url: '/conges/demandes',
       });
@@ -468,6 +473,7 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
   if (request.type === 'cancel') {
     await congesService.deleteConge(conge.id, actingUser, {
       commentaire: commentaire || request.commentaire_employe || 'Annulation approuvée',
+      notifyAdminTracking: false,
     });
   } else {
     // Pré-vérification des jours ouvrés pour un message d'erreur précis
@@ -495,7 +501,7 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
         date_fin: request.date_fin_demandee,
         debut_demi_journee: request.debut_demi_journee_demandee || 'matin',
         fin_demi_journee: request.fin_demi_journee_demandee || 'apres_midi',
-      }, actingUser);
+      }, actingUser, null, { notifyAdminTracking: false });
     } catch (err) {
       // Enrichir le message pour les erreurs de validation sans statusCode
       if (!err.statusCode) {
@@ -557,6 +563,12 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
 
   // Si c'est le manager qui a agi → notifier tous les admins pour information
   if (isManager) {
+    await notifyConfiguredManagerEvent({
+      entrepriseId: conge.entreprise_id, service: employe?.service, category: 'conges',
+      type: 'conge_action_approved',
+      message: `La demande ${deAction(action)} de ${employe_nom} a été approuvée par ${actingNom}.`,
+      url: `/conges/${conge.id}`, excludeUserIds: [actingUser.id, employe?.id],
+    });
     const adminsApprove = await Utilisateur.findAll({ where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise', statut: 'actif' } });
     for (const adminUser of adminsApprove) {
       if (adminUser.email) {
@@ -568,6 +580,7 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
           subject: `Pour information — demande ${deAction(action)} approuvée par le manager`,
           templateName: 'leave-action-approved',
           data: {
+            notification_mode: 'information',
             destinataire_prenom: adminUser.prenom || 'Administrateur',
             type_action: action,
             type_conge: conge.conge_type?.libelle || 'Congé',
@@ -579,18 +592,30 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
           }
         });
       }
+      await notificationService.creerNotification({
+        entreprise_id: conge.entreprise_id, utilisateur_id: adminUser.id,
+        type: 'conge_action_approved', notification_mode: 'information',
+        message: `La demande ${deAction(action)} de ${employe_nom} a été approuvée par ${actingNom}.`,
+        url: '/conges/demandes',
+      });
     }
   } else {
     // Admin a agi → notifier les managers pour information (si workflow les implique ou inconnu)
+    await notifyAdminsInformationEvent({
+      entrepriseId: conge.entreprise_id, type: 'conge_action_approved',
+      message: `La demande ${deAction(action)} de ${employe_nom} a été approuvée par ${actingNom}.`,
+      url: '/conges/demandes', excludeUserIds: [actingUser.id, employe.id],
+    });
     const effectiveWorkflow = conge?.effective_approval_workflow;
     // null = congé créé avant que le champ existe → on notifie par défaut (plus sûr)
-    if (!effectiveWorkflow || MANAGER_ALLOWED_WORKFLOWS.includes(effectiveWorkflow)) {
+    {
       const managers = await getLeaveNotificationRecipients({
         entrepriseId: conge.entreprise_id,
         service: request.utilisateur?.service,
-        workflow: 'manager',
+        workflow: !effectiveWorkflow || MANAGER_ALLOWED_WORKFLOWS.includes(effectiveWorkflow) ? 'manager' : effectiveWorkflow,
+        informationOnly: true,
       });
-      for (const mgr of managers) {
+      for (const mgr of managers.filter(recipient => recipient.role === 'manager')) {
         if (mgr.email) {
           const managerMessage = request.type === 'cancel'
             ? `La demande d'annulation de ${employe_nom} a été approuvée par ${actingNom}. Le congé a été supprimé.`
@@ -602,6 +627,7 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
             data: {
               destinataire_prenom: mgr.prenom || 'Manager',
               notification_mode: 'information',
+              notification_delivery: mgr.notification_delivery,
               type_action: action,
               type_conge: conge.conge_type?.libelle || 'Congé',
               employe_nom,
@@ -611,14 +637,16 @@ async function approveRequest(requestId, { commentaire, adminUser }) {
               action_url: buildCongeUrl(conge.id),
             }
           });
-          await notificationService.creerNotification({
-            entreprise_id: conge.entreprise_id,
-            utilisateur_id: mgr.id,
-            type: 'conge_action_approved',
-            message: `Demande ${deAction(action)} de ${employe_nom} approuvée par ${actingNom}`,
-            url: `/conges/${conge.id}`,
-          });
         }
+        await notificationService.creerNotification({
+          entreprise_id: conge.entreprise_id,
+          utilisateur_id: mgr.id,
+          type: 'conge_action_approved',
+          delivery: mgr.notification_delivery,
+          notification_mode: 'information',
+          message: `Demande ${deAction(action)} de ${employe_nom} approuvée par ${actingNom}`,
+          url: `/conges/${conge.id}`,
+        });
       }
     }
   }
@@ -689,17 +717,23 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
         action_url: buildCongeUrl(conge.id),
       }
     });
-    await notificationService.creerNotification({
+        }
+        await notificationService.creerNotification({
       entreprise_id: conge.entreprise_id,
       utilisateur_id: employe.id,
       type: 'conge_action_rejected',
       message: `Votre demande ${deAction(action)} a été refusée`,
       url: `/conges/${conge.id}`,
     });
-  }
 
   // Si c'est le manager qui a agi → notifier tous les admins pour information
   if (isManager) {
+    await notifyConfiguredManagerEvent({
+      entrepriseId: conge.entreprise_id, service: employe?.service, category: 'conges',
+      type: 'conge_action_rejected',
+      message: `La demande ${deAction(action)} de ${employe_nom} a été refusée par ${actingNom}.`,
+      url: `/conges/${conge.id}`, excludeUserIds: [actingUser.id, employe?.id],
+    });
     const adminsReject = await Utilisateur.findAll({ where: { entreprise_id: conge.entreprise_id, role: 'admin_entreprise', statut: 'actif' } });
     for (const adminUser of adminsReject) {
       if (adminUser.email) {
@@ -711,6 +745,7 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
           subject: `Pour information — demande ${deAction(action)} refusée par le manager`,
           templateName: 'leave-action-rejected',
           data: {
+            notification_mode: 'information',
             destinataire_prenom: adminUser.prenom || 'Administrateur',
             type_action: action,
             type_conge: conge.conge_type?.libelle || 'Congé',
@@ -723,18 +758,30 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
           }
         });
       }
+      await notificationService.creerNotification({
+        entreprise_id: conge.entreprise_id, utilisateur_id: adminUser.id,
+        type: 'conge_action_rejected', notification_mode: 'information',
+        message: `La demande ${deAction(action)} de ${employe_nom} a été refusée par ${actingNom}.`,
+        url: '/conges/demandes',
+      });
     }
   } else {
     // Admin a agi → notifier les managers pour information (si workflow les implique ou inconnu)
+    await notifyAdminsInformationEvent({
+      entrepriseId: conge.entreprise_id, type: 'conge_action_rejected',
+      message: `La demande ${deAction(action)} de ${employe_nom} a été refusée par ${actingNom}.`,
+      url: '/conges/demandes', excludeUserIds: [actingUser.id, employe.id],
+    });
     const effectiveWorkflow = conge?.effective_approval_workflow;
     // null = congé créé avant que le champ existe → on notifie par défaut (plus sûr)
-    if (!effectiveWorkflow || MANAGER_ALLOWED_WORKFLOWS.includes(effectiveWorkflow)) {
+    {
       const managers = await getLeaveNotificationRecipients({
         entrepriseId: conge.entreprise_id,
         service: request.utilisateur?.service,
-        workflow: 'manager',
+        workflow: !effectiveWorkflow || MANAGER_ALLOWED_WORKFLOWS.includes(effectiveWorkflow) ? 'manager' : effectiveWorkflow,
+        informationOnly: true,
       });
-      for (const mgr of managers) {
+      for (const mgr of managers.filter(recipient => recipient.role === 'manager')) {
         if (mgr.email) {
           const managerMessage = request.type === 'cancel'
             ? `La demande d'annulation de ${employe_nom} a été refusée par ${actingNom}. Le congé reste inchangé.`
@@ -746,6 +793,7 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
             data: {
               destinataire_prenom: mgr.prenom || 'Manager',
               notification_mode: 'information',
+              notification_delivery: mgr.notification_delivery,
               type_action: action,
               type_conge: conge.conge_type?.libelle || 'Congé',
               employe_nom,
@@ -756,14 +804,16 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
               action_url: buildCongeUrl(conge.id),
             }
           });
-          await notificationService.creerNotification({
-            entreprise_id: conge.entreprise_id,
-            utilisateur_id: mgr.id,
-            type: 'conge_action_rejected',
-            message: `Demande d'${action} de ${employe_nom} refusée par ${actingNom}`,
-            url: `/conges/${conge.id}`,
-          });
         }
+        await notificationService.creerNotification({
+          entreprise_id: conge.entreprise_id,
+          utilisateur_id: mgr.id,
+          type: 'conge_action_rejected',
+          delivery: mgr.notification_delivery,
+          notification_mode: 'information',
+          message: `Demande d'${action} de ${employe_nom} refusée par ${actingNom}`,
+          url: `/conges/${conge.id}`,
+        });
       }
     }
   }

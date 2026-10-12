@@ -1,7 +1,9 @@
 const absenceService = require('../services/absenceService');
-const { Absence, Utilisateur } = require('../models');
+const { Absence, Utilisateur, sequelize } = require('../models');
 const logger = require('../utils/logger');
 const { auditEntity } = require('../services/auditHelper');
+const { notifyConfiguredManagerEvent, notifyAdminsInformationEvent } = require('../services/managerEventNotificationService');
+const { formatDateFR } = require('../utils/dateFormatter');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VALID_STATUTS = ['signalée', 'approuvée', 'rejetée'];
@@ -31,6 +33,7 @@ exports.createAbsence = async (req, res, next) => {
       }
     }
 
+    await absenceService.assertManagerAbsenceAction(req.user, utilisateur_id, type_absence);
     const absence = await absenceService.createAbsence({
       utilisateur_id, entreprise_id, type_absence, date_debut, date_fin, commentaire,
     });
@@ -65,6 +68,7 @@ exports.updateAbsence = async (req, res, next) => {
     const canEdit = ['manager', 'admin_entreprise', 'super_admin'].includes(req.user.role)
       || (['employe', 'apprenti'].includes(req.user.role) && absence.utilisateur_id === req.user.id);
     if (!canEdit) return res.status(403).json({ message: 'Accès interdit' });
+    await absenceService.assertManagerAbsenceAction(req.user, absence.utilisateur_id, absence.type_absence);
 
     const canUpdateStatut = ['manager', 'admin_entreprise', 'super_admin'].includes(req.user.role);
 
@@ -88,7 +92,25 @@ exports.updateAbsence = async (req, res, next) => {
       absence.commentaire = req.body.commentaire;
     }
 
-    await absence.save();
+    const previousStatus = absence.previous('statut');
+    const statusChanged = req.body.statut !== undefined && previousStatus !== absence.statut;
+    const commentChanged = absence.changed('commentaire');
+    await sequelize.transaction(async transaction => {
+      await absence.save({ transaction });
+      if (statusChanged || commentChanged) {
+        const employee = await Utilisateur.findByPk(absence.utilisateur_id, {
+          attributes: ['id', 'prenom', 'nom', 'service'], transaction,
+        });
+        const event = {
+          entrepriseId: absence.entreprise_id, service: employee?.service, category: absence.type_absence,
+          type: statusChanged ? 'absence_statut_modifie' : 'absence_modifiee',
+          message: `L’absence ${absence.type_absence === 'maladie' ? 'maladie' : 'exceptionnelle'} de ${employee?.prenom || ''} ${employee?.nom || ''} du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)} ${statusChanged ? `est maintenant ${absence.statut}` : 'a été modifiée'}.`,
+          url: '/absences/equipe', excludeUserIds: [req.user.id, absence.utilisateur_id], transaction,
+        };
+        if (statusChanged) await notifyConfiguredManagerEvent(event);
+        await notifyAdminsInformationEvent(event);
+      }
+    });
     // M-1: audit trail
     await auditEntity({ action: 'ABSENCE_UPDATED', entity: 'Absence', entityId: absence.id, performedBy: req.user, req, metadata: { updates: req.body } });
     res.json(absence);
