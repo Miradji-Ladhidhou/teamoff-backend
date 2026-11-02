@@ -88,3 +88,26 @@ test('les liens des destinataires autorisés restent inchangés', () => {
   const html = '<a href="/conges/123">Voir</a>';
   expect(removeUnavailableRecordLinks(html, {})).toBe(html);
 });
+
+test('un administrateur informé après validation manager ne reçoit pas de texte demandant une validation', async () => {
+  const result = prepareEmailNotificationMode('Demande validée par manager - action requise', 'leave-manager-approved-admin', {
+    notification_mode: 'information', destinataire_role: 'admin_entreprise', manager_nom: 'Manager RH',
+  });
+
+  expect(result.subject).not.toMatch(/action requise/i);
+  const html = await emailService.buildHtml('leave-manager-approved-admin', result.data);
+  expect(html).toContain('Pour information');
+  expect(html).toContain('Aucune validation');
+  expect(html).not.toContain('Votre validation finale est requise');
+  expect(html).not.toContain('requiert votre validation finale');
+});
+
+test.each([true, false])('la lecture explicite des commentaires informatifs respecte le droit de consultation (%s)', canView => {
+  const result = prepareEmailNotificationMode('Suivi de congé', 'leave-new-request-manager', {
+    notification_mode: 'information', notification_comments_allowed: true, notification_delivery: { canView },
+    commentaire_employe: 'Commentaire du salarié', overlap_warning_html: '<div>Autres données privées</div>',
+  });
+  expect(result.data.commentaire_employe).toBe(canView ? 'Commentaire du salarié' : '');
+  expect(result.data.overlap_warning_html).toBe('');
+  expect(result.data.notification_comments_allowed).toBeUndefined();
+});

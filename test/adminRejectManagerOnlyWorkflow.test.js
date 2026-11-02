@@ -34,14 +34,14 @@ beforeAll(async () => {
     entreprise_id: entreprise.id,
     prenom: 'Emp', nom: 'MgrOnly30',
     email: `emp.mo30.${Date.now()}@test.internal`,
-    role: 'employe', password_hash: hash, statut: 'actif',
+    role: 'employe', password_hash: hash, statut: 'actif', service: 'Test local',
   });
 
   manager = await Utilisateur.create({
     entreprise_id: entreprise.id,
     prenom: 'Mgr', nom: 'MgrOnly30',
     email: `mgr.mo30.${Date.now()}@test.internal`,
-    role: 'manager', password_hash: hash, statut: 'actif',
+    role: 'manager', password_hash: hash, statut: 'actif', service: 'Test local',
   });
 
   admin = await Utilisateur.create({

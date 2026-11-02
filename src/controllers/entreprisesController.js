@@ -11,6 +11,8 @@ const { BCRYPT_COST } = require('../services/authService');
 const { calcJoursConges } = require('../services/congesService');
 const { logMouvement, descriptionConge } = require('../services/mouvementSoldeService');
 const { Op } = require('sequelize');
+const { rollbackAfterError } = require('../services/transactionSafety');
+const { remapServicePreferences } = require('../services/notificationPreferencesService');
 const { normalizeManagerCrossServicePolicy, validateManagerCrossServicePolicy } = require('../services/managerCrossServicePolicy');
 
 const safeNum = (v) => parseFloat(v || 0);
@@ -229,6 +231,7 @@ async function updateEntreprise(req, res, next) {
       updateData.politique_conges = {
         ...updateData.politique_conges,
         service_policies: updateData.politique_conges.service_policies ?? existing.service_policies,
+        notification_routing: existing.notification_routing,
         max_employees_on_leave: {
           ...(updateData.politique_conges.max_employees_on_leave || {}),
           by_service: updateData.politique_conges.max_employees_on_leave?.by_service
@@ -405,7 +408,16 @@ async function updatePolitiqueConges(req, res, next) {
       const sanitized = {};
       for (const [name, sp] of Object.entries(safePolitique.service_policies)) {
         const safeName = String(name).trim().slice(0, SERVICE_NAME_MAX);
-        if (safeName) sanitized[safeName] = normalizeServicePolicy(sp || {});
+        if (safeName) {
+          const previous = entreprise.politique_conges?.service_policies?.[safeName] || {};
+          const next = { ...sp };
+          if (next.manager_cross_service) {
+            const existing = normalizeManagerCrossServicePolicy(previous);
+            next.manager_cross_service = Object.fromEntries(Object.entries(next.manager_cross_service)
+              .map(([category, settings]) => [category, { ...existing[category], ...settings }]));
+          }
+          sanitized[safeName] = normalizeServicePolicy(next);
+        }
       }
       safePolitique.service_policies = sanitized;
     }
@@ -615,16 +627,27 @@ async function updateEntrepriseService(req, res, next) {
     const t = await sequelize.transaction();
     try {
       if (currentName !== nextName) {
+        if (policy.notification_routing?.[currentName]) {
+          policy.notification_routing = { ...policy.notification_routing, [nextName]: policy.notification_routing[currentName] };
+          delete policy.notification_routing[currentName];
+        }
         await Utilisateur.update(
           { service: nextName },
           { where: { entreprise_id: entreprise.id, service: currentName }, transaction: t }
         );
+        const notifications = entreprise.parametres?.notifications;
+        if (notifications) {
+          entreprise.parametres = {
+            ...entreprise.parametres,
+            notifications: remapServicePreferences(notifications, currentName, nextName),
+          };
+        }
       }
       entreprise.politique_conges = policy;
       await entreprise.save({ userId: req.user.id, transaction: t });
       await t.commit();
     } catch (txErr) {
-      await t.rollback();
+      await rollbackAfterError(t, txErr);
       throw txErr;
     }
 
@@ -678,8 +701,16 @@ async function deleteEntrepriseService(req, res, next) {
 
     delete policy.service_policies[serviceName];
     delete policy.max_employees_on_leave.by_service[serviceName];
+    if (policy.notification_routing) {
+      policy.notification_routing = { ...policy.notification_routing };
+      delete policy.notification_routing[serviceName];
+    }
 
     const oldPolitique = { ...(entreprise.politique_conges || {}) };
+    if (entreprise.parametres?.notifications) entreprise.parametres = {
+      ...entreprise.parametres,
+      notifications: remapServicePreferences(entreprise.parametres.notifications, serviceName),
+    };
     entreprise.politique_conges = policy;
     await entreprise.save({ userId: req.user.id });
 

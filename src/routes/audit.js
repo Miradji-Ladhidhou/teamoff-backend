@@ -4,6 +4,7 @@ const router = express.Router();
 const { Op, literal } = require('sequelize');
 const { AuditLog, Utilisateur, Entreprise } = require('../models');
 const authorizeRole = require('../middlewares/authorizeRole');
+const { filterRecordComments } = require('../services/commentVisibilityService');
 
 /**
  * GET /api/audit
@@ -96,7 +97,7 @@ router.get('/', authorizeRole(['super_admin']), async (req, res, next) => {
     });
 
     res.json({
-      logs,
+      logs: await filterRecordComments(logs, req.user),
       total,
       page: pageNum,
       totalPages: Math.ceil(total / limitNum),

@@ -3,6 +3,10 @@ const logger = require('../utils/logger');
 const quotasService = require('../services/quotasService');
 const { tryActivateReservations } = require('../services/congesService');
 const { Entreprise, Conge } = require('../models');
+const { createCronTaskGroup } = require('../services/cronTaskGroup');
+const { sanitizeError } = require('../utils/sanitizeLogData');
+const taskGroup = createCronTaskGroup(cron);
+let initialized = false;
 
 /**
  * Tente d'activer toutes les réservations 'reserve' pour une entreprise.
@@ -23,14 +27,19 @@ async function tryActivateCompanyReservations(entrepriseId) {
     const key = `${row.utilisateur_id}::${row.conge_type_id}::${annee}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const result = await tryActivateReservations(row.utilisateur_id, row.conge_type_id, annee);
-    if (result.activated.length > 0) {
-      logger.info(
-        `[quotas-cron] ${result.activated.length} réservation(s) activée(s) pour utilisateur=${row.utilisateur_id} type=${row.conge_type_id} année=${annee}`
-      );
-    }
-    if (result.error) {
-      logger.error(`[quotas-cron] Erreur activation réservations:`, { error: result.error });
+    try {
+      const result = await tryActivateReservations(row.utilisateur_id, row.conge_type_id, annee);
+      if (result.activated.length > 0) {
+        logger.info(
+          `[quotas-cron] ${result.activated.length} réservation(s) activée(s) pour utilisateur=${row.utilisateur_id} type=${row.conge_type_id} année=${annee}`
+        );
+      }
+    } catch (error) {
+      sanitizeError(error);
+      logger.error('[quotas-cron] Échec activation réservations', {
+        entrepriseId, utilisateurId: row.utilisateur_id, congeTypeId: row.conge_type_id,
+        annee, error: error.message, transactionCommitted: error.transactionCommitted === true,
+      });
     }
   }
 }
@@ -78,8 +87,10 @@ async function runMonthlyAccrual() {
 }
 
 function initQuotasCron() {
+  if (initialized) return;
+  initialized = true;
   // Chaque 1er janvier à 00:00
-  cron.schedule('0 0 1 1 *', async () => {
+  taskGroup.schedule('0 0 1 1 *', async () => {
     try {
       await runAnnualInit();
     } catch (error) {
@@ -88,7 +99,7 @@ function initQuotasCron() {
   });
 
   // Chaque 1er du mois (fév-déc) à 00:05
-  cron.schedule('5 0 1 2-12 *', async () => {
+  taskGroup.schedule('5 0 1 2-12 *', async () => {
     try {
       await runMonthlyAccrual();
     } catch (error) {
@@ -97,7 +108,7 @@ function initQuotasCron() {
   });
 
   // 1er janvier à 02:05 — après runAnnualInit (00:00), délai de 2h pour les grandes instances
-  cron.schedule('5 2 1 1 *', async () => {
+  taskGroup.schedule('5 2 1 1 *', async () => {
     try {
       await runMonthlyAccrual();
     } catch (error) {
@@ -110,6 +121,7 @@ function initQuotasCron() {
 
 module.exports = {
   initQuotasCron,
+  stopQuotasCron: taskGroup.stop,
   runAnnualInit,
   runMonthlyAccrual,
 };

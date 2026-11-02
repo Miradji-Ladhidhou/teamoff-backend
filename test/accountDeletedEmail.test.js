@@ -6,7 +6,7 @@
  * ET à l'admin qui a effectué la suppression.
  *
  * Cas testés :
- *   A) Admin supprime un employé → deux appels sendAccountDeleted (employé + admin)
+ *   A) Super admin supprime un employé → deux appels sendAccountDeleted
  *   B) Les données transmises sont correctes pour chaque destinataire
  *   C) Utilisateur inexistant → 404, aucun email
  *   D) Autre rôle non autorisé → 403, aucun email
@@ -33,7 +33,7 @@ afterAll(async () => {
 
 // ─── CAS A+B : admin supprime un employé → deux emails ───────────────────────
 
-describe('CAS A+B — admin supprime un employé → sendAccountDeleted appelé pour l\'employé et l\'admin', () => {
+describe('CAS A+B — super admin supprime un employé → deux emails', () => {
   let spy;
   let res;
   let cible;
@@ -53,7 +53,7 @@ describe('CAS A+B — admin supprime un employé → sendAccountDeleted appelé 
 
     res = await request(app)
       .delete(`/api/users/${cible.id}`)
-      .set('Authorization', `Bearer ${ctx.tokens.admin}`);
+      .set('Authorization', `Bearer ${ctx.tokens.superAdmin}`);
   });
 
   afterAll(() => spy.mockRestore());
@@ -73,7 +73,7 @@ describe('CAS A+B — admin supprime un employé → sendAccountDeleted appelé 
 
   it('le deuxième appel cible l\'email de l\'admin', () => {
     const recipients = spy.mock.calls.map(([r]) => r.email);
-    expect(recipients).toContain(ctx.admin.email);
+    expect(recipients).toContain(ctx.superAdmin.email);
   });
 
   it('employe_nom est transmis dans les deux appels', () => {
@@ -88,7 +88,7 @@ describe('CAS A+B — admin supprime un employé → sendAccountDeleted appelé 
   });
 
   it('message_principal de l\'admin mentionne le nom du collaborateur', () => {
-    const adminCall = spy.mock.calls.find(([r]) => r.email === ctx.admin.email);
+    const adminCall = spy.mock.calls.find(([r]) => r.email === ctx.superAdmin.email);
     expect(adminCall[1].message_principal).toMatch(/Jean/);
   });
 
@@ -115,9 +115,9 @@ describe('CAS C — utilisateur inexistant → 404, aucun email', () => {
     const fakeId = '00000000-0000-4000-a000-000000000099';
     const res = await request(app)
       .delete(`/api/users/${fakeId}`)
-      .set('Authorization', `Bearer ${ctx.tokens.admin}`);
+      .set('Authorization', `Bearer ${ctx.tokens.superAdmin}`);
 
-    expect([404, 403]).toContain(res.status);
+    expect(res.status).toBe(404);
     expect(spy).not.toHaveBeenCalled();
   });
 });
@@ -139,6 +139,15 @@ describe('CAS D — employé tente de supprimer → 403, aucun email', () => {
       .set('Authorization', `Bearer ${ctx.tokens.employe}`);
 
     expect(res.status).toBe(403);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('admin d’entreprise → 403, utilisateur conservé et aucun email', async () => {
+    const res = await request(app)
+      .delete(`/api/users/${ctx.manager.id}`)
+      .set('Authorization', `Bearer ${ctx.tokens.admin}`);
+    expect(res.status).toBe(403);
+    expect(await Utilisateur.findByPk(ctx.manager.id)).not.toBeNull();
     expect(spy).not.toHaveBeenCalled();
   });
 });

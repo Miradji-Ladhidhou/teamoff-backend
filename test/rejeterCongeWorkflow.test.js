@@ -38,7 +38,7 @@ beforeAll(async () => {
   managerUser = await Utilisateur.create({
     prenom: 'Manager', nom: 'Reject',
     email: `manager.reject.${Date.now()}@test.local`,
-    role: 'manager', password_hash: 'hash', statut: 'actif',
+    role: 'manager', password_hash: 'hash', statut: 'actif', service: 'Test local',
     entreprise_id: entrepriseAdminOnly.id,
   });
 
@@ -52,7 +52,7 @@ beforeAll(async () => {
   employeUser = await Utilisateur.create({
     prenom: 'Employe', nom: 'Reject',
     email: `employe.reject.${Date.now()}@test.local`,
-    role: 'employe', password_hash: 'hash', statut: 'actif',
+    role: 'employe', password_hash: 'hash', statut: 'actif', service: 'Test local',
     entreprise_id: entrepriseAdminOnly.id,
   });
 
@@ -133,7 +133,7 @@ describe('rejeterConge — workflow manager_admin (refus manager légitime)', ()
     const empManager = await Utilisateur.create({
       prenom: 'Emp', nom: 'MgrWf',
       email: `emp.mgrwf.${Date.now()}@test.local`,
-      role: 'employe', password_hash: 'hash', statut: 'actif',
+      role: 'employe', password_hash: 'hash', statut: 'actif', service: 'Test local',
       entreprise_id: entrepriseManager.id,
     });
 
@@ -157,7 +157,7 @@ describe('rejeterConge — workflow manager_admin (refus manager légitime)', ()
     const mgrManager = await Utilisateur.create({
       prenom: 'Mgr', nom: 'MgrWf',
       email: `mgr.mgrwf.${Date.now()}@test.local`,
-      role: 'manager', password_hash: 'hash', statut: 'actif',
+      role: 'manager', password_hash: 'hash', statut: 'actif', service: 'Test local',
       entreprise_id: entrepriseManager.id,
     });
 

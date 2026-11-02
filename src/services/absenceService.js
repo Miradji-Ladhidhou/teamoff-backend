@@ -7,7 +7,9 @@ const sanitizeHtml = require('sanitize-html');
 const { getLeaveRules, canManagerViewAllAbsences } = require('./politiqueConges');
 const { resolveManagerDelivery, getManagerAbsenceScope } = require('./managerCrossServicePolicy');
 const notificationService = require('./notificationService');
-const { notifyConfiguredManagerEvent, notifyAdminsInformationEvent } = require('./managerEventNotificationService');
+const { notifyConfiguredManagerEvent, notifyAdminsInformationEvent, notifyConfiguredOwnerEvent } = require('./managerEventNotificationService');
+const { wrapWorkflow, prepareRecipient } = require('./businessNotificationContext');
+const { canReadComments } = require('./commentVisibilityService');
 
 const VALID_ABSENCE_TYPES = ['maladie', 'absence_exceptionnelle'];
 
@@ -22,7 +24,7 @@ async function notifyAbsenceCreated(absence, entreprise_id, attachment = null) {
     const [employe, admins, entreprise, allManagers] = await Promise.all([
       Utilisateur.findByPk(absence.utilisateur_id),
       Utilisateur.findAll({ where: { entreprise_id, role: 'admin_entreprise', statut: 'actif' } }),
-      Entreprise.findByPk(entreprise_id, { attributes: ['politique_conges'] }),
+      Entreprise.findByPk(entreprise_id, { attributes: ['politique_conges', 'parametres'] }),
       Utilisateur.findAll({ where: { entreprise_id, role: 'manager', statut: 'actif' } }),
     ]);
 
@@ -62,6 +64,17 @@ async function notifyAbsenceCreated(absence, entreprise_id, attachment = null) {
 
     const recipients = [];
 
+    const ownerDelivery = employe ? await prepareRecipient({
+      recipientId: employe.id, type: 'absence_declaree', mode: 'information',
+      legacy: false, channel: 'in_app',
+    }) : null;
+    if (ownerDelivery?.enabled) recipients.push(notificationService.creerNotification({
+      entreprise_id, utilisateur_id: employe.id, type: 'absence_declaree',
+      notification_mode: 'information', delivery: { in_app: false },
+      message: `Votre ${typeLibelle.toLowerCase()} du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)} a été enregistré.`,
+      url: '/absences',
+    }));
+
     if (employe?.email) {
       recipients.push(emailService.sendEmail(
         employe.email,
@@ -75,6 +88,8 @@ async function notifyAbsenceCreated(absence, entreprise_id, attachment = null) {
     }
 
     for (const admin of admins) {
+      const commentaire = canReadComments(entreprise?.parametres?.notifications, admin, absence.type_absence, absence.utilisateur_id, rules, employe?.service)
+        ? absence.commentaire : null;
       if (admin.email) {
         recipients.push(emailService.sendEmail(
           admin.email,
@@ -82,8 +97,9 @@ async function notifyAbsenceCreated(absence, entreprise_id, attachment = null) {
           'absence-notification',
           {
             ...base,
+            commentaire,
             notification_mode: 'information',
-            content: `<p>Nouvelle absence déclarée par ${esc(employe?.prenom)} ${esc(employe?.nom)} (${esc(employe?.email)}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.<br>Type : ${esc(typeLibelle)}<br>Commentaire : ${esc(absence.commentaire)}${hasJustificatif ? `<br>Justificatif joint : ${esc(justificatifText)}` : ''}</p>`,
+            content: `<p>Nouvelle absence déclarée par ${esc(employe?.prenom)} ${esc(employe?.nom)} (${esc(employe?.email)}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.<br>Type : ${esc(typeLibelle)}${commentaire ? `<br>Commentaire : ${esc(commentaire)}` : ''}${hasJustificatif ? `<br>Justificatif joint : ${esc(justificatifText)}` : ''}</p>`,
           },
           ...(attachment ? [[attachment]] : [])
         ));
@@ -96,6 +112,9 @@ async function notifyAbsenceCreated(absence, entreprise_id, attachment = null) {
     }
 
     for (const { manager, delivery } of managers) {
+      const commentaire = delivery.canView
+        && canReadComments(entreprise?.parametres?.notifications, manager, absence.type_absence, absence.utilisateur_id, rules, employe?.service)
+        ? absence.commentaire : null;
       if (delivery.email && manager.email) {
         const managerAttachments = delivery.local && attachment ? [attachment] : [];
         const managerJustificatifHtml = delivery.local ? justificatifRowHtml : '';
@@ -107,19 +126,23 @@ async function notifyAbsenceCreated(absence, entreprise_id, attachment = null) {
             ...base,
             justificatif_row_html: managerJustificatifHtml,
             notification_mode: delivery.local ? undefined : 'information',
-            commentaire: delivery.local ? absence.commentaire : null,
-            content: `<p>Nouvelle absence déclarée par ${esc(employe?.prenom)} ${esc(employe?.nom)} (${esc(employe?.email)}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.<br>Type : ${esc(typeLibelle)}${delivery.local ? `<br>Commentaire : ${esc(absence.commentaire)}${hasJustificatif ? `<br>Justificatif : ${esc(justificatifText)}` : ''}` : '<br>Pour information : cette absence est enregistrée immédiatement, sans validation obligatoire.'}</p>`,
+            commentaire,
+            content: `<p>Nouvelle absence déclarée par ${esc(employe?.prenom)} ${esc(employe?.nom)} (${esc(employe?.email)}) du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}.<br>Type : ${esc(typeLibelle)}${commentaire ? `<br>Commentaire : ${esc(commentaire)}` : ''}${delivery.local && hasJustificatif ? `<br>Justificatif : ${esc(justificatifText)}` : ''}${delivery.local ? '' : '<br>Pour information : cette absence est enregistrée immédiatement, sans validation obligatoire.'}</p>`,
           },
           ...(managerAttachments.length > 0 ? [managerAttachments] : [])
         ));
       }
       // The previous absence emails did not create in-app alerts for local managers.
-      if (!delivery.local && delivery.in_app) {
+      const localApp = delivery.local ? await prepareRecipient({
+        recipientId: manager.id, type: 'absence_declaree', mode: 'information',
+        legacy: false, channel: 'in_app',
+      }) : null;
+      if ((!delivery.local && delivery.in_app) || localApp?.enabled) {
         recipients.push(notificationService.creerNotification({
           entreprise_id,
           utilisateur_id: manager.id,
           type: 'absence_declaree',
-          delivery,
+          delivery: delivery.local ? { ...delivery, in_app: false } : delivery,
           message: `${employe?.prenom || ''} ${employe?.nom || ''} a déclaré une ${absence.type_absence === 'maladie' ? 'absence maladie' : 'absence exceptionnelle'} du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)}${hasJustificatif ? ' (avec justificatif)' : ''}.`,
           url: '/absences/equipe',
         }));
@@ -347,6 +370,10 @@ async function deleteAbsence(id, user) {
   }
 
   await sequelize.transaction(async transaction => {
+    await notifyConfiguredOwnerEvent({
+      entrepriseId: absence.entreprise_id, ownerId: absence.utilisateur_id,
+      type: 'absence_supprimee', message: 'Votre absence a été supprimée.', url: '/absences', transaction,
+    });
     await absence.destroy({ transaction });
     const employee = await Utilisateur.findByPk(absence.utilisateur_id, {
       attributes: ['id', 'prenom', 'nom', 'service'], transaction,
@@ -365,4 +392,16 @@ async function deleteAbsence(id, user) {
   });
 }
 
-module.exports = { createAbsence, listAbsences, notifyAbsenceCreated, deleteAbsence, assertManagerAbsenceAction };
+module.exports = {
+  createAbsence: wrapWorkflow(createAbsence, data => ({
+    kind: 'absence', event: data.type_absence === 'maladie' ? 'sickness_created' : 'absence_created',
+    employeeId: data.utilisateur_id,
+  })),
+  listAbsences,
+  notifyAbsenceCreated: wrapWorkflow(notifyAbsenceCreated, absence => ({
+    kind: 'absence', event: absence.type_absence === 'maladie' ? 'sickness_created' : 'absence_created',
+    employeeId: absence.utilisateur_id,
+  })),
+  deleteAbsence: wrapWorkflow(deleteAbsence, id => ({ kind: 'absence', entityId: id, event: 'absence_cancelled' })),
+  assertManagerAbsenceAction,
+};

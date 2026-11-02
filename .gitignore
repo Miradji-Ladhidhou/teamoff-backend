@@ -6,6 +6,7 @@ node_modules/
 .env.*
 !.env.example
 !.env.test.example
+!.env.migrations.*.example
 .env.test
 
 # Clés et certificats
@@ -16,9 +17,26 @@ keys/
 *.crt
 *.p12
 *.pfx
+secrets/
+credentials/
+credentials.json
+credentials-*.json
+client_secret*.json
+service-account*.json
+.npmrc
+.netrc
 
 # Backups base de données
 backups/
+*.dump
+*.backup
+*.sql.gz
+*.sql.zip
+
+# Exports contenant des données métier ou personnelles
+export_*.csv
+export_*.xlsx
+export_*.pdf
 
 # Rapports de couverture de tests
 coverage/
@@ -53,9 +71,6 @@ Thumbs.db
 # Prisma généré
 /generated/prisma
 
-# Schémas et dumps SQL (contiennent la structure de la DB)
-../BDD/
-
 # Données de tests de charge Artillery (contiennent des comptes/emails)
 users_artillery.json
 users_artillery.jsonl
@@ -75,4 +90,3 @@ jest_cache/
 .vscode/settings.json
 *.swp
 *.swo
-

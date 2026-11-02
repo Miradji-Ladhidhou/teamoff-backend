@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-require('dotenv').config();
+if (!process.env.TEAMOFF_INTEGRATION_HARNESS) require('dotenv').config();
 const { Utilisateur, Entreprise } = require('../models');
 const logger = require('../utils/logger');
 

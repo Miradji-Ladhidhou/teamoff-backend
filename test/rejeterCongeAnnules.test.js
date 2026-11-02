@@ -44,12 +44,12 @@ async function mkFixture(label, workflow = 'manager_admin') {
   const employe = await Utilisateur.create({
     entreprise_id: ent.id, prenom: 'Emp', nom: `${label}49`,
     email: `emp.${label}.49.${TS}@test.internal`,
-    role: 'employe', password_hash: hash, statut: 'actif',
+    role: 'employe', password_hash: hash, statut: 'actif', service: 'Test local',
   });
   const manager = await Utilisateur.create({
     entreprise_id: ent.id, prenom: 'Mgr', nom: `${label}49`,
     email: `mgr.${label}.49.${TS}@test.internal`,
-    role: 'manager', password_hash: hash, statut: 'actif',
+    role: 'manager', password_hash: hash, statut: 'actif', service: 'Test local',
   });
   const admin = await Utilisateur.create({
     entreprise_id: ent.id, prenom: 'Adm', nom: `${label}49`,

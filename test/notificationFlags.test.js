@@ -167,12 +167,14 @@ describe('Fix #47 — emailNotifications=false supprime l\'envoi email', () => {
 describe('Fix #47 — emailNotifications=true : sendEmail active (non-régression)', () => {
 
   let getSettingsSpy, createTransportSpy, sendMailMock;
-  let savedGmailId, savedResendKey;
+  let savedGmailId, savedResendKey, savedSimulate;
 
   beforeEach(() => {
     // Forcer le chemin nodemailer pour ne pas faire d'appels réels Gmail/Resend
     savedGmailId  = process.env.GMAIL_CLIENT_ID;
     savedResendKey = process.env.RESEND_API_KEY;
+    savedSimulate = process.env.MAIL_SIMULATE;
+    process.env.MAIL_SIMULATE = 'false';
     delete process.env.GMAIL_CLIENT_ID;
     delete process.env.RESEND_API_KEY;
 
@@ -189,6 +191,8 @@ describe('Fix #47 — emailNotifications=true : sendEmail active (non-régressio
   afterEach(() => {
     if (savedGmailId  !== undefined) process.env.GMAIL_CLIENT_ID  = savedGmailId;
     if (savedResendKey !== undefined) process.env.RESEND_API_KEY   = savedResendKey;
+    if (savedSimulate === undefined) delete process.env.MAIL_SIMULATE;
+    else process.env.MAIL_SIMULATE = savedSimulate;
     getSettingsSpy.mockRestore();
     createTransportSpy.mockRestore();
   });

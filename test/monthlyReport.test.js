@@ -6,9 +6,12 @@ const { runMonthlyReports } = require('../src/cron/emailCron');
 
 afterEach(() => {
   jest.restoreAllMocks();
+  jest.useRealTimers();
 });
 
 test('le rapport mensuel envoie des indicateurs cohérents pour le mois précédent', async () => {
+  jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+  jest.setSystemTime(new Date('2026-10-15T12:00:00Z'));
   const entreprise = { id: 'c230d673-49a0-40d7-a9c8-71da5f252516', nom: 'TeamOff Test', statut: 'active' };
   const admin = { id: 'admin-id', email: 'admin@example.test' };
   const conges = [

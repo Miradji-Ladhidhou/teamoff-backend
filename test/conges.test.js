@@ -16,7 +16,7 @@
 const request = require('supertest');
 const app = require('../src/index');
 const { seed } = require('./helpers/seed');
-const { Conge } = require('../src/models');
+const { Conge, CongeType, Entreprise } = require('../src/models');
 
 let ctx;
 let createdCongeIds = [];
@@ -66,17 +66,18 @@ describe('POST /api/conges/demande — créer une demande de congé', () => {
       .set('Authorization', `Bearer ${ctx.tokens.manager}`)
       .send({
         conge_type_id: ctx.congeType.id,
-        date_debut: '2026-09-01',
-        date_fin: '2026-09-05',
+        date_debut: D_DEBUT,
+        date_fin: D_FIN,
       });
 
     expect([201, 200]).toContain(res.status);
     if (res.body.id) createdCongeIds.push(res.body.id);
   });
 
-  it('retourne 422 si date_fin < date_debut', async () => {
+  it.each(['demande', 'check-overlap'])('%s retourne 422 si date_fin < date_debut', async (endpoint) => {
+    const before = await Conge.count({ where: { utilisateur_id: ctx.employe.id } });
     const res = await request(app)
-      .post('/api/conges/demande')
+      .post(`/api/conges/${endpoint}`)
       .set('Authorization', `Bearer ${ctx.tokens.employe}`)
       .send({
         conge_type_id: ctx.congeType.id,
@@ -84,8 +85,9 @@ describe('POST /api/conges/demande — créer une demande de congé', () => {
         date_fin: D_FIN_422, // antérieure à date_debut
       });
 
-    expect([400, 422]).toContain(res.status);
+    expect(res.status).toBe(422);
     expect(res.body).toHaveProperty('message');
+    expect(await Conge.count({ where: { utilisateur_id: ctx.employe.id } })).toBe(before);
   });
 
   it('retourne 400/422 si conge_type_id manquant', async () => {
@@ -113,10 +115,11 @@ describe('POST /api/conges/demande — créer une demande de congé', () => {
     expect([400, 422]).toContain(res.status);
   });
 
-  it('retourne 400/404 si conge_type_id appartient à une autre entreprise', async () => {
+  it.each(['demande', 'check-overlap'])('%s retourne 404 si conge_type_id est inexistant, sans créer de congé', async (endpoint) => {
     const fakeTypeId = '00000000-0000-4000-a000-000000000099';
+    const before = await Conge.count({ where: { utilisateur_id: ctx.employe.id } });
     const res = await request(app)
-      .post('/api/conges/demande')
+      .post(`/api/conges/${endpoint}`)
       .set('Authorization', `Bearer ${ctx.tokens.employe}`)
       .send({
         conge_type_id: fakeTypeId,
@@ -124,7 +127,50 @@ describe('POST /api/conges/demande — créer une demande de congé', () => {
         date_fin: D_FIN,
       });
 
-    expect([400, 404, 422]).toContain(res.status);
+    expect(res.status).toBe(404);
+    expect(await Conge.count({ where: { utilisateur_id: ctx.employe.id } })).toBe(before);
+  });
+
+  it.each(['demande', 'check-overlap'])('%s retourne 403 pour un type d’une autre entreprise, sans créer de congé', async (endpoint) => {
+    const entreprise = await Entreprise.create({ nom: 'Type hors périmètre', statut: 'active' });
+    try {
+      const type = await CongeType.create({ entreprise_id: entreprise.id, code: 'CP', libelle: 'CP' });
+      const before = await Conge.count({ where: { utilisateur_id: ctx.employe.id } });
+      const res = await request(app).post(`/api/conges/${endpoint}`)
+        .set('Authorization', `Bearer ${ctx.tokens.employe}`)
+        .send({ conge_type_id: type.id, date_debut: D_DEBUT, date_fin: D_FIN });
+      expect(res.status).toBe(403);
+      expect(await Conge.count({ where: { utilisateur_id: ctx.employe.id } })).toBe(before);
+    } finally {
+      await entreprise.destroy();
+    }
+  });
+
+  it('retourne 422 pour un départ passé, sans modifier les compteurs', async () => {
+    const { CompteurConges } = require('../src/models');
+    const before = await CompteurConges.findAll({ where: { utilisateur_id: ctx.employe.id }, raw: true });
+    const past = addDays(-10);
+    const count = await Conge.count({ where: { utilisateur_id: ctx.employe.id } });
+    const res = await request(app).post('/api/conges/demande')
+      .set('Authorization', `Bearer ${ctx.tokens.employe}`)
+      .send({ conge_type_id: ctx.congeType.id, date_debut: past, date_fin: past });
+    expect(res.status).toBe(422);
+    expect(await Conge.count({ where: { utilisateur_id: ctx.employe.id } })).toBe(count);
+    expect(await CompteurConges.findAll({ where: { utilisateur_id: ctx.employe.id }, raw: true })).toEqual(before);
+  });
+
+  it('conserve HTTP500 pour une panne technique, sans créer de congé', async () => {
+    const before = await Conge.count({ where: { utilisateur_id: ctx.employe.id } });
+    const failure = jest.spyOn(CongeType, 'findByPk').mockRejectedValueOnce(new Error('synthetic database failure'));
+    try {
+      const res = await request(app).post('/api/conges/demande')
+        .set('Authorization', `Bearer ${ctx.tokens.employe}`)
+        .send({ conge_type_id: ctx.congeType.id, date_debut: D_DEBUT, date_fin: D_FIN });
+      expect(res.status).toBe(500);
+      expect(await Conge.count({ where: { utilisateur_id: ctx.employe.id } })).toBe(before);
+    } finally {
+      failure.mockRestore();
+    }
   });
 
   it('retourne 401 sans authentification', async () => {

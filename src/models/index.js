@@ -1,12 +1,18 @@
 // models/index.js
 const { Sequelize, DataTypes } = require('sequelize');
-require('dotenv').config();
+const harness = process.env.TEAMOFF_INTEGRATION_HARNESS
+  ? require('../../config/integrationHarness') : null;
+if (harness) harness.assertHarnessImport('pools');
+const harnessConfig = harness ? harness.loadHarnessConfig() : null;
+if (!harness) require('dotenv').config();
 
 // Connexion à la base
-const sequelize = new Sequelize(process.env.DATABASE_URL, {
+const sequelize = new Sequelize(harnessConfig ? harnessConfig.url : process.env.DATABASE_URL, {
   dialect: 'postgres',
   logging: false,
 });
+require('../services/transactionSafety').installTransactionSafety(sequelize);
+if (harness) harness.protectPool(sequelize, 'models');
 
 // ======================
 // Import des modèles avec DataTypes
@@ -28,6 +34,7 @@ const Absence = require('./Absence')(sequelize, DataTypes);
 const MouvementSolde = require('./MouvementSolde')(sequelize, DataTypes);
 const CongeActionRequest = require('./CongeActionRequest')(sequelize, DataTypes);
 const EmailLog = require('./EmailLog')(sequelize, DataTypes);
+const NotificationDelivery = require('./NotificationDelivery')(sequelize, DataTypes);
 
 // ======================
 // Associations
@@ -167,4 +174,5 @@ module.exports = {
   MouvementSolde,
   CongeActionRequest,
   EmailLog,
+  NotificationDelivery,
 };

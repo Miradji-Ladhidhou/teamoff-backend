@@ -1,4 +1,8 @@
-require('dotenv').config();
+const harness = process.env.TEAMOFF_INTEGRATION_HARNESS
+  ? require('../../config/integrationHarness') : null;
+if (harness) harness.assertHarnessImport('pools');
+const harnessConfig = harness ? harness.loadHarnessConfig() : null;
+if (!harness) require('dotenv').config();
 const { Sequelize } = require('sequelize');
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -11,7 +15,7 @@ const isProduction = process.env.NODE_ENV === 'production';
 const LOCK_TIMEOUT_MS             = parseInt(process.env.DB_LOCK_TIMEOUT_MS             || '30000', 10);
 const IDLE_IN_TRANSACTION_TIMEOUT_MS = parseInt(process.env.DB_IDLE_IN_TRANSACTION_TIMEOUT_MS || '60000', 10);
 
-const sequelize = new Sequelize(process.env.DATABASE_URL, {
+const sequelize = new Sequelize(harnessConfig ? harnessConfig.url : process.env.DATABASE_URL, {
   dialect: 'postgres',
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   dialectOptions: isProduction
@@ -24,6 +28,8 @@ const sequelize = new Sequelize(process.env.DATABASE_URL, {
     idle: 10000,
   },
 });
+require('../services/transactionSafety').installTransactionSafety(sequelize);
+if (harness) harness.protectPool(sequelize, 'queries');
 
 // Appliqué à chaque nouvelle connexion du pool.
 // Séparés en deux appels pour compatibilité avec les versions de pg

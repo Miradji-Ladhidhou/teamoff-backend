@@ -4,6 +4,31 @@ const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { pipeline } = require('stream/promises');
+const logger = require('../utils/logger');
+const { sanitizeError, sanitizeMessage } = require('../utils/sanitizeLogData');
+
+function cleanupDirectory(directory, primaryError) {
+  try {
+    fs.rmSync(directory, { recursive: true, force: true });
+  } catch (cleanupError) {
+    sanitizeError(cleanupError);
+    logger.error('drive_temporary_cleanup_failed', { error: cleanupError.message });
+    if (!primaryError) throw cleanupError;
+    primaryError.cleanupError = cleanupError;
+  }
+}
+
+function destroyStream(stream, primaryError) {
+  try {
+    stream?.destroy();
+  } catch (cleanupError) {
+    sanitizeError(cleanupError);
+    logger.error('drive_stream_cleanup_failed', { error: cleanupError.message });
+    if (!primaryError) throw cleanupError;
+    primaryError.cleanupError = cleanupError;
+  }
+}
 
 async function getDriveClient() {
   const clientId     = process.env.GOOGLE_OAUTH_CLIENT_ID;
@@ -61,6 +86,7 @@ async function uploadBackupToDrive(filePath, filename) {
     body: fs.createReadStream(filePath),
   };
 
+  let primaryError;
   try {
     const response = await drive.files.create({
       resource: fileMetadata,
@@ -69,10 +95,13 @@ async function uploadBackupToDrive(filePath, filename) {
     });
     return response.data;
   } catch (e) {
-    const msg = e.message || 'Erreur Google Drive inconnue';
-    const gErr = new Error(`Google Drive : ${msg}`);
+    const msg = sanitizeMessage(e.message || 'Erreur Google Drive inconnue');
+    const gErr = new Error(`Google Drive : ${msg}`, { cause: sanitizeError(e) });
     gErr.statusCode = 500;
+    primaryError = gErr;
     throw gErr;
+  } finally {
+    destroyStream(media.body, primaryError);
   }
 }
 
@@ -82,36 +111,75 @@ async function listDriveBackups(maxResults = 20) {
 
   const drive = await getDriveClient();
 
-  const response = await drive.files.list({
-    q: `'${folderId}' in parents and trashed = false`,
-    fields: 'files(id, name, size, createdTime, webViewLink)',
-    orderBy: 'createdTime desc',
-    pageSize: maxResults,
-  });
+  let response;
+  try {
+    response = await drive.files.list({
+      q: `'${folderId}' in parents and trashed = false`,
+      fields: 'files(id, name, size, createdTime, webViewLink)',
+      orderBy: 'createdTime desc',
+      pageSize: maxResults,
+    });
+  } catch (error) {
+    throw sanitizeError(error);
+  }
 
   return response.data.files || [];
 }
 
-async function downloadFromDrive(fileId, filename) {
+async function downloadFromDrive(fileId) {
   const drive = await getDriveClient();
-
-  const destPath = path.join(os.tmpdir(), filename || `restore_${Date.now()}.sql`);
-  const dest = fs.createWriteStream(destPath);
-
-  const response = await drive.files.get(
-    { fileId, alt: 'media' },
-    { responseType: 'stream' }
-  );
-
-  await new Promise((resolve, reject) => {
-    response.data
-      .on('error', reject)
-      .pipe(dest)
-      .on('error', reject)
-      .on('finish', resolve);
-  });
-
-  return destPath;
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'teamoff-restore-'));
+  const destPath = path.join(directory, 'backup.sql');
+  let source;
+  try {
+    fs.chmodSync(directory, 0o700);
+    const response = await drive.files.get(
+      { fileId, alt: 'media' },
+      { responseType: 'stream' }
+    );
+    source = response.data;
+    await pipeline(source, fs.createWriteStream(destPath, { flags: 'wx', mode: 0o600 }));
+    fs.chmodSync(destPath, 0o600);
+    temporaryDownloads.set(destPath, directory);
+    return destPath;
+  } catch (error) {
+    sanitizeError(error);
+    destroyStream(source, error);
+    cleanupDirectory(directory, error);
+    throw error;
+  }
 }
 
-module.exports = { uploadBackupToDrive, listDriveBackups, downloadFromDrive };
+const temporaryDownloads = new Map();
+
+// The successful caller owns this cleanup; only paths allocated here are accepted.
+function cleanupDownloadedBackup(filePath) {
+  const directory = temporaryDownloads.get(filePath);
+  if (!directory) throw new Error('Téléchargement temporaire inconnu.');
+  cleanupDirectory(directory);
+  temporaryDownloads.delete(filePath);
+}
+
+async function withDownloadedBackup(fileId, consume) {
+  const filePath = await downloadFromDrive(fileId);
+  let primaryError;
+  try {
+    return await consume(filePath);
+  } catch (error) {
+    primaryError = sanitizeError(error);
+    throw primaryError;
+  } finally {
+    if (primaryError) {
+      const directory = temporaryDownloads.get(filePath);
+      if (directory) cleanupDirectory(directory, primaryError);
+      if (!primaryError.cleanupError) temporaryDownloads.delete(filePath);
+    } else {
+      cleanupDownloadedBackup(filePath);
+    }
+  }
+}
+
+module.exports = {
+  uploadBackupToDrive, listDriveBackups, downloadFromDrive,
+  cleanupDownloadedBackup, withDownloadedBackup,
+};

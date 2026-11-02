@@ -2,6 +2,7 @@ const logger = require('../utils/logger');
 const sanitizeLogData = require('../utils/sanitizeLogData');
 
 function errorHandler(err, req, res, next) {
+  sanitizeLogData.sanitizeError(err);
   logger.error('unhandled_error', sanitizeLogData({
     requestId: req.id ?? null,
     method:    req.method,
@@ -10,8 +11,13 @@ function errorHandler(err, req, res, next) {
     role:      req.user?.role ?? null,
     errName:   err.name,
     errMsg:    err.message,
+    errCode:   err.code,
+    cause:     err.cause?.message,
     stack:     process.env.NODE_ENV !== 'production' ? err.stack : undefined,
+    cleanupError: err.cleanupError?.message,
   }));
+
+  if (res.headersSent || res.destroyed) return next(err);
 
   // JSON malformé
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {

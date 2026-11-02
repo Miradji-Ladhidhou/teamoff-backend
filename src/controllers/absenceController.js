@@ -1,9 +1,11 @@
 const crypto = require('crypto');
 const absenceService = require('../services/absenceService');
+const { filterRecordComments } = require('../services/commentVisibilityService');
 const { Absence, Utilisateur, sequelize } = require('../models');
 const logger = require('../utils/logger');
 const { auditEntity } = require('../services/auditHelper');
-const { notifyConfiguredManagerEvent, notifyAdminsInformationEvent } = require('../services/managerEventNotificationService');
+const { notifyConfiguredManagerEvent, notifyAdminsInformationEvent, notifyConfiguredOwnerEvent } = require('../services/managerEventNotificationService');
+const { wrapWorkflow } = require('../services/businessNotificationContext');
 const { formatDateFR } = require('../utils/dateFormatter');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -93,7 +95,7 @@ exports.createAbsence = async (req, res, next) => {
         justificatif_nom: req.file?.originalname || null,
       },
     });
-    res.status(201).json(absence);
+    res.status(201).json(await filterRecordComments(absence, req.user, 'absence_exceptionnelle'));
   } catch (err) {
     if (err.status) return res.status(err.status).json({ message: err.message });
     next(err);
@@ -104,7 +106,7 @@ exports.createAbsence = async (req, res, next) => {
 exports.listAbsences = async (req, res, next) => {
   try {
     const absences = await absenceService.listAbsences(req.user, req.query);
-    res.json(absences);
+    res.json(await filterRecordComments(absences, req.user, 'absence_exceptionnelle'));
   } catch (err) {
     logger.error('Erreur récupération absences', { error: err.message });
     next(err);
@@ -161,13 +163,14 @@ exports.updateAbsence = async (req, res, next) => {
           message: `L’absence ${absence.type_absence === 'maladie' ? 'maladie' : 'exceptionnelle'} de ${employee?.prenom || ''} ${employee?.nom || ''} du ${formatDateFR(absence.date_debut)} au ${formatDateFR(absence.date_fin)} ${statusChanged ? `est maintenant ${absence.statut}` : 'a été modifiée'}.`,
           url: '/absences/equipe', excludeUserIds: [req.user.id, absence.utilisateur_id], transaction,
         };
-        if (statusChanged) await notifyConfiguredManagerEvent(event);
+        await notifyConfiguredManagerEvent({ ...event, legacyEligible: statusChanged });
         await notifyAdminsInformationEvent(event);
+        await notifyConfiguredOwnerEvent({ ...event, ownerId: absence.utilisateur_id });
       }
     });
     // M-1: audit trail
     await auditEntity({ action: 'ABSENCE_UPDATED', entity: 'Absence', entityId: absence.id, performedBy: req.user, req, metadata: { updates: req.body } });
-    res.json(absence);
+    res.json(await filterRecordComments(absence, req.user, 'absence_exceptionnelle'));
   } catch (err) {
     logger.error('Erreur mise à jour absence', { error: err.message });
     next(err);
@@ -186,3 +189,7 @@ exports.deleteAbsence = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.updateAbsence = wrapWorkflow(exports.updateAbsence, req => ({
+  kind: 'absence', entityId: req.params.id, event: 'absence_modified',
+}));

@@ -44,7 +44,7 @@ async function mkEmploye(entrepriseId, label) {
     entreprise_id: entrepriseId,
     prenom: 'Emp', nom: label,
     email: `emp.${label}.${TS}@test.internal`,
-    role: 'employe', password_hash: hash, statut: 'actif',
+    role: 'employe', password_hash: hash, statut: 'actif', service: 'Test local',
   });
 }
 
@@ -362,7 +362,7 @@ describe('Feature N+1 H — manager peut réserver N+1 sans solde', () => {
       entreprise_id: ent.id,
       prenom: 'Man', nom: `H_${TS}`,
       email: `manager.H.${TS}@test.internal`,
-      role: 'manager', password_hash: hash, statut: 'actif',
+      role: 'manager', password_hash: hash, statut: 'actif', service: 'Test local',
     });
     type = await mkCongeType(ent.id, 'H');
     await mkCompteur(ent.id, manager.id, type.id, NEXT_YEAR, { jours_acquis: 0, jours_reserves: 0 });
@@ -512,7 +512,7 @@ describe('Feature N+1 J — validation finale réalloue vers le solde courant', 
     emp = await mkEmploye(ent.id, 'J');
     manager = await Utilisateur.create({
       entreprise_id: ent.id, prenom: 'Manager', nom: `J_${TS}`,
-      email: `manager.J.${TS}@test.internal`, role: 'manager', password_hash: hash, statut: 'actif',
+      email: `manager.J.${TS}@test.internal`, role: 'manager', password_hash: hash, statut: 'actif', service: 'Test local',
     });
     type = await mkCongeType(ent.id, 'J');
 
@@ -576,7 +576,7 @@ describe('Feature N+1 K — validation finale atomique si solde insuffisant', ()
     emp = await mkEmploye(ent.id, 'K');
     manager = await Utilisateur.create({
       entreprise_id: ent.id, prenom: 'Manager', nom: `K_${TS}`,
-      email: `manager.K.${TS}@test.internal`, role: 'manager', password_hash: hash, statut: 'actif',
+      email: `manager.K.${TS}@test.internal`, role: 'manager', password_hash: hash, statut: 'actif', service: 'Test local',
     });
     type = await mkCongeType(ent.id, 'K');
     await mkCompteur(ent.id, emp.id, type.id, NEXT_YEAR - 1, { jours_acquis: 11.5 });
@@ -635,7 +635,7 @@ describe('Feature N+1 L — validation multi-années sans compteur source réser
     emp = await mkEmploye(ent.id, 'L');
     manager = await Utilisateur.create({
       entreprise_id: ent.id, prenom: 'Manager', nom: `L_${TS}`,
-      email: `manager.L.${TS}@test.internal`, role: 'manager', password_hash: hash, statut: 'actif',
+      email: `manager.L.${TS}@test.internal`, role: 'manager', password_hash: hash, statut: 'actif', service: 'Test local',
     });
     type = await mkCongeType(ent.id, 'L');
     await mkCompteur(ent.id, emp.id, type.id, NEXT_YEAR - 1, { jours_acquis: 9 });

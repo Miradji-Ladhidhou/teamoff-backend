@@ -4,6 +4,7 @@ const { Parser } = require('json2csv');
 const PDFDocument = require('pdfkit');
 const pdfTemplate = require('./pdfTemplate');
 const { getLeaveRules, getManagerServicePermissions, canManagerViewAllAbsences } = require('./politiqueConges');
+const { getManagerUserWhere } = require('./managerCrossServicePolicy');
 
 class ExportService {
   static async getExportUserWhere(entrepriseId, filters, userContext, recordType = 'conge') {
@@ -24,7 +25,7 @@ class ExportService {
           ? canManagerViewAllAbsences(rules, manager || user, recordType)
           : getManagerServicePermissions(rules, manager || user).canViewAllServices;
         if (!canViewAll) {
-          conditions.push(manager?.service ? { service: manager.service } : { id: user.id });
+          conditions.push(getManagerUserWhere(rules, manager || user, recordType === 'conge' ? 'conges' : recordType));
         }
       }
     }

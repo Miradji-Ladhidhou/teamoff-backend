@@ -4,6 +4,8 @@ const { Op } = require('sequelize');
 const { getLeaveRules } = require('./politiqueConges');
 const { auditCounter } = require('./auditHelper');
 const logger = require('../utils/logger');
+const { isTransactionCommitted } = require('./transactionSafety');
+const sanitizeLogData = require('../utils/sanitizeLogData');
 
 const isQuotasDebug = process.env.QUOTAS_DEBUG === 'true';
 
@@ -516,7 +518,11 @@ async function getPendingReservedDays({ utilisateurId, congeTypeId, annee, trans
 }
 
 async function createOrUpdateCounter({ entrepriseId, utilisateurId, congeTypeId, annee, values, performedBy = null, req = null }) {
+  let counterTransaction;
+  let result;
+  const warnings = [];
   return sequelize.transaction(async (t) => {
+    counterTransaction = t;
     const utilisateur = await Utilisateur.findOne({
       where: { id: utilisateurId, entreprise_id: entrepriseId },
       transaction: t,
@@ -577,9 +583,15 @@ async function createOrUpdateCounter({ entrepriseId, utilisateurId, congeTypeId,
       jours_reserves: toNumber(compteur.jours_reserves, 0),
     };
 
-    auditCounter.updated(compteur, before, after, performedBy, req).catch((e) =>
-      logger.error('auditCounter.updated error', { error: e.message })
-    );
+    t.afterCommit(async () => {
+      const auditResult = await auditCounter.updated(compteur, before, after, performedBy, req);
+      if (auditResult?.status === 'failed') {
+        warnings.push({
+          code: 'COUNTER_AUDIT_FAILED',
+          message: 'Solde enregistré, mais son journal d’audit n’a pas pu être enregistré.',
+        });
+      }
+    });
 
     const delta = (toNumber(after.jours_acquis, 0) - toNumber(after.jours_reserves, 0))
                 - (toNumber(before.jours_acquis, 0) - toNumber(before.jours_reserves, 0));
@@ -596,7 +608,28 @@ async function createOrUpdateCounter({ entrepriseId, utilisateurId, congeTypeId,
       transaction: t,
     });
 
-    return { compteur, before, after };
+    result = { compteur, before, after };
+    return result;
+  }).catch(error => {
+    if (!result || !isTransactionCommitted(counterTransaction)) throw error;
+    sanitizeLogData.sanitizeError(error);
+    logger.error('counter_post_commit_failed', sanitizeLogData({
+      error: error.message,
+      stack: error.stack,
+      cause: error.cause?.message,
+      cleanupErrors: error.cleanupErrors?.map(e => ({ message: e.message, stack: e.stack, details: e })),
+      afterCommitErrors: error.afterCommitErrors?.map(e => ({ message: e.message, stack: e.stack, details: e })),
+    }));
+    return {
+      ...result,
+      warnings: [...warnings, {
+        code: 'COUNTER_POST_COMMIT_FAILED',
+        message: 'Solde enregistré, mais un traitement après validation ou le nettoyage de la connexion a échoué.',
+      }],
+    };
+  }).then(value => {
+    if (warnings.length && !value.warnings) return { ...value, warnings };
+    return value;
   });
 }
 

@@ -9,6 +9,11 @@ const { resolveManagerDelivery } = require('../services/managerCrossServicePolic
 const notificationService = require('../services/notificationService');
 const logger = require('../utils/logger');
 const { formatDateFR } = require('../utils/dateFormatter');
+const { withContext, prepareRecipientSafely } = require('../services/businessNotificationContext');
+const { filterAdministrativeRecords } = require('../services/notificationPreferencesService');
+const { createCronTaskGroup } = require('../services/cronTaskGroup');
+const taskGroup = createCronTaskGroup(cron);
+let initialized = false;
 
 // ---------------------------------------------------------------------------
 // Rappels congés à venir (J-3 et J-1)
@@ -37,7 +42,10 @@ async function runLeaveReminders() {
     for (const conge of conges) {
       if (!conge.utilisateur?.email) continue;
       try {
-        await emailService.sendLeaveReminder(conge, conge.utilisateur, joursAvant);
+        await withContext({
+          kind: 'leave', entityId: conge.id, employeeId: conge.utilisateur.id,
+          operationId: `leave-reminder:${conge.id}:${targetDate}:${joursAvant}`,
+        }, () => emailService.sendLeaveReminder(conge, conge.utilisateur, joursAvant));
         logger.info(`[email-cron] Rappel congé J-${joursAvant} envoyé à ${conge.utilisateur.email}`);
       } catch (e) {
         logger.error('[email-cron] sendLeaveReminder error', { error: e.message, congeId: conge.id });
@@ -101,29 +109,39 @@ async function runPendingLeaveReminders() {
       stage: conge.statut === 'valide_manager' ? 'admin' : 'manager',
     });
 
-    for (const recipient of recipients) {
-      try {
-        if (recipient.email) {
-          await emailService.sendLeavePendingReminder(conge, recipient, joursAttente, recipient.notification_mode);
-          logger.info(`[email-cron] Relance demande en attente → ${recipient.email} (congé ${conge.id})`);
-        }
-        if ((recipient.has_explicit_cross_service_policy || recipient.role === 'admin_entreprise') && recipient.notification_delivery.in_app) {
-          const url = recipient.notification_delivery.canView ? `/conges/${conge.id}` : null;
-          const existing = await Notification.findOne({ where: {
-            utilisateur_id: recipient.id, type: 'conge_rappel_en_attente', url,
-            created_at: { [Op.gte]: dayjs().startOf('day').toDate() },
-            message: { [Op.like]: `%${conge.id}%` },
-          } });
-          if (!existing) await notificationService.creerNotification({
-            entreprise_id: conge.entreprise_id, utilisateur_id: recipient.id,
-            type: 'conge_rappel_en_attente', url, delivery: recipient.notification_delivery,
-            message: `La demande de ${conge.utilisateur.prenom || ''} ${conge.utilisateur.nom || ''} attend une décision depuis ${joursAttente} jour(s) (référence ${conge.id}).`,
+    await withContext({
+      kind: 'leave', entityId: conge.id, employeeId: conge.utilisateur.id,
+      operationId: `pending:${conge.id}:${conge.statut}:${dayjs().format('YYYY-MM-DD')}`,
+    }, async () => {
+      for (const recipient of recipients) {
+        try {
+          if (recipient.email) {
+            await emailService.sendLeavePendingReminder(conge, recipient, joursAttente, recipient.notification_mode);
+            logger.info(`[email-cron] Relance demande en attente → ${recipient.email} (congé ${conge.id})`);
+          }
+          const configuredInApp = await prepareRecipientSafely({
+            recipientId: recipient.id, type: 'conge_rappel_en_attente', mode: recipient.notification_mode,
+            legacy: false, channel: 'in_app',
           });
+          if (((recipient.has_explicit_cross_service_policy || recipient.role === 'admin_entreprise')
+            && recipient.notification_delivery.in_app) || configuredInApp?.enabled) {
+            const url = recipient.notification_delivery.canView ? `/conges/${conge.id}` : null;
+            const existing = await Notification.findOne({ where: {
+              utilisateur_id: recipient.id, type: 'conge_rappel_en_attente', url,
+              created_at: { [Op.gte]: dayjs().startOf('day').toDate() },
+              message: { [Op.like]: `%${conge.id}%` },
+            } });
+            if (!existing) await notificationService.creerNotification({
+              entreprise_id: conge.entreprise_id, utilisateur_id: recipient.id,
+              type: 'conge_rappel_en_attente', url, delivery: recipient.notification_delivery,
+              message: `La demande de ${conge.utilisateur.prenom || ''} ${conge.utilisateur.nom || ''} attend une décision depuis ${joursAttente} jour(s) (référence ${conge.id}).`,
+            });
+          }
+        } catch (e) {
+          logger.error('[email-cron] sendLeavePendingReminder error', { error: e.message, congeId: conge.id });
         }
-      } catch (e) {
-        logger.error('[email-cron] sendLeavePendingReminder error', { error: e.message, congeId: conge.id });
       }
-    }
+    });
   }
 }
 
@@ -141,7 +159,7 @@ async function runMonthlyReports() {
 
   const entreprises = await Entreprise.findAll({
     where: { statut: 'active' },
-    attributes: ['id', 'nom'],
+    attributes: ['id', 'nom', 'parametres'],
   });
 
   for (const entreprise of entreprises) {
@@ -152,7 +170,10 @@ async function runMonthlyReports() {
           date_debut: { [Op.between]: [startOfLastMonth, endOfLastMonth] },
           statut: 'valide_final',
         },
-        include: [{ model: CongeType, as: 'conge_type', attributes: ['libelle'] }],
+        include: [
+          { model: CongeType, as: 'conge_type', attributes: ['libelle'] },
+          { model: Utilisateur, as: 'utilisateur', attributes: ['service'] },
+        ],
       }),
       Absence.findAll({
         where: {
@@ -161,6 +182,7 @@ async function runMonthlyReports() {
           statut: { [Op.in]: ['signalée', 'approuvée'] },
         },
         attributes: ['type_absence'],
+        include: [{ model: Utilisateur, as: 'utilisateur', attributes: ['service'] }],
       }),
       Utilisateur.count({
         where: {
@@ -176,7 +198,17 @@ async function runMonthlyReports() {
     ]);
 
     const absencesByType = new Map();
-    for (const absence of absences) {
+    const scope = entreprise.parametres?.notifications?.admin_event_scopes?.monthly_report
+      || entreprise.parametres?.notifications?.admin_scope;
+    const scopedConges = filterAdministrativeRecords(entreprise.parametres?.notifications, { role: 'admin_entreprise' }, 'monthly_report', conges);
+    const scopedAbsences = filterAdministrativeRecords(entreprise.parametres?.notifications, { role: 'admin_entreprise' }, 'monthly_report', absences);
+    const scopedEmployees = scope?.mode === 'services' ? await Utilisateur.count({
+      where: {
+        entreprise_id: entreprise.id, statut: 'actif', role: { [Op.in]: ['employe', 'apprenti', 'manager'] },
+        service: { [Op.in]: scope.services },
+      },
+    }) : totalEmployes;
+    for (const absence of scopedAbsences) {
       const label = absence.type_absence === 'maladie' ? 'Maladie' : 'Absence exceptionnelle';
       absencesByType.set(label, (absencesByType.get(label) || 0) + 1);
     }
@@ -190,16 +222,19 @@ async function runMonthlyReports() {
       annee,
       periode_debut: formatDateFR(startOfLastMonth),
       periode_fin: formatDateFR(endOfLastMonth),
-      total_conges: conges.length,
-      total_jours: Number(conges.reduce((sum, conge) => sum + (Number(conge.jours_calcules) || 0), 0).toFixed(2)),
-      total_employes: totalEmployes,
-      total_absences: absences.length,
+      total_conges: scopedConges.length,
+      total_jours: Number(scopedConges.reduce((sum, conge) => sum + (Number(conge.jours_calcules) || 0), 0).toFixed(2)),
+      total_employes: scopedEmployees,
+      total_absences: scopedAbsences.length,
       top_absences: topAbsences,
     };
 
     for (const admin of admins) {
       try {
-        await emailService.sendMonthlyReport(admin.email, reportData, entreprise);
+        await withContext({
+          kind: 'summary', entrepriseId: entreprise.id,
+          operationId: `monthly:${entreprise.id}:${startOfLastMonth}`,
+        }, () => emailService.sendMonthlyReport(admin.email, reportData, entreprise));
         logger.info(`[email-cron] Rapport mensuel envoyé à ${admin.email} (${entreprise.nom})`);
       } catch (e) {
         logger.error('[email-cron] sendMonthlyReport error', { error: e.message, entrepriseId: entreprise.id });
@@ -277,11 +312,11 @@ async function runWeeklyManagerSummary() {
       attributes: ['id', 'email', 'prenom', 'nom', 'entreprise_id', 'role'],
     }),
   ]);
-  const managerCompanyIds = [...new Set(managers.map(manager => manager.entreprise_id).filter(Boolean))];
+  const managerCompanyIds = [...new Set([...managers, ...admins].map(manager => manager.entreprise_id).filter(Boolean))];
   const companies = managerCompanyIds.length
     ? await Entreprise.findAll({
       where: { id: { [Op.in]: managerCompanyIds } },
-      attributes: ['id', 'politique_conges'],
+      attributes: ['id', 'politique_conges', 'parametres'],
     })
     : [];
   const leaveRulesByCompany = new Map(
@@ -320,10 +355,14 @@ async function runWeeklyManagerSummary() {
           rules: leaveRulesByCompany.get(recipient.entreprise_id), manager: recipient,
           targetService: item.utilisateur?.service, category,
         }).email;
-      const conges = allConges.filter(item => includeInEmail(item, 'conges'));
-      const absences = allAbsences.filter(item => includeInEmail(item, item.type_absence));
+      const preferences = companies.find(company => company.id === recipient.entreprise_id)?.parametres?.notifications;
+      const conges = filterAdministrativeRecords(preferences, recipient, 'weekly_summary', allConges.filter(item => includeInEmail(item, 'conges')));
+      const absences = filterAdministrativeRecords(preferences, recipient, 'weekly_summary', allAbsences.filter(item => includeInEmail(item, item.type_absence)));
 
-      await emailService.sendWeeklySummary(recipient, conges, absences, startOfWeek, endOfWeek);
+      await withContext({
+        kind: 'summary', entrepriseId: recipient.entreprise_id,
+        operationId: `weekly:${recipient.entreprise_id}:${weekStartDate}`,
+      }, () => emailService.sendWeeklySummary(recipient, conges, absences, startOfWeek, endOfWeek));
       logger.info(`[email-cron] Résumé hebdo → ${recipient.email} (${conges.length} congés, ${absences.length} absences)`);
     } catch (e) {
       logger.error('[email-cron] sendWeeklySummary error', {
@@ -384,38 +423,48 @@ async function runReservationReminders() {
       const demandeurNom = `${conge.utilisateur.prenom || ''} ${conge.utilisateur.nom || ''}`.trim();
       const actionUrl = `${process.env.FRONTEND_URL?.split(',')[0] || ''}/conges/${conge.id}`;
 
-      for (const recipient of recipients) {
-        try {
-          if (recipient.email) await emailService.sendEmail(
-            recipient.email,
-            `Rappel réservation congé dans ${label} - ${demandeurNom}`,
-            'leave-reservation-reminder',
-            {
-              destinataire_prenom: recipient.prenom || 'Responsable',
-              demandeur_nom: demandeurNom,
-              date_debut: formatDateFR(conge.date_debut),
-              date_fin: formatDateFR(conge.date_fin),
-              type_conge: conge.conge_type?.libelle || 'Congé',
-              jours_calcules: conge.jours_calcules,
-              jours_avant: days,
-              notification_mode: recipient.notification_mode,
-              notification_delivery: recipient.notification_delivery,
-              action_url: actionUrl,
-            }
-          );
-          if ((recipient.has_explicit_cross_service_policy || recipient.role === 'admin_entreprise') && recipient.notification_delivery.in_app) {
-            await notificationService.creerNotification({
-              entreprise_id: conge.entreprise_id, utilisateur_id: recipient.id,
-              type: 'conge_rappel_reservation', delivery: recipient.notification_delivery,
-              message: `La réservation de ${demandeurNom} du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)} commence dans ${days} jour(s).`,
-              url: `/conges/${conge.id}`,
+      await withContext({
+        kind: 'leave', entityId: conge.id, employeeId: conge.utilisateur.id,
+        operationId: `reservation:${conge.id}:${days}:${targetDate}`,
+      }, async () => {
+        for (const recipient of recipients) {
+          try {
+            if (recipient.email) await emailService.sendEmail(
+              recipient.email,
+              `Rappel réservation congé dans ${label} - ${demandeurNom}`,
+              'leave-reservation-reminder',
+              {
+                destinataire_prenom: recipient.prenom || 'Responsable',
+                demandeur_nom: demandeurNom,
+                date_debut: formatDateFR(conge.date_debut),
+                date_fin: formatDateFR(conge.date_fin),
+                type_conge: conge.conge_type?.libelle || 'Congé',
+                jours_calcules: conge.jours_calcules,
+                jours_avant: days,
+                notification_mode: recipient.notification_mode,
+                notification_delivery: recipient.notification_delivery,
+                action_url: actionUrl,
+              }
+            );
+            const configuredInApp = await prepareRecipientSafely({
+              recipientId: recipient.id, type: 'conge_rappel_reservation', mode: recipient.notification_mode,
+              legacy: false, channel: 'in_app',
             });
+            if (((recipient.has_explicit_cross_service_policy || recipient.role === 'admin_entreprise')
+              && recipient.notification_delivery.in_app) || configuredInApp?.enabled) {
+              await notificationService.creerNotification({
+                entreprise_id: conge.entreprise_id, utilisateur_id: recipient.id,
+                type: 'conge_rappel_reservation', delivery: recipient.notification_delivery,
+                message: `La réservation de ${demandeurNom} du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)} commence dans ${days} jour(s).`,
+                url: `/conges/${conge.id}`,
+              });
+            }
+            if (recipient.email) logger.info(`[email-cron] Rappel réservation J-${days} → ${recipient.email} (congé ${conge.id})`);
+          } catch (e) {
+            logger.error('[email-cron] sendReservationReminder error', { error: e.message, congeId: conge.id });
           }
-          if (recipient.email) logger.info(`[email-cron] Rappel réservation J-${days} → ${recipient.email} (congé ${conge.id})`);
-        } catch (e) {
-          logger.error('[email-cron] sendReservationReminder error', { error: e.message, congeId: conge.id });
         }
-      }
+      });
     }
   }
 }
@@ -424,38 +473,40 @@ async function runReservationReminders() {
 // Initialisation des crons
 // ---------------------------------------------------------------------------
 function initEmailCron() {
+  if (initialized) return;
+  initialized = true;
   // Rappels congés à venir — chaque jour à 08:00
-  cron.schedule('0 8 * * *', async () => {
+  taskGroup.schedule('0 8 * * *', async () => {
     try { await runLeaveReminders(); }
     catch (e) { logger.error('[email-cron] runLeaveReminders failed', { error: e.message }); }
   });
 
   // Relance demandes en attente — chaque jour à 09:00
-  cron.schedule('0 9 * * *', async () => {
+  taskGroup.schedule('0 9 * * *', async () => {
     try { await runPendingLeaveReminders(); }
     catch (e) { logger.error('[email-cron] runPendingLeaveReminders failed', { error: e.message }); }
   });
 
   // Rapport mensuel — le 1er du mois à 07:00
-  cron.schedule('0 7 1 * *', async () => {
+  taskGroup.schedule('0 7 1 * *', async () => {
     try { await runMonthlyReports(); }
     catch (e) { logger.error('[email-cron] runMonthlyReports failed', { error: e.message }); }
   });
 
   // Relance invitations — chaque jour à 10:00
-  cron.schedule('0 10 * * *', async () => {
+  taskGroup.schedule('0 10 * * *', async () => {
     try { await runInvitationReminders(); }
     catch (e) { logger.error('[email-cron] runInvitationReminders failed', { error: e.message }); }
   });
 
   // Résumé hebdomadaire managers — chaque lundi à 07:00
-  cron.schedule('0 7 * * 1', async () => {
+  taskGroup.schedule('0 7 * * 1', async () => {
     try { await runWeeklyManagerSummary(); }
     catch (e) { logger.error('[email-cron] runWeeklyManagerSummary failed', { error: e.message }); }
   });
 
   // Rappels réservations (J-30 et J-7) — chaque jour à 08:30
-  cron.schedule('30 8 * * *', async () => {
+  taskGroup.schedule('30 8 * * *', async () => {
     try { await runReservationReminders(); }
     catch (e) { logger.error('[email-cron] runReservationReminders failed', { error: e.message }); }
   });
@@ -465,6 +516,7 @@ function initEmailCron() {
 
 module.exports = {
   initEmailCron,
+  stopEmailCron: taskGroup.stop,
   runLeaveReminders,
   runPendingLeaveReminders,
   runMonthlyReports,

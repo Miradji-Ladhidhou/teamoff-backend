@@ -1,4 +1,5 @@
 'use strict';
+const { parseCsvResponse } = require('./helpers/csvResponse');
 /**
  * csvImportChainComplete.test.js
  *
@@ -91,8 +92,11 @@ describe('1 — Import CSV employés', () => {
     expect(res.body.created.map(u => u.email)).toEqual(
       expect.arrayContaining([EMPLOYEE_EMAIL, EMPLOYEE2_EMAIL]),
     );
-    // Claire : N-1 + N = 2 soldes ; Paul : N seulement = 1 solde
-    expect(res.body.balancesSet).toHaveLength(3);
+    expect(res.body.balancesSet).toHaveLength(2);
+    expect(res.body.balancesSet).toEqual(expect.arrayContaining([
+      expect.objectContaining({ email: EMPLOYEE_EMAIL, jours_acquis: 28, jours_reportes: 3 }),
+      expect.objectContaining({ email: EMPLOYEE2_EMAIL, jours_acquis: 15, jours_reportes: 0 }),
+    ]));
   });
 
   it('les comptes sont en_attente avec password_hash non-null', async () => {
@@ -340,18 +344,21 @@ describe('9 — Template CSV congés pré-rempli', () => {
   it('GET /api/conges/import/csv/template contient les emails des employés actifs', async () => {
     const res = await request(app)
       .get(`/api/conges/import/csv/template?entreprise_id=${ctx.entreprise.id}`)
-      .set('Authorization', `Bearer ${ctx.tokens.superAdmin}`);
+      .set('Authorization', `Bearer ${ctx.tokens.superAdmin}`)
+      .buffer(true).parse(parseCsvResponse);
 
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toMatch(/text\/csv/i);
+    expect(res.headers['content-type']).toMatch(/charset=utf-16le/i);
+    const csv = res.body.toString('utf16le');
 
     // L'employé importé (actif après set-password) doit apparaître
-    expect(res.text).toContain(EMPLOYEE_EMAIL);
+    expect(csv).toContain(EMPLOYEE_EMAIL);
     // Les colonnes obligatoires
-    expect(res.text).toContain('email');
-    expect(res.text).toContain('type_conge');
-    expect(res.text).toContain('date_debut');
-    expect(res.text).toContain('date_fin');
+    expect(csv).toContain('email');
+    expect(csv).toContain('type_conge');
+    expect(csv).toContain('date_debut');
+    expect(csv).toContain('date_fin');
   });
 
   it('400 si entreprise_id manquant', async () => {

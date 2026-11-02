@@ -1,6 +1,25 @@
 const CATEGORIES = ['conges', 'absence_exceptionnelle', 'maladie'];
 const { Op } = require('sequelize');
 
+function getNamedRoute(rules, service, category, userId) {
+  const services = rules?.notification_routing;
+  if (!service || !userId || !services || !Object.hasOwn(services, service)) return undefined;
+  return services[service]?.[category]?.[userId];
+}
+
+function getManagerGrantedServices(rules, manager, category = 'conges') {
+  return Object.keys(rules?.notification_routing || {}).filter(service =>
+    getNamedRoute(rules, service, category, manager?.id)?.mode === 'workflow');
+}
+
+function getManagerUserWhere(rules, manager, category = 'conges') {
+  if (getManagerCategorySettings(rules, manager, category).view) return undefined;
+  const granted = getManagerGrantedServices(rules, manager, category);
+  if (!granted.length) return manager?.service ? { service: manager.service } : { id: manager?.id };
+  const services = [...new Set([manager?.service, ...granted].filter(Boolean))];
+  return services.length ? { [Op.or]: [{ id: manager?.id }, { service: { [Op.in]: services } }] } : { id: manager?.id };
+}
+
 function normalizeManagerCrossServicePolicy(policy = {}) {
   const legacyLeaveAction = policy.manager_can_validate_all_services === true;
   const legacyLeaveView = legacyLeaveAction || policy.manager_can_view_all_services === true;
@@ -48,14 +67,15 @@ function getManagerCategorySettings(rules, manager, category = 'conges') {
 function resolveManagerDelivery({ rules, manager, targetService, category = 'conges', actionRequired = false, localEligible = true }) {
   const local = Boolean(manager?.service && targetService && manager.service === targetService);
   const settings = getManagerCategorySettings(rules, manager, category);
-  const canAct = local || settings.participation === 'action';
+  const route = getNamedRoute(rules, targetService, category, manager?.id);
+  const canAct = local || settings.participation === 'action' || route?.mode === 'workflow';
   return {
     local,
-    canView: local || settings.view,
+    canView: local || settings.view || route?.mode === 'workflow',
     canAct,
-    email: local ? localEligible : settings.email,
-    in_app: local ? localEligible : settings.in_app,
-    mode: actionRequired && canAct ? 'action' : 'information',
+    email: route?.mode ? route.mode !== 'none' && route.email : local ? localEligible : settings.email,
+    in_app: route?.mode ? route.mode !== 'none' && route.in_app : local ? localEligible : settings.in_app,
+    mode: route?.mode !== 'information' && actionRequired && canAct ? 'action' : 'information',
   };
 }
 
@@ -65,13 +85,19 @@ function getManagerAbsenceScope(rules, manager, localUserIds) {
       type_absence: type,
       ...(getManagerCategorySettings(rules, manager, type).view
         ? {}
-        : { utilisateur_id: { [Op.in]: localUserIds } }),
+        : getManagerGrantedServices(rules, manager, type).length ? { [Op.or]: [
+          { utilisateur_id: { [Op.in]: localUserIds } },
+          { '$utilisateur.service$': { [Op.in]: getManagerGrantedServices(rules, manager, type) } },
+        ] } : { utilisateur_id: { [Op.in]: localUserIds } }),
     })),
   };
 }
 
 module.exports = {
   CATEGORIES,
+  getNamedRoute,
+  getManagerGrantedServices,
+  getManagerUserWhere,
   normalizeManagerCrossServicePolicy,
   validateManagerCrossServicePolicy,
   getManagerCategorySettings,

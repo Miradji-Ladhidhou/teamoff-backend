@@ -1,4 +1,5 @@
 const congeService = require('../services/congesService');
+const { filterRecordComments } = require('../services/commentVisibilityService');
 const notificationService = require('../services/notificationSocketService');
 const joursFeriesService = require('../services/joursFeriesService');
 const { getLeaveRules } = require('../services/politiqueConges');
@@ -67,7 +68,7 @@ async function create(req, res, next) {
   try {
     const conge = await congeService.createConge({ ...req.body, reqUser: req.user, req });
     await notificationService.notifyCompany(conge.entreprise_id, 'conge-created', { conge, user: req.user });
-    res.status(201).json(conge);
+    res.status(201).json(await filterRecordComments(conge, req.user));
   }
   catch(err) { next(err); }
 }
@@ -75,7 +76,7 @@ async function create(req, res, next) {
 async function list(req, res, next) {
   try {
     const { items, total } = await congeService.getConges(req.user, req.query);
-    res.json({ items, total });
+    res.json({ items: await filterRecordComments(items, req.user), total });
   }
   catch(err) { next(err); }
 }
@@ -84,13 +85,13 @@ async function get(req, res, next) {
   try {
     const conge = await congeService.getCongeById(req.params.id, req.user);
     if (!conge) return res.status(404).json({ message: 'Congé introuvable' });
-    res.json(conge);
+    res.json(await filterRecordComments(conge, req.user));
   }
   catch(err) { next(err); }
 }
 
 async function update(req, res, next) {
-  try { res.json(await congeService.updateConge(req.params.id, req.body, req.user, req)); }
+  try { res.json(await filterRecordComments(await congeService.updateConge(req.params.id, req.body, req.user, req), req.user)); }
   catch(err) { next(err); }
 }
 
@@ -109,9 +110,9 @@ async function validate(req, res, next) {
   try {
     const commentaire = req.body?.commentaire ?? null;
     const conge = await congeService.validerConge(req.params.id, req.user, commentaire, req);
-    notificationService.notifyUser(conge.utilisateur_id, 'conge-validated', { conge, validatedBy: req.user, commentaire });
+    await notificationService.notifyUser(conge.utilisateur_id, 'conge-validated', { conge, validatedBy: req.user, commentaire });
     await notificationService.notifyCompany(conge.entreprise_id, 'conge-status-changed', { conge, action: 'validated', by: req.user });
-    res.json(conge);
+    res.json(await filterRecordComments(conge, req.user));
   }
   catch(err) { next(err); }
 }
@@ -120,9 +121,9 @@ async function reject(req, res, next) {
   try {
     const commentaire = req.body?.commentaire ?? null;
     const conge = await congeService.rejeterConge(req.params.id, req.user, commentaire, req);
-    notificationService.notifyUser(conge.utilisateur_id, 'conge-rejected', { conge, rejectedBy: req.user, commentaire });
+    await notificationService.notifyUser(conge.utilisateur_id, 'conge-rejected', { conge, rejectedBy: req.user, commentaire });
     await notificationService.notifyCompany(conge.entreprise_id, 'conge-status-changed', { conge, action: 'rejected', by: req.user });
-    res.json(conge);
+    res.json(await filterRecordComments(conge, req.user));
   }
   catch(err) { next(err); }
 }
@@ -177,6 +178,7 @@ async function getAttestationData(req, res, next) {
     const jours_calendaires = end.diff(start, 'day') + 1;
 
     const detail = buildAttestationDayDetails(conge, joursFeries, leaveRules.blocked_days || {});
+    const visibleConge = await filterRecordComments(conge, req.user);
 
     res.json({
       reference: `ATT-${dayjs(conge.date_debut).year()}-${String(conge.id).substring(0, 6).toUpperCase()}`,
@@ -200,9 +202,9 @@ async function getAttestationData(req, res, next) {
         debut_demi_journee: conge.debut_demi_journee || null,
         fin_demi_journee: conge.fin_demi_journee || null,
         statut: conge.statut,
-        commentaire_employe: conge.commentaire_employe || '',
-        commentaire_manager: conge.commentaire_manager || '',
-        commentaire_admin: conge.commentaire_admin || '',
+        commentaire_employe: visibleConge.commentaire_employe || '',
+        commentaire_manager: visibleConge.commentaire_manager || '',
+        commentaire_admin: visibleConge.commentaire_admin || '',
       },
       jours: {
         calendaires: jours_calendaires,
@@ -383,7 +385,7 @@ async function sendAttestationEmail(req, res, next) {
 async function activate(req, res, next) {
   try {
     const conge = await congeService.activerReservation(req.params.id, req.user);
-    res.json(conge);
+    res.json(await filterRecordComments(conge, req.user));
   }
   catch(err) { next(err); }
 }

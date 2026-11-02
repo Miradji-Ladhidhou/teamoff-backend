@@ -4,10 +4,12 @@ const { CongeActionRequest, Conge, Utilisateur, CongeType, Entreprise, sequelize
 const { Op } = require('sequelize');
 const congesService = require('./congesService');
 const { getLeaveNotificationRecipients } = require('./leaveNotificationRecipients');
+const { getManagerUserWhere } = require('./managerCrossServicePolicy');
 const { notifyConfiguredManagerEvent, notifyAdminsInformationEvent } = require('./managerEventNotificationService');
 const notificationService = require('./notificationService');
 const { formatDateFR } = require('../utils/dateFormatter');
 const logger = require('../utils/logger');
+const { wrapWorkflow } = require('./businessNotificationContext');
 const {
   getLeaveRules,
   getEffectiveLeaveRules,
@@ -347,7 +349,7 @@ async function listRequests({ entrepriseId, statut, page = 1, limit = 20, user =
   if (managerContext) {
     const { manager, leaveRules } = managerContext;
     if (!getManagerServicePermissions(leaveRules, manager).canViewAllServices) {
-      employeeInclude.where = manager.service ? { service: manager.service } : { id: manager.id };
+      employeeInclude.where = getManagerUserWhere(leaveRules, manager);
       employeeInclude.required = true;
     }
   }
@@ -403,7 +405,7 @@ async function getRequest(requestId, user) {
   if (managerContext) {
     const { manager, leaveRules } = managerContext;
     if (!getManagerServicePermissions(leaveRules, manager).canViewAllServices) {
-      employeeInclude.where = manager.service ? { service: manager.service } : { id: manager.id };
+      employeeInclude.where = getManagerUserWhere(leaveRules, manager);
       employeeInclude.required = true;
     }
   }
@@ -821,4 +823,12 @@ async function rejectRequest(requestId, { commentaire, adminUser }) {
   return request;
 }
 
-module.exports = { submitRequest, listRequests, getRequest, approveRequest, rejectRequest };
+module.exports = {
+  submitRequest: wrapWorkflow(submitRequest, data => ({
+    kind: 'leave', event: data.type === 'cancel' ? 'leave_cancel_requested' : 'leave_modify_requested',
+    entityId: data.congeId,
+  })),
+  listRequests, getRequest,
+  approveRequest: wrapWorkflow(approveRequest, id => ({ kind: 'request', event: 'leave_action_decided', entityId: id })),
+  rejectRequest: wrapWorkflow(rejectRequest, id => ({ kind: 'request', event: 'leave_action_decided', entityId: id })),
+};

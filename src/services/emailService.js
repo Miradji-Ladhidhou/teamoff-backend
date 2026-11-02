@@ -7,6 +7,7 @@ const systemSettingsService = require('./systemSettingsService');
 const logger = require('../utils/logger');
 const { formatDateFR } = require('../utils/dateFormatter');
 const { prepareEmailNotificationMode, removeUnavailableRecordLinks } = require('../utils/emailNotificationMode');
+const { sendConfiguredEmail } = require('./businessNotificationContext');
 
 const isEmailDebug = process.env.EMAIL_DEBUG === 'true';
 
@@ -26,6 +27,7 @@ function extractEmailMeta(data) {
     data?.admin?.entreprise_id ||
     null;
   const utilisateur_id =
+    data?.utilisateur_id ||
     data?.user?.id ||
     data?.employe?.id ||
     data?.manager?.id ||
@@ -122,6 +124,11 @@ class EmailService {
   // Méthode générique d'envoi d'email
   // attachments: tableau nodemailer [{ filename, content (Buffer), contentType }]
   async sendEmail(to, subject, templateName, data = {}, attachments = []) {
+    return sendConfiguredEmail({ to, subject, templateName, data }, payload =>
+      this.sendEmailLegacy(payload.to, payload.subject, payload.templateName, payload.data, attachments));
+  }
+
+  async sendEmailLegacy(to, subject, templateName, data = {}, attachments = []) {
     ({ subject, data } = prepareEmailNotificationMode(subject, templateName, data));
     const fromAddr = process.env.EMAIL_FROM || process.env.MAIL_USER || 'noreply@teamoff.app';
     let logEntry = null;
@@ -466,7 +473,7 @@ class EmailService {
 
     return this.sendEmail(
       user.email,
-      `Bienvenue sur ${process.env.EMAIL_NAME} !`,
+      `Bienvenue sur ${process.env.EMAIL_NAME || 'TeamOff'} !`,
       'welcome',
       {
         prenom: user.prenom,
@@ -493,22 +500,23 @@ class EmailService {
     const prenom = user?.prenom || '';
     const nom = user?.nom || '';
     const nomComplet = `${prenom} ${nom}`.trim() || 'Administrateur';
+    const statutLabel = { active: 'Actif', inactive: 'Inactif', suspendue: 'Suspendu' }[entreprise.statut] || entreprise.statut;
 
     return this.sendEmail(
       user.email,
-      `Entreprise créée: ${entreprise.nom}`,
+      `Entreprise créée : ${entreprise.nom}`,
       'entreprise-created',
       {
         prenom,
         nom,
         nom_complet: nomComplet,
         entreprise_nom: entreprise.nom,
-        entreprise_statut: entreprise.statut,
+        entreprise_statut: statutLabel,
         created_at: new Date().toLocaleString('fr-FR'),
         dashboard_url: `${getFrontendUrl()}/superadmin/companies`,
         content: `
           <p>Bonjour ${nomComplet},</p>
-          <p>L'entreprise <strong>${entreprise.nom}</strong> a été créée avec le statut <strong>${entreprise.statut}</strong>.</p>
+          <p>L'entreprise <strong>${entreprise.nom}</strong> a été créée avec le statut <strong>${statutLabel}</strong>.</p>
           <p>Vous pouvez la gérer depuis votre espace super administrateur.</p>
         `,
       }
@@ -787,6 +795,7 @@ class EmailService {
   async sendRoleChanged(utilisateur, ancienRole, nouveauRole) {
     const labels = {
       employe:           'Employé',
+      apprenti:          'Apprenti',
       manager:           'Manager',
       admin_entreprise:  'Administrateur d\'entreprise',
       super_admin:       'Super administrateur',

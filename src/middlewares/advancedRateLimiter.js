@@ -2,13 +2,18 @@
 const { RateLimiterMemory, RateLimiterRedis } = require('rate-limiter-flexible');
 const rateLimitConfig = require('../config/rateLimitConfig');
 const logger = require('../utils/logger');
+const { sanitizeError } = require('../utils/sanitizeLogData');
 
 // ---------------------------------------------------------------------------
 // Redis client (optional) — falls back to memory if REDIS_URL is absent or
 // ioredis is not installed, and automatically via insuranceLimiter on errors.
 // ---------------------------------------------------------------------------
 let redisClient = null;
-if (process.env.REDIS_URL) {
+let initialized = false;
+function initialize() {
+  if (initialized) return;
+  initialized = true;
+  if (!process.env.REDIS_URL) return;
   try {
     const Redis = require('ioredis');
     redisClient = new Redis(process.env.REDIS_URL, {
@@ -20,6 +25,33 @@ if (process.env.REDIS_URL) {
   } catch {
     logger.warn('Rate limiter: ioredis not installed — using in-memory fallback (npm install ioredis to enable Redis)');
   }
+}
+
+let stopPromise;
+function stop() {
+  if (stopPromise) return stopPromise;
+  const client = redisClient;
+  redisClient = null;
+  stopPromise = (async () => {
+    if (!client) return;
+    let primaryError;
+    try {
+      await client.quit();
+    } catch (error) {
+      primaryError = sanitizeError(error);
+      throw primaryError;
+    } finally {
+      try {
+        client.disconnect();
+      } catch (error) {
+        sanitizeError(error);
+        logger.error('redis_disconnect_failed', { error: error.message });
+        if (!primaryError) throw error;
+        primaryError.cleanupError = error;
+      }
+    }
+  })();
+  return stopPromise;
 }
 
 // Stockage des limiters par endpoint
@@ -82,4 +114,4 @@ function advancedRateLimiter(endpointKey) {
   };
 }
 
-module.exports = { advancedRateLimiter, isWhitelisted };
+module.exports = { advancedRateLimiter, isWhitelisted, initialize, stop };

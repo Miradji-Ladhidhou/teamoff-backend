@@ -48,7 +48,7 @@ beforeAll(async () => {
   empAdmin = await Utilisateur.create({
     prenom: 'Emp', nom: 'AdminFlow',
     email: `emp.adminflow.${suffix}@test.local`,
-    role: 'employe', password_hash: 'hash', statut: 'actif',
+    role: 'employe', password_hash: 'hash', statut: 'actif', service: 'Test local',
     entreprise_id: entAdmin.id,
   });
 
@@ -70,14 +70,14 @@ beforeAll(async () => {
   manager = await Utilisateur.create({
     prenom: 'Manager', nom: 'LowBal',
     email: `manager.lowbal.${suffix}@test.local`,
-    role: 'manager', password_hash: 'hash', statut: 'actif',
+    role: 'manager', password_hash: 'hash', statut: 'actif', service: 'Test local',
     entreprise_id: entManager.id,
   });
 
   empManager = await Utilisateur.create({
     prenom: 'Emp', nom: 'ManagerFlow',
     email: `emp.managerflow.${suffix}@test.local`,
-    role: 'employe', password_hash: 'hash', statut: 'actif',
+    role: 'employe', password_hash: 'hash', statut: 'actif', service: 'Test local',
     entreprise_id: entManager.id,
   });
 

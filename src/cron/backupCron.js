@@ -1,7 +1,10 @@
 const cron = require('node-cron');
 const logger = require('../utils/logger');
+const { sanitizeMessage } = require('../utils/sanitizeLogData');
 const systemSettingsService = require('../services/systemSettingsService');
 const { runDatabaseBackup, cleanupOldBackups } = require('../services/backupService');
+const { createCronTaskGroup } = require('../services/cronTaskGroup');
+const taskGroup = createCronTaskGroup(cron);
 
 // Expressions cron par fréquence (exécution à 2h du matin)
 const CRON_EXPRESSIONS = {
@@ -12,6 +15,8 @@ const CRON_EXPRESSIONS = {
 
 let currentTask = null;
 let currentFrequency = null;
+let initialization;
+let stopping = false;
 
 async function runBackupJob() {
   try {
@@ -31,7 +36,7 @@ async function runBackupJob() {
       logger.info(`[BackupCron] Nettoyage : ${cleanup.deleted.length} fichier(s) supprimé(s) (rétention ${dbRetentionDays} jours)`);
     }
   } catch (err) {
-    logger.error('[BackupCron] Erreur lors de la sauvegarde automatique :', err.message);
+    logger.error('[BackupCron] Erreur lors de la sauvegarde automatique :', sanitizeMessage(err.message));
   }
 }
 
@@ -39,9 +44,10 @@ async function runBackupJob() {
  * Initialise ou met à jour le cron en fonction des settings actuels.
  * Appelé au démarrage et à chaque modification des paramètres base de données.
  */
-async function initBackupCron() {
+async function configureBackupCron() {
   try {
     const { dbBackupFrequency } = await systemSettingsService.getSettings();
+    if (stopping) return;
     const expression = CRON_EXPRESSIONS[dbBackupFrequency] || CRON_EXPRESSIONS.daily;
 
     // Si la fréquence n'a pas changé, ne rien faire
@@ -51,17 +57,38 @@ async function initBackupCron() {
 
     // Arrêter la tâche précédente si elle existe
     if (currentTask) {
-      currentTask.stop();
+      await taskGroup.remove(currentTask);
       currentTask = null;
     }
 
-    currentTask = cron.schedule(expression, runBackupJob, { scheduled: true });
+    currentTask = taskGroup.schedule(expression, runBackupJob);
     currentFrequency = dbBackupFrequency;
 
     logger.info(`[BackupCron] Sauvegarde automatique planifiée : fréquence "${dbBackupFrequency}" (${expression})`);
   } catch (err) {
-    logger.error('[BackupCron] Impossible d\'initialiser le cron de sauvegarde :', err.message);
+    logger.error('[BackupCron] Impossible d\'initialiser le cron de sauvegarde :', sanitizeMessage(err.message));
+    throw err;
   }
 }
 
-module.exports = { initBackupCron, runBackupJob };
+function initBackupCron() {
+  if (stopping) return Promise.reject(new Error('Cron de sauvegarde arrêté.'));
+  if (initialization) return initialization;
+  initialization = configureBackupCron().finally(() => { initialization = undefined; });
+  return initialization;
+}
+
+let stopPromise;
+function stopBackupCron() {
+  if (stopPromise) return stopPromise;
+  stopping = true;
+  stopPromise = (async () => {
+    if (initialization) await initialization.catch(() => {});
+    await taskGroup.stop();
+    currentTask = null;
+    currentFrequency = null;
+  })();
+  return stopPromise;
+}
+
+module.exports = { initBackupCron, stopBackupCron, runBackupJob };

@@ -10,6 +10,8 @@ const request = require('supertest');
 const app = require('../src/index');
 const { seed } = require('./helpers/seed');
 const { CompteurConges, Conge } = require('../src/models');
+const { futureWorkingWeek } = require('./helpers/dates');
+const period = futureWorkingWeek();
 
 let ctx;
 
@@ -20,6 +22,12 @@ beforeAll(async () => {
   await ctx.entreprise.update({
     politique_conges: { approval_workflow: 'manager_only' },
   });
+  if (period.annee !== new Date().getFullYear()) {
+    await CompteurConges.create({
+      entreprise_id: ctx.entreprise.id, utilisateur_id: ctx.employe.id,
+      conge_type_id: ctx.congeType.id, annee: period.annee, jours_acquis: 25,
+    });
+  }
 });
 
 afterAll(async () => {
@@ -38,8 +46,8 @@ describe('Quota deduction — workflow manager', () => {
       .set('Authorization', `Bearer ${ctx.tokens.employe}`)
       .send({
         conge_type_id: ctx.congeType.id,
-        date_debut: '2026-09-07',
-        date_fin: '2026-09-11', // lun–ven = 5 jours ouvrés
+        date_debut: period.date_debut,
+        date_fin: period.date_fin,
         commentaire_employe: 'Test quota',
       });
 
@@ -51,7 +59,7 @@ describe('Quota deduction — workflow manager', () => {
       where: {
         utilisateur_id: ctx.employe.id,
         conge_type_id: ctx.congeType.id,
-        annee: 2026,
+        annee: period.annee,
       },
     });
   });
@@ -85,7 +93,7 @@ describe('Quota deduction — workflow manager', () => {
       where: {
         utilisateur_id: ctx.employe.id,
         conge_type_id: ctx.congeType.id,
-        annee: 2026,
+        annee: period.annee,
       },
     });
 

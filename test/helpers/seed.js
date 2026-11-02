@@ -64,6 +64,7 @@ async function seed() {
     nom: 'Test',
     email: `manager.${Date.now()}@test.internal`,
     role: 'manager',
+    service: 'Test local',
     password_hash: TEST_PASSWORD_HASH,
     statut: 'actif',
   });
@@ -74,6 +75,7 @@ async function seed() {
     nom: 'Test',
     email: `employe.${Date.now()}@test.internal`,
     role: 'employe',
+    service: 'Test local',
     password_hash: TEST_PASSWORD_HASH,
     statut: 'actif',
   });

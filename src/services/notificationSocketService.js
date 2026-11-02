@@ -5,6 +5,8 @@ const { getLeaveRules, getEffectiveLeaveRules } = require('./politiqueConges');
 const { resolveManagerDelivery } = require('./managerCrossServicePolicy');
 const systemSettingsService = require('./systemSettingsService');
 const logger = require('../utils/logger');
+const { withContext, prepareRecipientSafely: prepareRecipient } = require('./businessNotificationContext');
+const { maskCommentFields } = require('./commentVisibilityService');
 
 const isSocketDebug = process.env.SOCKET_DEBUG === 'true';
 
@@ -18,9 +20,12 @@ class NotificationService {
   constructor() {
     this.io = null;
     this.connectedUsers = new Map(); // userId -> socketId
+    this.closePromise = null;
   }
 
   initialize(server) {
+    if (this.closePromise) throw new Error('Socket.IO arrêté.');
+    if (this.io) return this.io;
     this.io = new Server(server, {
       cors: {
         origin: process.env.FRONTEND_URL
@@ -86,8 +91,45 @@ class NotificationService {
     return this.io;
   }
 
+  close() {
+    if (this.closePromise) return this.closePromise;
+    const io = this.io;
+    this.closePromise = new Promise((resolve, reject) => {
+      if (!io) return resolve();
+      io.close(error => {
+        this.io = null;
+        this.connectedUsers.clear();
+        if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') return reject(error);
+        resolve();
+      });
+    });
+    return this.closePromise;
+  }
+
   // Envoyer une notification à un utilisateur spécifique
   notifyUser(userId, event, data) {
+    if (['conge-validated', 'conge-rejected'].includes(event)) {
+      return withContext({
+        kind: 'leave', entityId: data.conge?.id,
+        employeeId: data.conge?.utilisateur_id, entrepriseId: data.conge?.entreprise_id,
+      }, async () => {
+        const prepared = await prepareRecipient({
+          recipientId: userId, type: event === 'conge-validated'
+            ? data.conge?.statut === 'valide_manager' ? 'conge_valide_manager' : 'conge_valide_final'
+            : 'conge_refuse',
+          channel: 'in_app',
+        });
+        if (prepared && !prepared.enabled) return false;
+        if (prepared && !(await systemSettingsService.getSettings()).pushNotifications) return false;
+        return this.notifyUserLegacy(userId, event, prepared
+          ? { ...(prepared.commentsAllowed ? data : maskCommentFields(data)), notification_mode: prepared.mode } : data);
+      });
+    }
+    return this.notifyUserLegacy(userId, event, data);
+  }
+
+  notifyUserLegacy(userId, event, data) {
+    if (!this.io) return false;
     const socketId = this.connectedUsers.get(userId);
     if (socketId) {
       this.io.to(socketId).emit(event, data);
@@ -98,6 +140,15 @@ class NotificationService {
 
   // Envoyer une notification à tous les utilisateurs d'une entreprise
   async notifyCompany(companyId, event, data) {
+    const type = event === 'conge-created' ? 'conge_demande' : event === 'conge-deleted' ? 'conge_annule'
+      : data.action === 'rejected' ? 'conge_refuse' : data.conge?.statut === 'valide_manager' ? 'conge_valide_manager' : 'conge_valide_final';
+    return withContext({
+      kind: 'leave', entrepriseId: companyId, entityId: data?.conge?.id || data?.congeId,
+      employeeId: data?.conge?.utilisateur_id,
+    }, () => this.notifyCompanyLegacy(companyId, event, data, type));
+  }
+
+  async notifyCompanyLegacy(companyId, event, data, notificationType) {
     if (!this.io || !companyId) return;
     const { pushNotifications } = await systemSettingsService.getSettings();
     if (!pushNotifications) return;
@@ -166,17 +217,29 @@ class NotificationService {
         payload.notification_mode = recipient.id !== employee.id && pendingAdmin
           && ['conge-created', 'conge-status-changed'].includes(event) ? 'action' : 'information';
       }
+      const prepared = await prepareRecipient({
+        recipientId: recipient.id, type: notificationType, mode: payload.notification_mode,
+        channel: 'in_app', resource: conge.id,
+      });
+      if (prepared && !prepared.enabled) continue;
+      if (prepared && recipient.id === employee.id && event === 'conge-status-changed') continue;
+      if (prepared) payload.notification_mode = prepared.mode;
+      if (prepared?.explicitComments && managerCanView) {
+        for (const field of ['commentaire_employe', 'commentaire_manager', 'commentaire_admin']) eventConge[field] = conge[field];
+      }
       this.notifyUser(recipient.id, event, payload);
     }
   }
 
   // Envoyer une notification à une salle spécifique
   notifyRoom(room, event, data) {
+    if (!this.io) return false;
     this.io.to(room).emit(event, data);
   }
 
   // Diffuser à tous les utilisateurs connectés
   broadcast(event, data) {
+    if (!this.io) return false;
     this.io.emit(event, data);
   }
 

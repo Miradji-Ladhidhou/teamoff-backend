@@ -1,7 +1,7 @@
 const { Op } = require('sequelize');
 const { Utilisateur, Entreprise, Notification } = require('../models');
 const { getLeaveRules, getManagerServicePermissions } = require('./politiqueConges');
-const { resolveManagerDelivery } = require('./managerCrossServicePolicy');
+const { resolveManagerDelivery, getNamedRoute } = require('./managerCrossServicePolicy');
 const { notifyAdminsInformationEvent } = require('./managerEventNotificationService');
 
 async function getLeaveNotificationRecipients({ entrepriseId, service, workflow, stage = 'manager', reservation = false, transaction = null, informationOnly = false, requesterId = null }) {
@@ -36,7 +36,8 @@ async function getLeaveNotificationRecipients({ entrepriseId, service, workflow,
         localEligible: managersNeeded || getManagerServicePermissions(leaveRules, manager).canViewAllServices,
       });
       const policy = leaveRules.service_policies?.[manager.service];
-      const explicit = policy?.manager_cross_service?.conges !== undefined;
+      const explicit = policy?.manager_cross_service?.conges !== undefined
+        || Boolean(getNamedRoute(leaveRules, service, 'conges', manager.id)?.mode);
       if (!explicit && !managersNeeded && !adminsNeeded) return false;
       // Preserve legacy recipients while allowing independently selected channels.
       if (!explicit) {

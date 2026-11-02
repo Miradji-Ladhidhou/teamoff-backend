@@ -7,11 +7,12 @@ const fs = require('fs').promises;
 const systemSettingsService = require('./systemSettingsService');
 const path = require('path');
 const { prepareEmailNotificationMode, removeUnavailableRecordLinks } = require('../utils/emailNotificationMode');
+const { prepareRecipient, sendConfiguredEmail, notifyDelegate } = require('./businessNotificationContext');
 
 const APP_NAME = process.env.EMAIL_NAME || 'TeamOff';
 const APP_FROM = process.env.EMAIL_FROM || process.env.MAIL_USER;
 const APP_FRONTEND_URL = process.env.FRONTEND_URL?.split(',')[0].trim() || 'http://localhost:3001';
-const DEFAULT_SIGNATURE = process.env.EMAIL_SIGNATURE || `L'equipe ${APP_NAME}`;
+const DEFAULT_SIGNATURE = process.env.EMAIL_SIGNATURE || `L'équipe ${APP_NAME}`;
 
 async function resolveIPv4(hostname) {
   try {
@@ -138,7 +139,7 @@ async function recordEmailLog({ to, subject, templateName, data, statut, provide
 
 function wrapProfessionalEmail({ subject, html, entreprise_nom }) {
   const safeSubject = String(subject || `${APP_NAME} - Notification`);
-  const content = String(html || '').trim() || '<p>Une mise a jour est disponible.</p>';
+  const content = String(html || '').trim() || '<p>Une mise à jour est disponible.</p>';
 
   return `
     <!doctype html>
@@ -171,8 +172,8 @@ function wrapProfessionalEmail({ subject, html, entreprise_nom }) {
                 <tr>
                   <td style="padding:14px 8px 0;text-align:center;color:#6b7280;font-size:12px;">
                     <div>${APP_NAME} - ${new Date().getFullYear()}</div>
-                    <div style="margin-top:4px;">Cet email est envoye automatiquement, merci de ne pas y repondre.</div>
-                    <div style="margin-top:8px;"><a href="${APP_FRONTEND_URL}" style="color:#2563eb;text-decoration:none;">Acceder a la plateforme</a></div>
+                    <div style="margin-top:4px;">Cet email est envoyé automatiquement, merci de ne pas y répondre.</div>
+                    <div style="margin-top:8px;"><a href="${APP_FRONTEND_URL}" style="color:#2563eb;text-decoration:none;">Accéder à la plateforme</a></div>
                   </td>
                 </tr>
               </table>
@@ -188,6 +189,10 @@ function wrapProfessionalEmail({ subject, html, entreprise_nom }) {
  * Envoi d'email — Resend (HTTPS) si RESEND_API_KEY défini, sinon SMTP
  */
 async function sendEmail({ to, subject, html, templateName, data }) {
+  return sendConfiguredEmail({ to, subject, templateName, data }, payload => module.exports.sendEmailLegacy({ ...payload, html }));
+}
+
+async function sendEmailLegacy({ to, subject, html, templateName, data }) {
   if (!to) {
     throw new Error('No recipients defined');
   }
@@ -213,6 +218,11 @@ async function sendEmail({ to, subject, html, templateName, data }) {
     }
 
     const text = htmlToText(professionalHtml);
+
+    if (process.env.MAIL_SIMULATE === 'true') {
+      await recordEmailLog({ to, subject: normalizedSubject, templateName, data, statut: 'simulated', provider: 'simulate' });
+      return { success: true, test: true };
+    }
 
     if (provider === 'gmail') {
       const { google } = require('googleapis');
@@ -293,7 +303,24 @@ async function creerNotification({
   delivery = null,
   notification_mode = delivery?.mode || null
 }) {
-  if (delivery?.in_app === false) return null;
+  let prepared;
+  try {
+    prepared = await prepareRecipient({
+      recipientId: utilisateur_id, type, mode: notification_mode,
+      legacy: delivery?.in_app !== false, channel: 'in_app', transaction,
+      resource: url,
+    });
+  } catch (error) {
+    logger.error('notification_preferences_error', { error: error.message, utilisateur_id, type });
+    return null;
+  }
+  if (prepared ? !prepared.enabled : delivery?.in_app === false) return null;
+  if (prepared) {
+    notification_mode = prepared.mode;
+    const key = `${prepared.resource}:${prepared.recipient.id}:${prepared.event}:in_app`;
+    if (prepared.ctx.seen.has(key)) return null;
+    prepared.ctx.seen.add(key);
+  }
   if (delivery?.canView === false) url = null;
   if (notification_mode === 'information') message = `Pour information — ${message}`;
   if (notification_mode === 'action') message = `Action requise — ${message}`;
@@ -323,6 +350,16 @@ async function creerNotification({
     } else {
       sseManager.sendToUser(utilisateur_id, 'notification', payload);
     }
+
+  }
+  if (prepared) {
+    const forward = () => notifyDelegate(prepared, delegate => creerNotification({
+      entreprise_id, utilisateur_id: delegate.id, type,
+      message: message.replace(/^(Action requise|Pour information) — /, ''),
+      url, notification_mode, delivery,
+    }));
+    if (transaction?.afterCommit) transaction.afterCommit(forward);
+    else await forward();
   }
 
   return notif;
@@ -412,6 +449,7 @@ async function marquerCommeLue(notificationId, utilisateurId) {
 
 module.exports = {
   sendEmail,
+  sendEmailLegacy,
   creerNotification,
   notifyUser,
   getNotificationsUtilisateur,

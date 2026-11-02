@@ -31,5 +31,9 @@ module.exports = {
   testPathIgnorePatterns: [
     '/node_modules/',
     '/scripts/',
+    '/test/migration-safety/',
+    '/test/phase3/',
+    '/test/phase5/',
+    '/test/isolated-integration/',
   ],
 };

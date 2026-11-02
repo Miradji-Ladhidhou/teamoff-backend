@@ -17,7 +17,8 @@ const { Entreprise, Utilisateur, AuditLog } = require('../src/models');
 const { generateToken } = require('./helpers/auth');
 const { backupsDir }   = require('../src/services/backupService');
 
-const FAKE_FILENAME = `teamoff_backup_test34_${Date.now()}.sql`;
+const FAKE_FILENAME = `teamoff_backup_${new Date().toISOString().replace(/[:.]/g, '-')}.sql`;
+const MISSING_FILENAME = 'teamoff_backup_2000-01-01T00-00-00-000Z.sql';
 const FAKE_FILEPATH = path.join(backupsDir, FAKE_FILENAME);
 
 let entreprise, superAdmin, token;
@@ -41,7 +42,7 @@ beforeAll(async () => {
 
   // Créer un fichier .sql factice dans le répertoire backups
   fs.mkdirSync(backupsDir, { recursive: true });
-  fs.writeFileSync(FAKE_FILEPATH, '-- fake backup for test\n');
+  fs.writeFileSync(FAKE_FILEPATH, '-- PostgreSQL database dump\n--\nSELECT 1;\n-- PostgreSQL database dump complete\n--\n', { mode: 0o600, flag: 'wx' });
 });
 
 afterAll(async () => {
@@ -84,7 +85,7 @@ describe('Fix #34 — Audit log téléchargement backup', () => {
     });
 
     const res = await request(app)
-      .get(`/api/settings/backups/inexistant_${Date.now()}.sql`)
+      .get(`/api/settings/backups/${MISSING_FILENAME}`)
       .set('Authorization', `Bearer ${token}`);
 
     expect(res.status).toBe(404);

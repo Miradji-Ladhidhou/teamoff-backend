@@ -39,11 +39,13 @@ beforeEach(() => {
     GMAIL_CLIENT_SECRET: process.env.GMAIL_CLIENT_SECRET,
     GMAIL_REFRESH_TOKEN: process.env.GMAIL_REFRESH_TOKEN,
     RESEND_API_KEY: process.env.RESEND_API_KEY,
+    MAIL_SIMULATE: process.env.MAIL_SIMULATE,
   };
   delete process.env.GMAIL_CLIENT_ID;
   delete process.env.GMAIL_CLIENT_SECRET;
   delete process.env.GMAIL_REFRESH_TOKEN;
   delete process.env.RESEND_API_KEY;
+  process.env.MAIL_SIMULATE = 'false';
 
   getSettingsSpy = jest.spyOn(systemSettingsService, 'getSettings').mockResolvedValue({
     ...systemSettingsService.DEFAULT_SETTINGS,

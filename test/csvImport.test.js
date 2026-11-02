@@ -21,6 +21,7 @@ const app        = require('../src/index');
 const { Utilisateur, CompteurConges } = require('../src/models');
 const { generateToken } = require('./helpers/auth');
 const { seed }   = require('./helpers/seed');
+const { parseCsvResponse } = require('./helpers/csvResponse');
 
 jest.mock('../src/services/emailService', () => ({
   sendSetPasswordEmail: jest.fn().mockResolvedValue(undefined),
@@ -201,6 +202,21 @@ describe('C — Import réussi (nouvel utilisateur)', () => {
   const email = `import.c1.${Date.now()}@test.local`;
   const currentYear = new Date().getFullYear();
   let userId;
+  let importResponse;
+
+  beforeAll(async () => {
+    const csv = csvBuffer([
+      HEADERS,
+      `Dupont,Marie,${email},employe,RH,2021-03-01,5,25`,
+    ]);
+    importResponse = await request(app)
+      .post('/api/users/import/csv')
+      .set('Authorization', `Bearer ${ctx.tokens.superAdmin}`)
+      .attach('file', csv, { filename: 'test.csv', contentType: 'text/csv' })
+      .field('entreprise_id', ctx.entreprise.id);
+    expect(importResponse.status).toBe(201);
+    userId = importResponse.body.created[0].id;
+  });
 
   afterAll(async () => {
     if (userId) {
@@ -210,39 +226,26 @@ describe('C — Import réussi (nouvel utilisateur)', () => {
   });
 
   it('crée l\'utilisateur et pose les soldes N-1 et N (201)', async () => {
-    const csv = csvBuffer([
-      HEADERS,
-      `Dupont,Marie,${email},employe,RH,2021-03-01,5,25`,
-    ]);
-
-    const res = await request(app)
-      .post('/api/users/import/csv')
-      .set('Authorization', `Bearer ${ctx.tokens.superAdmin}`)
-      .attach('file', csv, { filename: 'test.csv', contentType: 'text/csv' })
-      .field('entreprise_id', ctx.entreprise.id);
+    const res = importResponse;
 
     expect(res.status).toBe(201);
     expect(res.body.created).toHaveLength(1);
     expect(res.body.created[0].email).toBe(email);
     expect(res.body.skipped).toHaveLength(0);
-    // 2 soldes posés : N-1 (5 j) et N (25 j)
-    expect(res.body.balancesSet).toHaveLength(2);
+    expect(res.body.balancesSet).toHaveLength(1);
     const soldeN = res.body.balancesSet.find(b => b.annee === currentYear);
-    const soldeN1 = res.body.balancesSet.find(b => b.annee === currentYear - 1);
-    expect(soldeN?.jours_acquis).toBe(25);
-    expect(soldeN1?.jours_acquis).toBe(5);
-
-    userId = res.body.created[0].id;
+    expect(soldeN?.jours_acquis).toBe(30);
+    expect(soldeN?.jours_reportes).toBe(5);
   });
 
   it('les CompteurConges en DB reflètent les valeurs importées', async () => {
     const counters = await CompteurConges.findAll({ where: { utilisateur_id: userId, conge_type_id: ctx.congeType.id } });
     const counterN  = counters.find(c => c.annee === currentYear);
     const counterN1 = counters.find(c => c.annee === currentYear - 1);
-    expect(counterN).not.toBeNull();
-    expect(parseFloat(counterN.jours_acquis)).toBe(25);
-    expect(counterN1).not.toBeNull();
-    expect(parseFloat(counterN1.jours_acquis)).toBe(5);
+    expect(counterN).toBeDefined();
+    expect(parseFloat(counterN.jours_acquis)).toBe(30);
+    expect(parseFloat(counterN.jours_reportes)).toBe(5);
+    expect(counterN1).toBeUndefined();
   });
 
   it('l\'utilisateur est créé en statut en_attente', async () => {
@@ -319,13 +322,16 @@ describe('E — Template CSV GET /import/csv/template', () => {
   it('le template contient les colonnes (N-1) et (N) pour chaque type de congé', async () => {
     const res = await request(app)
       .get(`/api/users/import/csv/template?entreprise_id=${ctx.entreprise.id}`)
-      .set('Authorization', `Bearer ${ctx.tokens.superAdmin}`);
-    expect(res.text).toContain('Congés payés');
-    expect(res.text).toContain('(N-1)');
-    expect(res.text).toContain('(N)');
-    expect(res.text).toContain('nom');
-    expect(res.text).toContain('prenom');
-    expect(res.text).toContain('email');
+      .set('Authorization', `Bearer ${ctx.tokens.superAdmin}`)
+      .buffer(true).parse(parseCsvResponse);
+    expect(res.headers['content-type']).toMatch(/charset=utf-16le/i);
+    const csv = res.body.toString('utf16le');
+    expect(csv).toContain('Congés payés');
+    expect(csv).toContain('(N-1)');
+    expect(csv).toContain('(N)');
+    expect(csv).toContain('nom');
+    expect(csv).toContain('prenom');
+    expect(csv).toContain('email');
   });
 
   it('400 si entreprise_id manquant dans le template', async () => {

@@ -187,8 +187,8 @@ describe('Fix #44 — employe d\'une autre entreprise : isolation préservée', 
     await Conge.destroy({ where: { id: conge.id } }).catch(() => {});
   });
 
-  it('répond 400 ou 403 (modification non autorisée)', () => {
-    expect([400, 403]).toContain(res.status);
+  it('répond 403 (modification non autorisée)', () => {
+    expect(res.status).toBe(403);
   });
 
   it('le congé n\'est pas modifié', async () => {

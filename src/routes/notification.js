@@ -8,6 +8,8 @@ const validateUUIDParam = require('../middlewares/validateUUIDParam');
 const notificationController = require('../controllers/notificationController');
 const { addClient, removeClient } = require('../services/sseManager');
 const logger = require('../utils/logger');
+const authorizeRole = require('../middlewares/authorizeRole');
+const preferencesService = require('../services/notificationPreferencesService');
 
 // Connexions SSE actives par userId — max 5 onglets simultanés
 const SSE_MAX_PER_USER = 5;
@@ -72,9 +74,10 @@ router.get('/stream', async (req, res) => {
     } catch {}
   }, Math.max(1000, msUntilExpiry));
 
-  addClient(userId, res);
-
-  req.on('close', () => {
+  let closed = false;
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
     clearTimeout(expireTimer);
     clearInterval(heartbeat);
     removeClient(userId, res);
@@ -84,10 +87,31 @@ router.get('/stream', async (req, res) => {
     } else {
       sseConnectionCount.set(userId, remaining);
     }
-  });
+    req.removeListener('close', cleanup);
+    res.removeListener('close', cleanup);
+  };
+  addClient(userId, res, cleanup);
+  req.on('close', cleanup);
+  res.on('close', cleanup);
 });
 
 router.use(authJwt);
+
+router.get('/configuration/:entrepriseId',
+  authorizeRole(['admin_entreprise'], req => req.params.entrepriseId),
+  validateUUIDParam('entrepriseId'), async (req, res, next) => {
+    try {
+      res.json(await preferencesService.getConfiguration(req.params.entrepriseId));
+    } catch (error) { next(error); }
+  });
+
+router.put('/configuration/:entrepriseId',
+  authorizeRole(['admin_entreprise'], req => req.params.entrepriseId),
+  validateUUIDParam('entrepriseId'), async (req, res, next) => {
+    try {
+      res.json(await preferencesService.updateConfiguration(req.params.entrepriseId, req.body, req.user.id));
+    } catch (error) { next(error); }
+  });
 
 /**
  * Liste des notifications

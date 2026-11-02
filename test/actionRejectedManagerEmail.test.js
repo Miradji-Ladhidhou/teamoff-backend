@@ -82,12 +82,12 @@ beforeAll(async () => {
   manager = await Utilisateur.create({
     entreprise_id: ent.id, prenom: 'Mgr', nom: `ARM${TS}`,
     email: `mgr.arm.${TS}@test.internal`,
-    role: 'manager', password_hash: HASH, statut: 'actif',
+    role: 'manager', password_hash: HASH, statut: 'actif', service: 'Test local',
   });
   employe = await Utilisateur.create({
     entreprise_id: ent.id, prenom: 'Emp', nom: `ARM${TS}`,
     email: `emp.arm.${TS}@test.internal`,
-    role: 'employe', password_hash: HASH, statut: 'actif',
+    role: 'employe', password_hash: HASH, statut: 'actif', service: 'Test local',
   });
 
   congeType = await CongeType.create({

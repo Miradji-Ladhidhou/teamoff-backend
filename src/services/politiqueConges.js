@@ -1,4 +1,4 @@
-const { getManagerCategorySettings } = require('./managerCrossServicePolicy');
+const { getManagerCategorySettings, getNamedRoute, getManagerUserWhere } = require('./managerCrossServicePolicy');
 
 const DEFAULT_LEAVE_POLICY = {
   overlap_behavior: 'block',
@@ -141,6 +141,7 @@ function normalizeLeavePolicy(rawPolicy = {}) {
     blocked_days: normalizeBlockedDays(rawPolicy?.blocked_days),
     accrual_by_type: normalizeAccrualByType(rawPolicy?.accrual_by_type),
     service_policies: rawPolicy?.service_policies || {},
+    notification_routing: rawPolicy?.notification_routing || {},
     approval_workflow: approvalWorkflow,
     minimum_notice_days: Math.max(0, Number(rawPolicy?.minimum_notice_days) || 0),
     notice_period_tiers: normalizeNoticeTiers(rawPolicy?.notice_period_tiers),
@@ -228,6 +229,8 @@ function canManagerAccessService(manager, targetService, baseRules, action = 'vi
   const leaveService = String(targetService || '').trim();
   if (managerService && leaveService && managerService === leaveService) return true;
 
+  if (['view', 'validate'].includes(action)
+    && getNamedRoute(baseRules, leaveService, 'conges', manager.id)?.mode === 'workflow') return true;
   const permissions = getManagerServicePermissions(baseRules, manager);
   if (action === 'view') return permissions.canViewAllServices;
   if (action === 'validate') return permissions.canValidateAllServices;
@@ -286,6 +289,7 @@ function getLeaveRules(entreprise) {
 module.exports = {
   DEFAULT_LEAVE_POLICY,
   normalizeLeavePolicy,
+  normalizeNotificationSettings,
   getPolitiqueType,
   calculSoldeAvecReport,
   peutPoser,
@@ -295,5 +299,6 @@ module.exports = {
   getManagerServicePermissions,
   canManagerViewAllAbsences,
   canManagerAccessService,
+  getManagerUserWhere,
   getRequiredNotice,
 };

@@ -1,5 +1,6 @@
 const { MouvementSolde } = require('../models');
 const logger = require('../utils/logger');
+const { sanitizeError } = require('../utils/sanitizeLogData');
 
 const LABELS = {
   credit_initial:        'Ouverture de compte',
@@ -46,7 +47,9 @@ async function logMouvement({ entreprise_id, utilisateur_id, conge_type_id, anne
       description: description || LABELS[type] || type,
     }, transaction ? { transaction } : {});
   } catch (err) {
+    sanitizeError(err);
     logger.error('logMouvement error', { error: err.message, type, utilisateur_id });
+    throw err;
   }
 }
 

@@ -12,6 +12,7 @@ const actionRequestController = require('../controllers/congeActionRequestContro
 const { AuditLog, Conge, Utilisateur } = require('../models');
 const validate = require('../middlewares/validate');
 const { createCongeRules, updateCongeRules, checkOverlapRules, rejectCongeRules } = require('../validators/conges.validators');
+const { filterRecordComments } = require('../services/commentVisibilityService');
 
 const csvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
 
@@ -58,7 +59,11 @@ router.get('/:id/history', authorizeRole(['employe','apprenti','manager','admin_
       include: [{ model: Utilisateur, as: 'utilisateur', attributes: ['id', 'prenom', 'nom', 'role'], required: false }],
       order: [['created_at', 'ASC']],
     });
-    res.json(logs);
+    const record = await Conge.findByPk(req.params.id, { attributes: ['entreprise_id', 'utilisateur_id'] });
+    const visible = await filterRecordComments({
+      entreprise_id: record?.entreprise_id, utilisateur_id: record?.utilisateur_id, logs,
+    }, req.user);
+    res.json(visible.logs);
   } catch (err) {
     next(err);
   }

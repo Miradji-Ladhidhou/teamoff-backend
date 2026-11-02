@@ -3,7 +3,8 @@ const logger = require('../utils/logger');
 const { Op } = require('sequelize');
 const dayjs = require('dayjs');
 const { getLeaveRules, getManagerServicePermissions, canManagerViewAllAbsences } = require('../services/politiqueConges');
-const { getManagerAbsenceScope } = require('../services/managerCrossServicePolicy');
+const { getManagerAbsenceScope, getManagerUserWhere } = require('../services/managerCrossServicePolicy');
+const { filterRecordComments } = require('../services/commentVisibilityService');
 
 /**
  * Retourne les congés ET les absences visibles selon le rôle de l'utilisateur.
@@ -84,7 +85,13 @@ async function getCalendrier(req, res, next) {
           raw: true,
         });
         const localUserIds = [...new Set([...visibleUsers.map((employee) => employee.id), req.user.id])];
-        if (!permissions.canViewAllServices) managerVisibleUserIds = localUserIds;
+        if (!permissions.canViewAllServices) {
+          const leaveUsers = await Utilisateur.findAll({
+            where: { entreprise_id: req.user.entreprise_id, ...getManagerUserWhere(rules, managerProfile) },
+            attributes: ['id'], raw: true,
+          });
+          managerVisibleUserIds = [...new Set([...leaveUsers.map(employee => employee.id), req.user.id])];
+        }
         if (!canViewAllAbsences) managerVisibleAbsenceUserIds = localUserIds;
         if (!canViewAllAbsences) managerAbsenceScope = getManagerAbsenceScope(rules, managerProfile, localUserIds);
         if (['maladie', 'absence_exceptionnelle'].some(type => canManagerViewAllAbsences(rules, managerProfile, type))) {
@@ -199,7 +206,7 @@ async function getCalendrier(req, res, next) {
       a.date_debut < b.date_debut ? -1 : a.date_debut > b.date_debut ? 1 : 0
     );
 
-    res.json(result);
+    res.json(await filterRecordComments(result, req.user));
   } catch (err) {
     logger.error(err);
     next(err);

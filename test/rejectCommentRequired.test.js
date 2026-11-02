@@ -44,6 +44,7 @@ beforeAll(async () => {
     prenom: 'Mgr', nom: 'Reject28',
     email: `mgr.rej28.${Date.now()}@test.internal`,
     role: 'manager',
+    service: 'Test local',
     password_hash: passwordHash,
     statut: 'actif',
   });
@@ -53,6 +54,7 @@ beforeAll(async () => {
     prenom: 'Emp', nom: 'Reject28',
     email: `emp.rej28.${Date.now()}@test.internal`,
     role: 'employe',
+    service: 'Test local',
     password_hash: passwordHash,
     statut: 'actif',
   });

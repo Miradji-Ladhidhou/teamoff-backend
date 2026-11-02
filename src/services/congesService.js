@@ -7,12 +7,14 @@ const { logMouvement, descriptionConge } = require('./mouvementSoldeService');
 const { ensureCounter } = require('./quotasService');
 const { getLeaveNotificationRecipients } = require('./leaveNotificationRecipients');
 const { notifyConfiguredManagerEvent, notifyAdminsInformationEvent } = require('./managerEventNotificationService');
+const { wrapWorkflow, setNotificationEvent, prepareRecipientSafely } = require('./businessNotificationContext');
 const LeavePolicyService = require('./leavePolicyService');
 const joursFeriesService = require('./joursFeriesService');
 const {
   getLeaveRules,
   getEffectiveLeaveRules,
   getManagerServicePermissions,
+  getManagerUserWhere,
   canManagerAccessService,
   getRequiredNotice,
 } = require('./politiqueConges');
@@ -537,7 +539,9 @@ async function checkOverlapConge({ utilisateur_id, conge_type_id, date_debut, da
 
   if (!validateUUID(utilisateurId)) throw new Error('utilisateur_id invalide');
   if (!validateUUID(conge_type_id)) throw new Error('conge_type_id invalide');
-  if (!validateDateRange(date_debut, date_fin)) throw new Error('Dates invalides ou date_fin < date_debut');
+  if (!validateDateRange(date_debut, date_fin)) {
+    throw Object.assign(new Error('Dates invalides ou date_fin < date_debut'), { statusCode: 422 });
+  }
   if (!validateDemiJournee(debutDemiJournee)) throw new Error('debut_demi_journee invalide');
   if (!validateDemiJournee(finDemiJournee)) throw new Error('fin_demi_journee invalide');
   if (date_debut === date_fin && debutDemiJournee === 'apres_midi' && finDemiJournee === 'matin') {
@@ -560,9 +564,9 @@ async function checkOverlapConge({ utilisateur_id, conge_type_id, date_debut, da
   }
 
   const congeType = await CongeType.findByPk(conge_type_id);
-  if (!congeType) throw new Error('Type de congé invalide');
+  if (!congeType) throw Object.assign(new Error('Type de congé invalide'), { statusCode: 404 });
   if (congeType.entreprise_id !== utilisateur.entreprise_id) {
-    throw new Error('Le type de congé ne correspond pas à l entreprise de l utilisateur');
+    throw Object.assign(new Error('Le type de congé ne correspond pas à l entreprise de l utilisateur'), { statusCode: 403 });
   }
   if (!congeType.demi_journee_autorisee && (debutDemiJournee === 'apres_midi' || finDemiJournee === 'matin')) {
     throw Object.assign(new Error('Les demi-journées ne sont pas autorisées pour ce type de congé'), { status: 422 });
@@ -752,7 +756,9 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
 
     if (!validateUUID(utilisateurId)) throw new Error('utilisateur_id invalide');
     if (!validateUUID(conge_type_id)) throw new Error('conge_type_id invalide');
-    if (!validateDateRange(date_debut, date_fin)) throw new Error('Dates invalides ou date_fin < date_debut');
+    if (!validateDateRange(date_debut, date_fin)) {
+      throw Object.assign(new Error('Dates invalides ou date_fin < date_debut'), { statusCode: 422 });
+    }
     if (!validateDemiJournee(debutDemiJournee)) throw new Error('debut_demi_journee invalide');
     if (!validateDemiJournee(finDemiJournee)) throw new Error('fin_demi_journee invalide');
     if (date_debut === date_fin && debutDemiJournee === 'apres_midi' && finDemiJournee === 'matin') {
@@ -775,10 +781,10 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     }
 
     const congeType = await CongeType.findByPk(conge_type_id, { transaction: t });
-    if (!congeType) throw new Error('Type de congé invalide');
+    if (!congeType) throw Object.assign(new Error('Type de congé invalide'), { statusCode: 404 });
 
     if (congeType.entreprise_id !== utilisateur.entreprise_id) {
-      throw new Error('Le type de congé ne correspond pas à l\'entreprise de l\'utilisateur');
+      throw Object.assign(new Error('Le type de congé ne correspond pas à l\'entreprise de l\'utilisateur'), { statusCode: 403 });
     }
 
     if (!congeType.demi_journee_autorisee && (debutDemiJournee === 'apres_midi' || finDemiJournee === 'matin')) {
@@ -792,7 +798,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     const daysUntilStart = dayjs(date_debut).startOf('day').diff(dayjs().startOf('day'), 'day');
     const minNoticeDays = getRequiredNotice(leaveRules, calendarDays);
     if (daysUntilStart < minNoticeDays) {
-      throw new Error(`Délai de préavis non respecté : ${minNoticeDays} jour(s) requis pour un congé de ${calendarDays} jour(s) (départ dans ${daysUntilStart} jour(s))`);
+      throw Object.assign(new Error(`Délai de préavis non respecté : ${minNoticeDays} jour(s) requis pour un congé de ${calendarDays} jour(s) (départ dans ${daysUntilStart} jour(s))`), { statusCode: 422 });
     }
 
     // annee_compteur permet d'imputer un congé N+1 sur le solde N (choix explicite du salarié)
@@ -985,6 +991,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
     }
 
     const shouldNotifyOnCreate = leaveRules.notification_settings.on_create;
+    if (isReservation) setNotificationEvent('leave_reservation');
     const createRecipients = await getLeaveNotificationRecipients({
       entrepriseId: utilisateur.entreprise_id,
       service: utilisateur.service,
@@ -1001,7 +1008,7 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       for (const recipient of createRecipients) {
         if (recipient.email) emailQueue.push({
           to: recipient.email,
-          subject: `Nouvelle demande de conge - ${utilisateurNomComplet}`,
+          subject: `Nouvelle demande de congé - ${utilisateurNomComplet}`,
           templateName: 'leave-new-request-manager',
           data: {
             notification_mode: recipient.notification_mode,
@@ -1087,13 +1094,13 @@ async function createConge({ utilisateur_id, conge_type_id, date_debut, date_fin
       } else {
         emailQueue.push({
           to: utilisateur.email,
-          subject: 'Confirmation de creation de votre demande de conge',
+          subject: 'Confirmation de création de votre demande de congé',
           templateName: 'leave-created-employee',
           data: {
             destinataire_prenom: utilisateur.prenom || 'Collaborateur',
             date_debut: formatDateFR(date_debut),
             date_fin: formatDateFR(date_fin),
-            statut_label: approvalWorkflow === 'auto' ? 'Validee automatiquement' : approvalWorkflow === 'admin_only' ? 'En attente de validation par l\'administrateur' : 'En attente de validation',
+            statut_label: approvalWorkflow === 'auto' ? 'Validée automatiquement' : approvalWorkflow === 'admin_only' ? 'En attente de validation par l\'administrateur' : 'En attente de validation',
             annee_compteur_note_html: usingCurrentYearBalance
               ? `<div style="margin:12px 0;padding:12px 14px;background:#eff6ff;border-left:4px solid #2563eb;border-radius:4px;color:#1e40af;font-size:13px;"><strong>ℹ Solde imputé :</strong> Conformément à votre choix, ce congé sera débité sur votre solde ${anneeActuelleCreate} (et non sur le solde ${anneeCongeStart}).</div>`
               : '',
@@ -1273,7 +1280,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
             to: admin.email,
             subject: hasOverlapAtValidation
               ? 'ALERTE chevauchement - validation finale requise'
-              : 'Demande de conge validee par le manager - action requise',
+              : 'Demande de congé validée par le manager - action requise',
             templateName: 'leave-manager-approved-admin',
             data: {
               notification_mode: 'action',
@@ -1306,9 +1313,24 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
 
       // Notifier l'employé que sa demande est en attente de validation admin (workflow manager_admin)
       if (leaveRules.approval_workflow === 'manager_admin' && leaveRules.notification_settings.on_validate) {
+        const ownerApp = await prepareRecipientSafely({
+          recipientId: utilisateur.id, type: 'conge_valide_manager',
+          mode: 'information', legacy: false, channel: 'in_app', transaction: t,
+        });
+        if (ownerApp?.enabled) {
+          await notificationService.creerNotification({
+            entreprise_id: conge.entreprise_id,
+            utilisateur_id: utilisateur.id,
+            type: 'conge_valide_manager',
+            notification_mode: 'information',
+            message: `Votre congé a été validé par votre manager et attend la validation administrateur (${formatDateFR(conge.date_debut)} - ${formatDateFR(conge.date_fin)}).`,
+            url: `/conges/${conge.id}`,
+            transaction: t,
+          });
+        }
         emailQueue.push({
           to: utilisateur.email,
-          subject: 'Votre demande a ete validee par votre manager - validation admin en cours',
+          subject: 'Votre demande a été validée par votre manager - validation par l’administrateur en cours',
           templateName: 'leave-manager-validated-employee',
           data: {
             destinataire_prenom: utilisateur.prenom || 'Collaborateur',
@@ -1339,7 +1361,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         if (leaveRules.notification_settings.on_validate) {
           emailQueue.push({
             to: utilisateur.email,
-            subject: 'Votre demande de conge est approuvee',
+            subject: 'Votre demande de congé est approuvée',
             templateName: 'leave-approved-employee',
             data: {
               destinataire_prenom: utilisateur.prenom || 'Collaborateur',
@@ -1515,7 +1537,7 @@ async function validerConge(congeId, reqUser, commentaire = null, req = null) {
         const adminNomValidation = `${reqUser?.prenom || ''} ${reqUser?.nom || ''}`.trim() || 'votre administrateur';
         emailQueue.push({
           to: utilisateur.email,
-          subject: 'Votre demande de conge est approuvee',
+          subject: 'Votre demande de congé est approuvée',
           templateName: 'leave-approved-employee',
           data: {
             destinataire_prenom: utilisateur.prenom || 'Collaborateur',
@@ -1661,7 +1683,7 @@ async function rejeterConge(congeId, reqUser, commentaire = null, req = null) {
         (reqUser?.role === 'manager' ? 'votre manager' : 'votre administrateur');
       emailQueue.push({
         to: utilisateur.email,
-        subject: 'Votre demande de conge a ete refusee',
+        subject: 'Votre demande de congé a été refusée',
         templateName: 'leave-rejected-employee',
         data: {
           destinataire_prenom: utilisateur.prenom || 'Collaborateur',
@@ -1755,7 +1777,7 @@ async function getConges(user, query = {}) {
         const visibleUsers = await Utilisateur.findAll({
           where: {
             entreprise_id: user.entreprise_id,
-            ...(managerProfile?.service ? { service: managerProfile.service } : { id: user.id }),
+            ...getManagerUserWhere(managerLeaveRules, managerProfile || user),
           },
           attributes: ['id'],
           raw: true,
@@ -2040,11 +2062,11 @@ async function updateConge(id, data, user, req = null, { notifyAdminTracking = t
 
     // Fix #44 : super_admin omis de la liste → 403 sur updateConge.
     if (!['admin_entreprise', 'super_admin', 'manager'].includes(user?.role) && user?.id !== conge.utilisateur_id) {
-      throw new Error('Modification non autorisée');
+      throw Object.assign(new Error('Modification non autorisée'), { statusCode: 403 });
     }
 
     if (['admin_entreprise', 'manager'].includes(user?.role) && user?.entreprise_id !== conge.entreprise_id) {
-      throw new Error('Accès interdit: entreprise différente');
+      throw Object.assign(new Error('Accès interdit: entreprise différente'), { statusCode: 403 });
     }
 
     let updateOverlapWarning = null;
@@ -2517,14 +2539,14 @@ async function updateConge(id, data, user, req = null, { notifyAdminTracking = t
       for (const recipient of recipients) {
         if (recipient.email) emailQueue.push({
           to: recipient.email,
-          subject: `${isReserved ? 'Réservation' : 'Demande de conge'} modifiee - ${demandeurNom}`,
+          subject: `${isReserved ? 'Réservation' : 'Demande de congé'} modifiée - ${demandeurNom}`,
           templateName: isReserved ? 'leave-reservation-admin' : 'leave-updated-before-approval',
           data: {
               notification_mode: isReserved ? 'information' : recipient.notification_mode,
             destinataire_prenom: recipient.prenom || 'Validateur',
             notification_delivery: recipient.notification_delivery,
             action_requise: isReserved ? 'Pour information' : 'Action requise',
-            contexte_modif: isReserved ? 'sa réservation de congé' : 'sa demande de conge avant validation',
+            contexte_modif: isReserved ? 'sa réservation de congé' : 'sa demande de congé avant validation',
             demandeur_nom: demandeurNom,
             ancienne_periode: previousPeriod,
             nouvelle_periode: nextPeriod,
@@ -2536,7 +2558,12 @@ async function updateConge(id, data, user, req = null, { notifyAdminTracking = t
             action_url: buildCongeUrl(conge.id),
           }
         });
-        if (recipient.has_explicit_cross_service_policy || recipient.role === 'admin_entreprise') await notificationService.creerNotification({
+        const legacyApp = recipient.has_explicit_cross_service_policy || recipient.role === 'admin_entreprise';
+        const configuredApp = !legacyApp ? await prepareRecipientSafely({
+          recipientId: recipient.id, type: 'conge_modifie_employe', mode: isReserved ? 'information' : recipient.notification_mode,
+          legacy: false, channel: 'in_app', transaction: t,
+        }) : null;
+        if (legacyApp || configuredApp?.enabled) await notificationService.creerNotification({
           entreprise_id: conge.entreprise_id,
           utilisateur_id: recipient.id,
           delivery: recipient.notification_delivery,
@@ -2590,7 +2617,7 @@ async function updateConge(id, data, user, req = null, { notifyAdminTracking = t
       const nouvellePeriode = `${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)}`;
       emailQueue.push({
         to: employe.email,
-        subject: 'Mise a jour de votre conge valide',
+        subject: 'Mise à jour de votre congé validé',
         templateName: 'leave-updated-employee',
         data: {
           destinataire_prenom: employe.prenom || 'Collaborateur',
@@ -2631,14 +2658,14 @@ async function updateConge(id, data, user, req = null, { notifyAdminTracking = t
           if (manager.email) {
             emailQueue.push({
               to: manager.email,
-              subject: `Conge valide modifie par l'admin - ${demandeurNom}`,
+              subject: `Congé validé modifié par l'administrateur - ${demandeurNom}`,
               templateName: 'leave-updated-before-approval',
               data: {
                 notification_mode: 'information',
                 destinataire_prenom: manager.prenom || 'Manager',
                 notification_delivery: manager.notification_delivery,
                 action_requise: 'Pour information',
-                contexte_modif: `son conge valide (modifie par ${adminNom})`,
+                contexte_modif: `son congé validé (modifié par ${adminNom})`,
                 demandeur_nom: demandeurNom,
                 ancienne_periode: `${formatDateFR(previousDateDebut)} au ${formatDateFR(previousDateFin)}`,
                 nouvelle_periode: `${formatDateFR(nextDateDebut)} au ${formatDateFR(nextDateFin)}`,
@@ -2680,14 +2707,14 @@ async function updateConge(id, data, user, req = null, { notifyAdminTracking = t
       for (const recipient of recipients) {
         if (recipient.email) emailQueue.push({
           to: recipient.email,
-          subject: `Conge valide modifie - ${demandeurNom}`,
+          subject: `Congé validé modifié - ${demandeurNom}`,
           templateName: 'leave-updated-before-approval',
           data: {
             notification_mode: 'information',
             destinataire_prenom: recipient.prenom || 'Responsable',
             action_requise: 'Pour information',
             notification_delivery: recipient.notification_delivery,
-            contexte_modif: 'son conge valide',
+            contexte_modif: 'son congé validé',
             demandeur_nom: demandeurNom,
             ancienne_periode: previousPeriod,
             nouvelle_periode: nextPeriod,
@@ -2983,13 +3010,16 @@ async function deleteConge(id, user, options = {}) {
             }
           });
         }
+        const commentAccess = await prepareRecipientSafely({
+          recipientId: recipient.id, type: 'conge_annule_employe', channel: 'in_app', transaction: t,
+        });
         await notificationService.creerNotification({
           entreprise_id: conge.entreprise_id,
           utilisateur_id: recipient.id,
           type: 'conge_annule_employe',
           delivery: recipient.notification_delivery,
           notification_mode: 'information',
-          message: `${employe_nom} a annulé son ${statutLabel} du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)}.${recipient.notification_delivery?.local ? ` Motif : ${cancellationComment || 'non précisé'}` : ''}`,
+          message: `${employe_nom} a annulé son ${statutLabel} du ${formatDateFR(conge.date_debut)} au ${formatDateFR(conge.date_fin)}.${recipient.notification_delivery?.local && (!commentAccess || commentAccess.commentsAllowed) ? ` Motif : ${cancellationComment || 'non précisé'}` : ''}`,
           url: `/conges`,
           transaction: t,
         });
@@ -3013,7 +3043,7 @@ async function deleteConge(id, user, options = {}) {
       if (employe.email) {
         emailQueue.push({
           to: employe.email,
-          subject: 'Annulation de votre conge valide',
+          subject: 'Annulation de votre congé validé',
           templateName: 'leave-cancelled-employee',
           data: {
             destinataire_prenom: employe.prenom || 'Collaborateur',
@@ -3353,7 +3383,7 @@ async function activerReservation(congeId, reqUser) {
  * @param {string}  utilisateurId
  * @param {string}  congeTypeId
  * @param {number}  annee         — année du compteur crédité
- * @returns {{ activated: Array, still_pending: Array, error?: string }}
+ * @returns {{ activated: Array, still_pending: Array }}
  */
 async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
   const emailQueue = [];
@@ -3616,7 +3646,7 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
     emailQueue.forEach((payload) => fireEmail(payload));
   } catch (err) {
     logger.error(`[try-activate] Erreur pour ${utilisateurId}/${congeTypeId}/${annee}:`, { error: err.message });
-    results.error = err.message;
+    throw err;
   }
 
   return results;
@@ -3625,16 +3655,22 @@ async function tryActivateReservations(utilisateurId, congeTypeId, annee) {
 module.exports = {
   checkOverlapConge,
   getValidationOverlapStatus,
-  createConge,
+  createConge: wrapWorkflow(createConge, data => ({
+    kind: 'leave', event: 'leave_created', employeeId: data.utilisateur_id || data.reqUser?.id,
+  })),
   getConges,
   getCongeById,
   assertManagerCanAccessConge,
-  updateConge,
-  deleteConge,
-  validerConge,
-  rejeterConge,
-  activerReservation,
-  tryActivateReservations,
+  updateConge: wrapWorkflow(updateConge, id => ({ kind: 'leave', event: 'leave_modified', entityId: id })),
+  deleteConge: wrapWorkflow(deleteConge, id => ({ kind: 'leave', event: 'leave_cancelled', entityId: id })),
+  validerConge: wrapWorkflow(validerConge, (id, user) => ({
+    kind: 'leave', event: user.role === 'manager' ? 'leave_manager_validated' : 'leave_validated', entityId: id,
+  })),
+  rejeterConge: wrapWorkflow(rejeterConge, id => ({ kind: 'leave', event: 'leave_rejected', entityId: id })),
+  activerReservation: wrapWorkflow(activerReservation, id => ({ kind: 'leave', event: 'leave_activated', entityId: id })),
+  tryActivateReservations: wrapWorkflow(tryActivateReservations, employeeId => ({
+    kind: 'leave', event: 'leave_activated', employeeId,
+  })),
   calcJoursConges,
   calculateLeaveBreakdownWithHolidays,
   calculateDaysPreview,

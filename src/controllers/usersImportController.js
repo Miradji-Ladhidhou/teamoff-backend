@@ -4,11 +4,16 @@ const crypto = require('crypto');
 const jwt    = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const { parse } = require('csv-parse/sync');
-const { Utilisateur, Entreprise, CongeType, CompteurConges, sequelize } = require('../models');
+const { Transaction } = require('sequelize');
+const { Entreprise, CongeType, sequelize } = require('../models');
 const emailService = require('../services/emailService');
 const quotasService = require('../services/quotasService');
+const { getImportCounter } = require('../services/importCounterService');
+const { getImportUser } = require('../services/importUserService');
 const { auditImport } = require('../services/auditHelper');
 const logger = require('../utils/logger');
+const { sanitizeError } = require('../utils/sanitizeLogData');
+const { isTransactionCommitted } = require('../services/transactionSafety');
 const { decodeCsvBuffer } = require('../utils/csvDecoder');
 const { logMouvement } = require('../services/mouvementSoldeService');
 const iconv = require('iconv-lite');
@@ -148,31 +153,25 @@ async function importUsersCSV(req, res, next) {
     const balancesSet = [];
     const usersToNotify = [];
 
-    await sequelize.transaction(async (t) => {
+    const warnings = [];
+    let importTransaction;
+    await sequelize.transaction({ isolationLevel: Transaction.ISOLATION_LEVELS.READ_COMMITTED }, async (t) => {
+      importTransaction = t;
       for (const row of normalized) {
-        let user = await Utilisateur.findOne({ where: { email: row.email }, transaction: t });
+        const { inviteHash } = inviteTokens.get(row.email);
+        const { user, created: userCreated } = await getImportUser({
+          nom: row.nom, prenom: row.prenom, email: row.email, role: row.role,
+          service: row.service, entreprise_id, date_embauche: row.date_embauche,
+          password_hash: placeholderHash, invite_token_hash: inviteHash, statut: 'en_attente',
+        }, t);
 
-        if (user) {
+        if (!userCreated) {
           if (user.entreprise_id !== entreprise_id) {
             skipped.push({ email: row.email, reason: 'appartient à une autre entreprise' });
             continue;
           }
           skipped.push({ email: row.email, reason: 'email déjà utilisé (soldes mis à jour)' });
         } else {
-          const { inviteHash } = inviteTokens.get(row.email);
-          user = await Utilisateur.create({
-            nom:               row.nom,
-            prenom:            row.prenom,
-            email:             row.email,
-            role:              row.role,
-            service:           row.service,
-            entreprise_id,
-            date_embauche:     row.date_embauche,
-            password_hash:     placeholderHash,
-            invite_token_hash: inviteHash,
-            statut:            'en_attente',
-          }, { transaction: t });
-
           await quotasService.initializeUserCounters({
             entrepriseId: entreprise_id,
             utilisateurId: user.id,
@@ -194,16 +193,12 @@ async function importUsersCSV(req, res, next) {
         for (const congeTypeId of allTypeIds) {
           const nVal  = nMap[congeTypeId]  ?? 0;
           const n1Val = n1Map[congeTypeId] ?? 0;
-          const [counter] = await CompteurConges.findOrCreate({
-            where: {
-              entreprise_id,
-              utilisateur_id: user.id,
-              conge_type_id:  congeTypeId,
-              annee:          currentYear,
-            },
-            defaults: { jours_acquis: 0, jours_pris: 0, jours_reserves: 0, jours_reportes: 0, jours_annules: 0 },
-            transaction: t,
-          });
+          const counter = await getImportCounter({
+            entreprise_id,
+            utilisateur_id: user.id,
+            conge_type_id:  congeTypeId,
+            annee:          currentYear,
+          }, t);
           const oldAcquis   = parseFloat(counter.jours_acquis   || 0);
           const oldReserves = parseFloat(counter.jours_reserves || 0);
           await counter.update({ jours_acquis: nVal + n1Val, jours_reportes: n1Val }, { transaction: t });
@@ -225,30 +220,51 @@ async function importUsersCSV(req, res, next) {
           balancesSet.push({ email: row.email, annee: currentYear, jours_acquis: nVal + n1Val, jours_reportes: n1Val });
         }
       }
+    }).catch(error => {
+      if (error.transactionCommitted !== true || !isTransactionCommitted(importTransaction)) throw error;
+      sanitizeError(error);
+      logger.error('Import CSV validé avec erreur après commit', { error: error.message });
+      warnings.push({
+        code: 'IMPORT_POST_COMMIT_FAILED',
+        message: 'Import enregistré. Une erreur après validation a été journalisée ; le traitement des invitations des nouveaux comptes se poursuit.',
+      });
     });
 
     // Emails d'invitation hors transaction — lien valide 48h pour définir le mot de passe
     for (const { user, inviteToken } of usersToNotify) {
-      emailService.sendSetPasswordEmail(user, entreprise, inviteToken)
-        .catch(e => logger.error('Erreur email invitation import CSV', { email: user.email, error: e.message }));
+      Promise.resolve().then(() => emailService.sendSetPasswordEmail(user, entreprise, inviteToken))
+        .catch(e => {
+          sanitizeError(e);
+          logger.error('Erreur email invitation import CSV après commit', { email: user.email, error: e.message });
+        });
     }
 
-    auditImport.usersSuccess(req.user, req, {
+    Promise.resolve().then(() => auditImport.usersSuccess(req.user, req, {
       entreprise_id,
       nb_created: created.length,
       nb_skipped: skipped.length,
       nb_balances: balancesSet.length,
-    }).catch(() => {});
+    })).catch(e => {
+      sanitizeError(e);
+      logger.error('Erreur audit succès import CSV après commit', { error: e.message });
+    });
 
     res.status(created.length > 0 ? 201 : 200).json({
       message: `${created.length} employé(s) créé(s), ${skipped.length} ignoré(s), ${balancesSet.length} solde(s) mis à jour`,
       created,
       skipped,
       balancesSet,
+      ...(warnings.length ? { warnings } : {}),
     });
   } catch (err) {
+    sanitizeError(err);
     logger.error('Import CSV utilisateurs', { error: err.message });
-    auditImport.usersFailed(req.user, req, { entreprise_id: req.body?.entreprise_id, error: err.message }).catch(() => {});
+    Promise.resolve().then(() => auditImport.usersFailed(req.user, req, {
+      entreprise_id: req.body?.entreprise_id, error: err.message,
+    })).catch(e => {
+      sanitizeError(e);
+      logger.error('Erreur audit échec import CSV', { error: e.message });
+    });
     next(err);
   }
 }

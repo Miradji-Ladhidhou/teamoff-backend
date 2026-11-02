@@ -92,8 +92,8 @@ describe('400 — Validation et JSON', () => {
       .set('Authorization', `Bearer ${ctx.tokens.employe}`)
       .send({
         conge_type_id: ctx.congeType.id,
-        date_debut: '2026-08-01',
-        date_fin: '2026-08-03',
+        date_debut: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
+        date_fin: new Date(Date.now() + 32 * 86400000).toISOString().slice(0, 10),
         commentaire_employe: megaStr,
       });
 

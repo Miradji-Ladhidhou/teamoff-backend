@@ -1,30 +1,29 @@
 'use strict';
 
-// Charger .env.test si disponible, sinon .env
-const path = require('path');
-const envFile = path.resolve(__dirname, '..', '.env.test');
-const fallback = path.resolve(__dirname, '..', '.env');
-try { require('dotenv').config({ path: envFile }); } catch { require('dotenv').config({ path: fallback }); }
-
-// En test, utiliser DATABASE_TEST_URL si défini
-if (process.env.NODE_ENV === 'test' && process.env.DATABASE_TEST_URL) {
-  process.env.DATABASE_URL = process.env.DATABASE_TEST_URL;
-}
+const safety = require('./migrationSafety');
+const environment = safety.assertCliInvocation();
+const config = safety.loadMigrationConfig(environment);
+const url = safety.parseDatabaseUrl(config.url);
 
 module.exports = {
-  development: {
-    use_env_variable: 'DATABASE_URL',
+  [environment]: {
+    host: url.hostname,
+    port: Number(url.port || 5432),
+    database: decodeURIComponent(url.pathname.slice(1)),
+    username: decodeURIComponent(url.username),
+    password: decodeURIComponent(url.password),
     dialect: 'postgres',
-  },
-  test: {
-    use_env_variable: 'DATABASE_URL',
-    dialect: 'postgres',
-  },
-  production: {
-    use_env_variable: 'DATABASE_URL',
-    dialect: 'postgres',
-    dialectOptions: {
-      ssl: { require: true, rejectUnauthorized: false },
+    logging: false,
+    dialectOptions: { ssl: config.ssl },
+    hooks: {
+      async afterConnect(connection) {
+        try {
+          await safety.verifyConnection(connection, config.target);
+        } catch (error) {
+          await connection.end();
+          throw error;
+        }
+      },
     },
   },
 };

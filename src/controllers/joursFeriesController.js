@@ -3,8 +3,28 @@ const { JoursFeries, HolidayTemplate, HolidayTemplateItem, sequelize } = require
 const { Op } = require('sequelize');
 const { auditFerie } = require('../services/auditHelper');
 const { Parser } = require('json2csv');
+const { rollbackAfterError, isTransactionCommitted } = require('../services/transactionSafety');
+const logger = require('../utils/logger');
+const sanitizeLogData = require('../utils/sanitizeLogData');
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+async function commitHoliday(transaction, res) {
+  try {
+    await transaction.commit();
+  } catch (error) {
+    if (!isTransactionCommitted(transaction)) throw error;
+    sanitizeLogData.sanitizeError(error);
+    logger.error('holiday_post_commit_failed', sanitizeLogData({
+      error: error.message,
+      stack: error.stack,
+      cause: error.cause?.message,
+      cleanupErrors: error.cleanupErrors?.map(e => ({ message: e.message, details: e })),
+      afterCommitErrors: error.afterCommitErrors?.map(e => ({ message: e.message, details: e })),
+    }));
+    res.setHeader('X-TeamOff-Warning', 'HOLIDAY_POST_COMMIT_FAILED');
+  }
+}
 
 function getTargetEntrepriseId(req, { allowBody = false } = {}) {
   if (req.user?.role === 'super_admin') {
@@ -158,11 +178,11 @@ async function creerJourFerie(req, res, next) {
 
     await auditFerie.created(jourFerie, req.user, req, { transaction: t });
 
-    await t.commit();
+    await commitHoliday(t, res);
     res.status(201).json(jourFerie);
   } catch (err) {
-    await t.rollback();
-    if (err.name === 'SequelizeUniqueConstraintError') {
+    await rollbackAfterError(t, err);
+    if (err.name === 'SequelizeUniqueConstraintError' && err.transactionCommitted !== true) {
       return res.status(409).json({ message: "Jour férié déjà existant" });
     }
     next(err);
@@ -241,11 +261,11 @@ async function updateJourFerie(req, res, next) {
       transaction: t,
     });
 
-    await t.commit();
+    await commitHoliday(t, res);
     res.json(jourFerie);
   } catch (err) {
-    await t.rollback();
-    if (err.name === 'SequelizeUniqueConstraintError') {
+    await rollbackAfterError(t, err);
+    if (err.name === 'SequelizeUniqueConstraintError' && err.transactionCommitted !== true) {
       return res.status(409).json({ message: "Jour férié déjà existant" });
     }
     next(err);
@@ -274,10 +294,10 @@ async function supprimerJourFerie(req, res, next) {
 
     await auditFerie.deleted(jourFerie, req.user, req, { transaction: t });
 
-    await t.commit();
+    await commitHoliday(t, res);
     res.status(204).send();
   } catch (err) {
-    await t.rollback();
+    await rollbackAfterError(t, err);
     next(err);
   }
 }
@@ -384,7 +404,7 @@ async function importerJoursFeriesNationaux(req, res, next) {
       await JoursFeries.bulkCreate(toCreate, { transaction: t });
     }
 
-    await t.commit();
+    await commitHoliday(t, res);
 
     const skippedTotal = apiHolidays.filter((h) => h?.date).length - toCreate.length - updatedRecurrent;
 
@@ -396,7 +416,7 @@ async function importerJoursFeriesNationaux(req, res, next) {
       total: apiHolidays.filter((h) => h?.date).length,
     });
   } catch (err) {
-    await t.rollback();
+    await rollbackAfterError(t, err);
     next(err);
   }
 }
@@ -506,7 +526,7 @@ async function creerModeleJoursFeries(req, res, next) {
       await HolidayTemplateItem.bulkCreate(items, { transaction: t });
     }
 
-    await t.commit();
+    await commitHoliday(t, res);
     return res.status(201).json({
       id: template.id,
       name: template.name,
@@ -514,7 +534,7 @@ async function creerModeleJoursFeries(req, res, next) {
       itemsCount: items.length,
     });
   } catch (err) {
-    await t.rollback();
+    await rollbackAfterError(t, err);
     next(err);
   }
 }
@@ -597,7 +617,7 @@ async function importerModeleJoursFeriesCsv(req, res, next) {
     }));
 
     await HolidayTemplateItem.bulkCreate(items, { transaction: t });
-    await t.commit();
+    await commitHoliday(t, res);
 
     return res.status(201).json({
       id: template.id,
@@ -606,7 +626,7 @@ async function importerModeleJoursFeriesCsv(req, res, next) {
       itemsCount: items.length,
     });
   } catch (err) {
-    await t.rollback();
+    await rollbackAfterError(t, err);
     next(err);
   }
 }
@@ -680,7 +700,7 @@ async function appliquerModeleJoursFeries(req, res, next) {
       }
     }
 
-    await t.commit();
+    await commitHoliday(t, res);
 
     return res.json({
       message: 'Modèle appliqué avec succès.',
@@ -689,7 +709,7 @@ async function appliquerModeleJoursFeries(req, res, next) {
       total: items.length,
     });
   } catch (err) {
-    await t.rollback();
+    await rollbackAfterError(t, err);
     next(err);
   }
 }

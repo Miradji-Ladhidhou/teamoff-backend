@@ -31,9 +31,9 @@ function resolveEntrepriseId({ performedBy, entity, entityId, metadata }) {
 /**
  * Fonction interne pour créer un audit dans la base
  */
-async function logAudit({ action, entity, entity_id, user_id, entreprise_id, ip, userAgent, metadata }) {
+async function logAudit({ action, entity, entity_id, user_id, entreprise_id, ip, userAgent, metadata, transaction = null, reportResult = false }) {
   try {
-    await AuditLog.create({
+    const values = {
       action,
       entity,
       entity_id,
@@ -42,36 +42,43 @@ async function logAudit({ action, entity, entity_id, user_id, entreprise_id, ip,
       ip_address: ip,
       user_agent: userAgent,
       metadata
-    });
+    };
+    if (transaction) await AuditLog.create(values, { transaction });
+    else await AuditLog.create(values);
+    if (reportResult) return { status: 'recorded' };
   } catch (err) {
     logger.error('Erreur logAudit:', err);
+    if (transaction) throw err;
+    if (reportResult) return { status: 'failed', error: err };
   }
 }
 
 /**
  * Résout l'entreprise_id depuis l'entité cible quand le performedBy est super_admin (entreprise_id = null).
  */
-async function resolveEntrepriseIdFromEntity(entity, entityId) {
+async function resolveEntrepriseIdFromEntity(entity, entityId, transaction = null) {
   if (!entityId) return null;
   try {
     if (entity === 'user' || entity === 'utilisateur') {
-      const u = await Utilisateur.findByPk(entityId, { attributes: ['entreprise_id'] });
+      const u = await Utilisateur.findByPk(entityId, { attributes: ['entreprise_id'], ...(transaction ? { transaction } : {}) });
       return u?.entreprise_id || null;
     }
     if (entity === 'conge') {
-      const c = await Conge.findByPk(entityId, { attributes: ['entreprise_id'] });
+      const c = await Conge.findByPk(entityId, { attributes: ['entreprise_id'], ...(transaction ? { transaction } : {}) });
       return c?.entreprise_id || null;
     }
-  } catch { /* non-bloquant */ }
+  } catch (err) {
+    if (transaction) throw err;
+  }
   return null;
 }
 
 /**
  * Helper générique pour auditer une action
  */
-async function auditEntity({ action, entity, entityId, performedBy, req, metadata = {} }) {
+async function auditEntity({ action, entity, entityId, performedBy, req, metadata = {}, transaction = null, entrepriseId = null, reportResult = false }) {
   try {
-    let entrepriseId = resolveEntrepriseId({
+    let auditEntrepriseId = entrepriseId || resolveEntrepriseId({
       performedBy,
       entity,
       entityId,
@@ -79,22 +86,27 @@ async function auditEntity({ action, entity, entityId, performedBy, req, metadat
     });
 
     // Fallback : super_admin sans entreprise_id → résoudre depuis l'entité cible
-    if (!entrepriseId && entityId) {
-      entrepriseId = await resolveEntrepriseIdFromEntity(entity, entityId);
+    if (!auditEntrepriseId && entityId) {
+      auditEntrepriseId = await resolveEntrepriseIdFromEntity(entity, entityId, transaction);
     }
 
-    await logAudit({
+    const result = await logAudit({
       action,
       entity,
       entity_id: entityId || null,
       user_id: performedBy?.id || null,
-      entreprise_id: entrepriseId,
+      entreprise_id: auditEntrepriseId,
       ip: req?.ip || null,
       userAgent: req?.get?.('User-Agent') || null,
-      metadata
+      metadata,
+      transaction,
+      reportResult,
     });
+    if (reportResult) return result;
   } catch (err) {
     logger.error('Erreur audit helper:', err);
+    if (transaction) throw err;
+    if (reportResult) return { status: 'failed', error: err };
   }
 }
 
@@ -162,12 +174,12 @@ const auditConge = {
 };
 
 const auditFerie = {
-  created: (ferie, performedBy, req) =>
-    auditEntity({ action: auditActions.FERIE_CREATED, entity: 'ferie', entityId: ferie.id, performedBy, req }),
-  updated: (ferie, performedBy, req) =>
-    auditEntity({ action: auditActions.FERIE_UPDATED, entity: 'ferie', entityId: ferie.id, performedBy, req }),
-  deleted: (ferie, performedBy, req) =>
-    auditEntity({ action: auditActions.FERIE_DELETED, entity: 'ferie', entityId: ferie.id, performedBy, req })
+  created: (ferie, performedBy, req, { transaction = null } = {}) =>
+    auditEntity({ action: auditActions.FERIE_CREATED, entity: 'ferie', entityId: ferie.id, performedBy, req, transaction, entrepriseId: ferie.entreprise_id }),
+  updated: (ferie, performedBy, req, { transaction = null } = {}) =>
+    auditEntity({ action: auditActions.FERIE_UPDATED, entity: 'ferie', entityId: ferie.id, performedBy, req, transaction, entrepriseId: ferie.entreprise_id }),
+  deleted: (ferie, performedBy, req, { transaction = null } = {}) =>
+    auditEntity({ action: auditActions.FERIE_DELETED, entity: 'ferie', entityId: ferie.id, performedBy, req, transaction, entrepriseId: ferie.entreprise_id })
 };
 
 const auditAuth = {
@@ -248,6 +260,7 @@ const auditCounter = {
   updated: (compteur, before, after, performedBy, req) =>
     auditEntity({
       action: auditActions.COUNTER_UPDATED,
+      reportResult: true,
       entity: 'compteur_conges',
       entityId: compteur.id,
       performedBy,

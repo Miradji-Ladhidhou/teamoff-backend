@@ -2,23 +2,95 @@ const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
+const { randomUUID } = require('crypto');
+const logger = require('../utils/logger');
+const { sanitizeError, sanitizeMessage } = require('../utils/sanitizeLogData');
 
 const execFileAsync = promisify(execFile);
 const backupsDir = path.resolve(__dirname, '..', '..', 'backups');
 
 function ensureBackupDirectory() {
-  fs.mkdirSync(backupsDir, { recursive: true });
+  fs.mkdirSync(backupsDir, { recursive: true, mode: 0o700 });
+  const stats = fs.lstatSync(backupsDir);
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    throw new Error('Répertoire de sauvegarde invalide.');
+  }
+  fs.chmodSync(backupsDir, 0o700);
 }
 
 function buildBackupFilename() {
   const now = new Date();
   const stamp = now.toISOString().replace(/[:.]/g, '-');
-  return `teamoff_backup_${stamp}.sql`;
+  return `teamoff_backup_${stamp}_${randomUUID()}.sql`;
+}
+
+const legacyName = /^teamoff_backup_\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.sql$/;
+const publishedName = /^teamoff_backup_\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.sql$/;
+const markerPath = filename => path.join(backupsDir, `.${filename}.published.json`);
+
+function assertRegularFile(fd) {
+  const stats = fs.fstatSync(fd);
+  if (!stats.isFile() || stats.size === 0) throw new Error('Sauvegarde absente, vide ou non ordinaire.');
+  return stats;
+}
+
+function readSection(fd, position, length) {
+  const buffer = Buffer.alloc(length);
+  return buffer.subarray(0, fs.readSync(fd, buffer, 0, length, position)).toString('utf8');
+}
+
+function validateDump(fd) {
+  const stats = assertRegularFile(fd);
+  const header = readSection(fd, 0, Math.min(stats.size, 4096));
+  const tailLength = Math.min(stats.size, 65536);
+  const tail = readSection(fd, stats.size - tailLength, tailLength);
+  if (!/^-- PostgreSQL database dump\r?$/m.test(header) ||
+      !/(?:^|\n)-- PostgreSQL database dump complete\r?\n--\s*(?:\\unrestrict [a-zA-Z0-9]+\s*)?$/.test(tail)) {
+    throw new Error('Sauvegarde SQL incomplète ou format pg_dump invalide.');
+  }
+  return stats;
+}
+
+function cleanupPartial(directory, error) {
+  try {
+    fs.rmSync(directory, { recursive: true, force: true });
+  } catch (cleanupError) {
+    sanitizeError(cleanupError);
+    logger.error('backup_partial_cleanup_failed', { error: cleanupError.message });
+    if (!error) throw cleanupError;
+    error.cleanupError = cleanupError;
+  }
+}
+
+function closeFile(fd, primaryError) {
+  try {
+    fs.closeSync(fd);
+  } catch (cleanupError) {
+    sanitizeError(cleanupError);
+    logger.error('backup_descriptor_cleanup_failed', { error: cleanupError.message });
+    if (!primaryError) throw cleanupError;
+    primaryError.cleanupError = cleanupError;
+  }
+}
+
+function readBackupFile(filePath, read) {
+  const fd = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  let primaryError;
+  try {
+    return read(fd);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    closeFile(fd, primaryError);
+  }
 }
 
 function getPgDumpCandidates() {
+  if (process.env.PG_DUMP_BIN) {
+    return [process.env.PG_DUMP_BIN];
+  }
   const candidates = [
-    process.env.PG_DUMP_BIN,
     '/usr/bin/pg_dump',           // Linux standard (Render, Ubuntu)
     '/usr/local/bin/pg_dump',
     '/Applications/Postgres.app/Contents/Versions/latest/bin/pg_dump',
@@ -43,14 +115,14 @@ async function runDatabaseBackup() {
     throw error;
   }
 
-  ensureBackupDirectory();
-
   const filename = buildBackupFilename();
   const filePath = path.join(backupsDir, filename);
-
+  let directory;
+  let published = false;
+  let markerCreated = false;
   try {
     const parsedUrl = new URL(databaseUrl);
-    const databaseName = parsedUrl.pathname.replace(/^\//, '');
+    const databaseName = decodeURIComponent(parsedUrl.pathname.replace(/^\//, ''));
     const username = decodeURIComponent(parsedUrl.username || '');
     const password = decodeURIComponent(parsedUrl.password || '');
     const host = parsedUrl.hostname;
@@ -59,6 +131,13 @@ async function runDatabaseBackup() {
     if (!databaseName || !username || !host) {
       throw new Error('DATABASE_URL invalide pour pg_dump.');
     }
+
+    ensureBackupDirectory();
+    directory = fs.mkdtempSync(path.join(backupsDir, '.pending-'));
+    fs.chmodSync(directory, 0o700);
+    const pendingPath = path.join(directory, 'dump.partial');
+    const reservation = fs.openSync(pendingPath, 'wx', 0o600);
+    closeFile(reservation);
 
     const childEnv = {
       ...process.env,
@@ -85,11 +164,11 @@ async function runDatabaseBackup() {
       '--dbname',
       databaseName,
       '--file',
-      filePath,
+      pendingPath,
     ];
 
     const candidates = getPgDumpCandidates();
-    let lastError = null;
+    let lastError = new Error('Aucun binaire pg_dump disponible.');
 
     for (const pgDumpBin of candidates) {
       try {
@@ -98,6 +177,9 @@ async function runDatabaseBackup() {
         break;
       } catch (execError) {
         lastError = execError;
+        if (!['ENOENT', 'EACCES'].includes(execError.code) || process.env.PG_DUMP_BIN) {
+          break;
+        }
       }
     }
 
@@ -112,7 +194,24 @@ async function runDatabaseBackup() {
       throw lastError;
     }
 
-    const stats = fs.statSync(filePath);
+    const stats = readBackupFile(pendingPath, fd => {
+      const validated = validateDump(fd);
+      fs.fchmodSync(fd, 0o600);
+      fs.fsyncSync(fd);
+      return validated;
+    });
+
+    const marker = {
+      version: 1, filename, sizeBytes: stats.size,
+      dev: stats.dev, ino: stats.ino, mtimeMs: stats.mtimeMs,
+    };
+    fs.writeFileSync(markerPath(filename), JSON.stringify(marker), { flag: 'wx', mode: 0o600 });
+    markerCreated = true;
+    // A hard link publishes atomically and fails with EEXIST; rename would overwrite.
+    fs.linkSync(pendingPath, filePath);
+    published = true;
+    cleanupPartial(directory);
+    directory = undefined;
 
     return {
       filename,
@@ -121,128 +220,77 @@ async function runDatabaseBackup() {
       createdAt: new Date().toISOString(),
     };
   } catch (error) {
-    const detail = (error.stderr || error.message || '').toString().trim();
-    const mapped = new Error(`Echec de la sauvegarde PostgreSQL: ${detail || 'Erreur inconnue.'}`);
+    sanitizeError(error);
+    if (directory) cleanupPartial(directory, error);
+    if (markerCreated && !published) {
+      try {
+        fs.unlinkSync(markerPath(filename));
+      } catch (cleanupError) {
+        sanitizeError(cleanupError);
+        logger.error('backup_marker_cleanup_failed', { error: cleanupError.message });
+        error.cleanupError = cleanupError;
+      }
+    }
+    const detail = sanitizeMessage(error.stderr || error.message || '').trim();
+    const mapped = new Error(`Echec de la sauvegarde PostgreSQL: ${detail || 'Erreur inconnue.'}`, { cause: error });
     mapped.statusCode = 500;
+    mapped.code = error.code;
+    mapped.cleanupError = error.cleanupError;
+    if (published) mapped.publishedFilename = filename;
     throw mapped;
   }
 }
 
-// Supprime les statements EVENT TRIGGER du SQL (pgrst_drop_watch etc. sont
-// créés par PostgREST/Render avec un superuser — l'app user n'en est pas propriétaire).
-function stripEventTriggers(content) {
-  const lines = content.split('\n');
-  const result = [];
-  let skip = false;
-
-  for (const line of lines) {
-    const upper = line.trim().toUpperCase();
-    if (
-      upper.startsWith('DROP EVENT TRIGGER') ||
-      upper.startsWith('CREATE EVENT TRIGGER') ||
-      upper.startsWith('ALTER EVENT TRIGGER')
-    ) {
-      skip = true;
-    }
-    if (!skip) result.push(line);
-    if (skip && upper.includes(';')) skip = false;
-  }
-
-  return result.join('\n');
+function assertRestoreAvailable() {
+  const error = new Error('Restauration indisponible : un exécuteur administratif local séparé doit être installé et autorisé. Aucune restauration exécutée.');
+  error.statusCode = 503;
+  error.code = 'RESTORE_EXECUTOR_UNAVAILABLE';
+  throw error;
 }
 
-async function restoreFromFile(filePath) {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    const err = new Error('DATABASE_URL est manquante.');
-    err.statusCode = 500;
-    throw err;
-  }
-
-  if (!fs.existsSync(filePath)) {
-    const err = new Error('Fichier de sauvegarde introuvable.');
-    err.statusCode = 404;
-    throw err;
-  }
-
-  // Écrire une version filtrée sans les EVENT TRIGGERs
-  const strippedPath = filePath + '.stripped.sql';
-  const strippedContent = stripEventTriggers(fs.readFileSync(filePath, 'utf8'));
-  fs.writeFileSync(strippedPath, strippedContent);
-
-  const parsedUrl = new URL(databaseUrl);
-  const databaseName = parsedUrl.pathname.replace(/^\//, '');
-  const username = decodeURIComponent(parsedUrl.username || '');
-  const password = decodeURIComponent(parsedUrl.password || '');
-  const host = parsedUrl.hostname;
-  const port = parsedUrl.port || '5432';
-
-  const childEnv = { ...process.env, PGPASSWORD: password };
-  const sslMode = parsedUrl.searchParams.get('sslmode');
-  if (sslMode) childEnv.PGSSLMODE = sslMode;
-
-  // Sans --single-transaction ni ON_ERROR_STOP : psql continue malgré les
-  // erreurs "must be owner of" sur les objets d'extension Render (vector_indexes,
-  // pgrst_drop_watch…). On échoue seulement si des erreurs non liées aux permissions
-  // sont détectées dans stderr.
-  const psqlArgs = [
-    '--host', host,
-    '--port', String(port),
-    '--username', username,
-    '--dbname', databaseName,
-    '--file', strippedPath,
-  ];
-
-  const psqlCandidates = [
-    process.env.PSQL_BIN,
-    '/opt/homebrew/bin/psql',
-    '/usr/local/bin/psql',
-    'psql',
-  ].filter(Boolean);
-
-  let lastError = null;
-  try {
-    for (const bin of psqlCandidates) {
-      try {
-        await execFileAsync(bin, psqlArgs, { env: childEnv });
-        lastError = null;
-        break;
-      } catch (e) {
-        // psql exit non-zero : vérifier si c'est uniquement des erreurs de permission
-        // sur des objets d'extension (attendues sur Render managed PostgreSQL)
-        const stderr = (e.stderr || e.message || '').toString();
-        const errorLines = stderr.split('\n').filter((l) => /^psql:.*ERROR:/i.test(l));
-        const onlyPermissionErrors = errorLines.length > 0 && errorLines.every((l) =>
-          l.includes('must be owner of') ||
-          l.includes('already exists') ||
-          l.includes('does not exist')
-        );
-        if (onlyPermissionErrors) {
-          lastError = null; // erreurs bénignes — restauration considérée réussie
-          break;
-        }
-        lastError = e;
-      }
-    }
-  } finally {
-    try { fs.unlinkSync(strippedPath); } catch { /* ignore */ }
-  }
-
-  if (lastError) {
-    const detail = (lastError.stderr || lastError.message || '').toString().trim();
-    const err = new Error(`Échec de la restauration : ${detail || 'Erreur inconnue.'}`);
-    err.statusCode = 500;
-    throw err;
-  }
+async function restoreFromFile() {
+  assertRestoreAvailable();
 }
 
 function getBackupPathByFilename(filename) {
-  const safeName = path.basename(filename || '');
-  if (!safeName || safeName !== filename) {
+  if (typeof filename !== 'string' || (!legacyName.test(filename) && !publishedName.test(filename))) {
     return null;
   }
+  return path.join(backupsDir, filename);
+}
 
-  return path.join(backupsDir, safeName);
+function openPublishedBackup(filename) {
+  const filePath = getBackupPathByFilename(filename);
+  if (!filePath) throw Object.assign(new Error('Nom de fichier invalide.'), { statusCode: 400 });
+  let fd;
+  try {
+    ensureBackupDirectory();
+    const stat = fs.lstatSync(filePath);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Sauvegarde non ordinaire.');
+    fd = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const stats = validateDump(fd);
+    if (publishedName.test(filename)) {
+      const marker = readBackupFile(markerPath(filename), markerFd => {
+        const markerStats = assertRegularFile(markerFd);
+        if (markerStats.size > 4096) throw new Error('Marqueur de publication invalide.');
+        return JSON.parse(readSection(markerFd, 0, markerStats.size));
+      });
+      if (marker.version !== 1 || marker.filename !== filename ||
+          marker.sizeBytes !== stats.size || marker.ino !== stats.ino ||
+          marker.dev !== stats.dev || marker.mtimeMs !== stats.mtimeMs) {
+        throw new Error('Sauvegarde non publiée ou modifiée depuis sa validation.');
+      }
+    }
+    fs.fchmodSync(fd, 0o600);
+    return { fd, filePath, filename, sizeBytes: stats.size, mtimeMs: stats.mtimeMs };
+  } catch (error) {
+    if (fd !== undefined) closeFile(fd, error);
+    const mapped = new Error('Sauvegarde introuvable ou non validée.', { cause: sanitizeError(error) });
+    mapped.statusCode = ['ENOENT', 'ELOOP'].includes(error.code) || !error.code ? 404 : 500;
+    mapped.code = error.code;
+    mapped.cleanupError = error.cleanupError;
+    throw mapped;
+  }
 }
 
 /**
@@ -253,22 +301,37 @@ function getBackupPathByFilename(filename) {
 function cleanupOldBackups(retentionDays = 7) {
   ensureBackupDirectory();
   const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-  const files = fs.readdirSync(backupsDir).filter((f) => f.endsWith('.sql'));
+  const files = fs.readdirSync(backupsDir).filter((f) => getBackupPathByFilename(f));
   const deleted = [];
+  const errors = [];
 
   for (const file of files) {
     const filePath = path.join(backupsDir, file);
     try {
-      const stats = fs.statSync(filePath);
-      if (stats.mtimeMs < cutoffMs) {
+      const stats = fs.lstatSync(filePath);
+      if (stats.isFile() && !stats.isSymbolicLink() && stats.mtimeMs < cutoffMs) {
         fs.unlinkSync(filePath);
         deleted.push(file);
+        if (publishedName.test(file)) {
+          try {
+            fs.unlinkSync(markerPath(file));
+          } catch (error) {
+            if (error.code !== 'ENOENT') throw error;
+          }
+        }
       }
-    } catch {
-      // ignorer les fichiers inaccessibles
+    } catch (error) {
+      sanitizeError(error);
+      errors.push({ filename: file, message: error.message });
+      logger.error('backup_retention_cleanup_failed', { filename: file, error: error.message });
     }
   }
 
+  if (errors.length) {
+    const error = new Error('Nettoyage des sauvegardes incomplet.');
+    error.details = errors;
+    throw error;
+  }
   return { deleted, kept: files.length - deleted.length };
 }
 
@@ -276,6 +339,8 @@ module.exports = {
   backupsDir,
   runDatabaseBackup,
   restoreFromFile,
+  assertRestoreAvailable,
   getBackupPathByFilename,
+  openPublishedBackup,
   cleanupOldBackups,
 };

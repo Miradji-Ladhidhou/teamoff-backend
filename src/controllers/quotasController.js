@@ -6,6 +6,7 @@ const UsageService = require('../services/usageService');
 const emailService = require('../services/emailService');
 const { Utilisateur, MouvementSolde, CongeType, Conge, Entreprise } = require('../models');
 const { Op } = require('sequelize');
+const { sanitizeError } = require('../utils/sanitizeLogData');
 
 async function ensureUserAccess(req, utilisateurId) {
   const utilisateur = await Utilisateur.findByPk(utilisateurId, {
@@ -142,7 +143,7 @@ async function upsertUserCounter(req, res, next) {
     }
 
     const entrepriseId = req.user.role === 'super_admin' ? utilisateur.entreprise_id : req.user.entreprise_id;
-    const { compteur, before, after } = await quotasService.createOrUpdateCounter({
+    const { compteur, before, after, warnings: counterWarnings = [] } = await quotasService.createOrUpdateCounter({
       entrepriseId,
       utilisateurId: utilisateur_id,
       congeTypeId,
@@ -152,26 +153,52 @@ async function upsertUserCounter(req, res, next) {
       req,
     });
 
+    const warnings = [...counterWarnings];
     if (before.jours_acquis !== after.jours_acquis) {
-      const [congeType, utilisateurFull] = await Promise.all([
-        CongeType.findByPk(congeTypeId, { attributes: ['libelle'] }),
-        Utilisateur.findByPk(utilisateur_id, { attributes: ['id', 'email', 'prenom', 'nom'] }),
-      ]);
-      emailService.sendBalanceAdjusted(
-        utilisateurFull,
-        congeType?.libelle || 'Congé',
-        before.jours_acquis,
-        after.jours_acquis
-      ).catch((e) => logger.error('sendBalanceAdjusted error', { error: e.message }));
+      try {
+        const [congeType, utilisateurFull] = await Promise.all([
+          CongeType.findByPk(congeTypeId, { attributes: ['libelle'] }),
+          Utilisateur.findByPk(utilisateur_id, { attributes: ['id', 'email', 'prenom', 'nom'] }),
+        ]);
+        Promise.resolve().then(() => emailService.sendBalanceAdjusted(
+          utilisateurFull,
+          congeType?.libelle || 'Congé',
+          before.jours_acquis,
+          after.jours_acquis
+        )).catch(error => {
+          sanitizeError(error);
+          logger.error('sendBalanceAdjusted error après enregistrement', { error: error.message });
+        });
+      } catch (error) {
+        sanitizeError(error);
+        logger.error('sendBalanceAdjusted error après enregistrement', { error: error.message });
+        warnings.push({ code: 'BALANCE_EMAIL_FAILED', message: 'Solde enregistré, mais la confirmation par email a échoué.' });
+      }
     }
 
-    const activationResult = await tryActivateReservations(utilisateur_id, congeTypeId, annee);
+    let activationResult;
+    let activation;
+    try {
+      activationResult = await tryActivateReservations(utilisateur_id, congeTypeId, annee);
+      activation = { status: 'completed' };
+    } catch (error) {
+      sanitizeError(error);
+      logger.error('Activation réservations après enregistrement du compteur', { error: error.message });
+      activation = {
+        status: 'failed',
+        code: 'RESERVATION_ACTIVATION_FAILED',
+        message: 'Solde enregistré, mais le traitement des réservations a échoué. Consultez leurs statuts avant toute nouvelle tentative.',
+        transaction_committed: error.transactionCommitted === true,
+      };
+    }
 
     res.json({
       message: 'Compteur mis à jour',
       item: compteur,
-      reservations_activees: activationResult.activated,
-      reservations_en_attente: activationResult.still_pending,
+      reservations_activees: activationResult?.activated ?? null,
+      reservations_en_attente: activationResult?.still_pending ?? null,
+      activation,
+      ...(warnings.length ? { warnings } : {}),
     });
   } catch (err) {
     next(err);

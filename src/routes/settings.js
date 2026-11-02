@@ -1,7 +1,7 @@
 const express = require('express');
 const os = require('os');
 const fs = require('fs');
-const path = require('path');
+const { pipeline } = require('stream/promises');
 const { Parser } = require('json2csv');
 const { Op } = require('sequelize');
 const authorizeRole = require('../middlewares/authorizeRole');
@@ -9,8 +9,7 @@ const sequelize = require('../config/database');
 const systemSettingsService = require('../services/systemSettingsService');
 const emailService = require('../services/emailService');
 const backupService = require('../services/backupService');
-const { uploadBackupToDrive, listDriveBackups, downloadFromDrive } = require('../services/googleDriveService');
-const { restoreFromFile } = require('../services/backupService');
+const { uploadBackupToDrive, listDriveBackups } = require('../services/googleDriveService');
 const auditActions = require('../services/auditActions');
 const { AuditLog, Utilisateur } = require('../models');
 const { initBackupCron } = require('../cron/backupCron');
@@ -316,7 +315,7 @@ router.post('/actions/backup', async (req, res, next) => {
 
     res.json({
       message: 'Sauvegarde SQL créée avec succès.',
-      settings: updated,
+      settings: redactSecrets(updated),
       backup: {
         filename: backup.filename,
         sizeBytes: backup.sizeBytes,
@@ -369,56 +368,20 @@ router.get('/drive-backups', async (req, res, next) => {
 });
 
 router.post('/actions/restore-drive', async (req, res, next) => {
-  const { fileId, filename } = req.body;
+  const { fileId } = req.body || {};
   if (!fileId) return res.status(400).json({ message: 'fileId est requis.' });
 
-  let tempPath = null;
   try {
-    tempPath = await downloadFromDrive(fileId, filename);
-    await restoreFromFile(tempPath);
-
-    // Vérification post-restauration : compter les lignes des tables clés
-    let verification = null;
-    try {
-      const [rows] = await sequelize.query(`
-        SELECT
-          (SELECT COUNT(*) FROM utilisateur)  AS utilisateurs,
-          (SELECT COUNT(*) FROM entreprise)   AS entreprises,
-          (SELECT COUNT(*) FROM conge)        AS conges
-      `);
-      verification = rows[0];
-    } catch { /* table manquante = restauration incomplète, on l'ignore ici */ }
-
-    await logSettingsAudit(req, auditActions.SYSTEM_BACKUP_CREATED, {
-      action: 'restore',
-      filename: filename || fileId,
-      source: 'google_drive',
-      verification,
-    });
-
-    res.json({
-      message: `Base de données restaurée depuis "${filename || fileId}" avec succès.`,
-      verification,
-    });
+    backupService.assertRestoreAvailable();
   } catch (error) {
     next(error);
-  } finally {
-    if (tempPath && fs.existsSync(tempPath)) {
-      try { fs.unlinkSync(tempPath); } catch { /* ignore */ }
-    }
   }
 });
 
 router.get('/backups/:filename', async (req, res, next) => {
+  let download;
   try {
-    const filePath = backupService.getBackupPathByFilename(req.params.filename);
-    if (!filePath) {
-      return res.status(400).json({ message: 'Nom de fichier invalide.' });
-    }
-
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ message: 'Sauvegarde introuvable.' });
-    }
+    download = backupService.openPublishedBackup(req.params.filename);
 
     // Audit du téléchargement avant d'envoyer le fichier (Fix #34).
     // Journalisé même si le client interrompt le transfert en cours de route.
@@ -426,8 +389,39 @@ router.get('/backups/:filename', async (req, res, next) => {
       filename: req.params.filename,
     });
 
-    return res.download(filePath, path.basename(filePath));
+    res.set('Accept-Ranges', 'bytes');
+    if (download.mtimeMs !== undefined) res.set('Last-Modified', new Date(download.mtimeMs).toUTCString());
+    res.attachment(req.params.filename);
+    let range;
+    if (req.get('Range') && !req.get('If-Range')) {
+      const ranges = req.range(download.sizeBytes, { combine: true });
+      if (ranges === -1) {
+        res.set('Content-Range', `bytes */${download.sizeBytes}`);
+        fs.closeSync(download.fd);
+        download = undefined;
+        return res.status(416).end();
+      }
+      if (Array.isArray(ranges) && ranges.type === 'bytes' && ranges.length === 1) range = ranges[0];
+    }
+    if (range) {
+      res.status(206);
+      res.set('Content-Range', `bytes ${range.start}-${range.end}/${download.sizeBytes}`);
+    }
+    res.set('Content-Length', String(range ? range.end - range.start + 1 : download.sizeBytes));
+    const stream = fs.createReadStream(null, {
+      fd: download.fd, autoClose: true,
+      ...(range ? { start: range.start, end: range.end } : {}),
+    });
+    download = undefined;
+    await pipeline(stream, res);
   } catch (error) {
+    if (download) {
+      try {
+        fs.closeSync(download.fd);
+      } catch (cleanupError) {
+        error.cleanupError = cleanupError;
+      }
+    }
     return next(error);
   }
 });

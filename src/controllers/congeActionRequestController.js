@@ -1,6 +1,7 @@
 'use strict';
 
 const svc = require('../services/congeActionRequestService');
+const { filterRecordComments } = require('../services/commentVisibilityService');
 
 async function submit(req, res, next) {
   try {
@@ -15,7 +16,7 @@ async function submit(req, res, next) {
       fin_demi_journee_demandee,
       user: req.user,
     });
-    res.status(201).json(request);
+    res.status(201).json(await filterRecordComments(request, req.user));
   } catch (err) { next(err); }
 }
 
@@ -29,14 +30,14 @@ async function list(req, res, next) {
       limit: Number(limit),
       user: req.user,
     });
-    res.json(result);
+    res.json(await filterRecordComments(result, req.user));
   } catch (err) { next(err); }
 }
 
 async function getOne(req, res, next) {
   try {
     const request = await svc.getRequest(req.params.requestId, req.user);
-    res.json(request);
+    res.json(await filterRecordComments(request, req.user));
   } catch (err) { next(err); }
 }
 
@@ -46,7 +47,7 @@ async function approve(req, res, next) {
       commentaire: req.body.commentaire,
       adminUser: req.user,
     });
-    res.json(request);
+    res.json(await filterRecordComments(request, req.user));
   } catch (err) { next(err); }
 }
 
@@ -56,7 +57,7 @@ async function reject(req, res, next) {
       commentaire: req.body.commentaire,
       adminUser: req.user,
     });
-    res.json(request);
+    res.json(await filterRecordComments(request, req.user));
   } catch (err) { next(err); }
 }
 

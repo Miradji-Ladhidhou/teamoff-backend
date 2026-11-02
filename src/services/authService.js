@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const emailService = require('./emailService');
 const systemSettingsService = require('./systemSettingsService');
 const { auditAuth, auditImport } = require('./auditHelper');
-require('dotenv').config();
+if (!process.env.TEAMOFF_INTEGRATION_HARNESS) require('dotenv').config();
 
 // OWASP recommande cost ≥ 12 pour bcrypt (2024).
 // Les hash existants en cost 10 restent vérifiables — bcrypt lit le cost dans le hash.
