@@ -341,7 +341,8 @@ test('déploiement et sync ne contiennent plus d’exécution implicite de migra
   expect(sync).not.toMatch(/require\(|sequelize\.sync/);
   const pkg = JSON.parse(actualFs.readFileSync(path.join(safety.root, 'package.json')));
   expect(pkg.dependencies['sequelize-cli']).toBe('6.6.5');
-  for (const key of ['migrate', 'migrate:status', 'migrate:undo', 'predeploy']) {
+  expect(pkg.scripts.migrate).toBe('NODE_ENV=production node scripts/check-deployed-schema.js');
+  for (const key of ['migrate:status', 'migrate:undo', 'predeploy']) {
     expect(pkg.scripts[key]).toBe('node scripts/migrations.js blocked');
   }
 });

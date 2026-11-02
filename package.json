@@ -4,7 +4,7 @@
   "description": "",
   "main": "src/index.js",
   "engines": {
-    "node": ">=18.0.0",
+    "node": "22.23.4",
     "npm": ">=9.0.0"
   },
   "scripts": {
@@ -14,7 +14,7 @@
     "test:coverage": "NODE_ENV=test jest --runInBand --coverage",
     "test:watch": "NODE_ENV=test jest --runInBand --watch",
     "check-db": "node scripts/check-db.js",
-    "migrate": "node scripts/migrations.js blocked",
+    "migrate": "NODE_ENV=production node scripts/check-deployed-schema.js",
     "migrate:status": "node scripts/migrations.js blocked",
     "migrate:undo": "node scripts/migrations.js blocked",
     "migrate:development": "node scripts/migrations.js apply development",
