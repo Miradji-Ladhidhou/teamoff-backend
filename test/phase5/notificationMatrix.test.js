@@ -11,6 +11,7 @@ test.each(EVENTS)('$id : canaux indépendants, héritage par rôle/service et co
     for (const [email, in_app] of CHANNELS) {
       const recipient = { id: 'recipient', role, service: 'RH' };
       const preferences = { roles: { [role]: { [event.id]: { workflow: { email, in_app } } } } };
+      if (event.id === 'monthly_report') preferences.report_recipients = { monthly_report: [recipient.id] };
       for (const channel of ['email', 'in_app']) {
         const parameters = { preferences, recipient, event: event.id, channel, service: 'RH', ownerId: recipient.id };
         expect(resolvePreference(parameters)).toBe(channel === 'email' ? email : in_app);

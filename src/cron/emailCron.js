@@ -10,7 +10,7 @@ const notificationService = require('../services/notificationService');
 const logger = require('../utils/logger');
 const { formatDateFR } = require('../utils/dateFormatter');
 const { withContext, prepareRecipientSafely } = require('../services/businessNotificationContext');
-const { filterAdministrativeRecords } = require('../services/notificationPreferencesService');
+const { filterAdministrativeRecords, resolvePreference } = require('../services/notificationPreferencesService');
 const { createCronTaskGroup } = require('../services/cronTaskGroup');
 const taskGroup = createCronTaskGroup(cron);
 let initialized = false;
@@ -146,7 +146,23 @@ async function runPendingLeaveReminders() {
 }
 
 // ---------------------------------------------------------------------------
-// Rapport mensuel automatique (admins entreprise)
+// Rapports limités aux catégories et services déjà autorisés du destinataire.
+function reportRecords(entreprise, recipient, event, records, category) {
+  const rules = getLeaveRules(entreprise);
+  return filterAdministrativeRecords(entreprise.parametres?.notifications, recipient, event,
+    records.filter(item => recipient.role !== 'manager' || resolveManagerDelivery({
+      rules, manager: recipient, targetService: item.utilisateur?.service,
+      category: category || item.type_absence,
+    }).email));
+}
+
+function receivesReport(entreprise, recipient, event) {
+  return resolvePreference({
+    preferences: entreprise.parametres?.notifications, recipient, event, channel: 'email',
+  });
+}
+
+// Rapport mensuel automatique (administrateurs et managers explicitement abonnés)
 // ---------------------------------------------------------------------------
 async function runMonthlyReports() {
   const now = dayjs();
@@ -159,11 +175,11 @@ async function runMonthlyReports() {
 
   const entreprises = await Entreprise.findAll({
     where: { statut: 'active' },
-    attributes: ['id', 'nom', 'parametres'],
+    attributes: ['id', 'nom', 'parametres', 'politique_conges'],
   });
 
   for (const entreprise of entreprises) {
-    const [conges, absences, totalEmployes, admins] = await Promise.all([
+    const [conges, absences, totalEmployes, recipients] = await Promise.all([
       Conge.findAll({
         where: {
           entreprise_id: entreprise.id,
@@ -192,50 +208,65 @@ async function runMonthlyReports() {
         },
       }),
       Utilisateur.findAll({
-        where: { entreprise_id: entreprise.id, role: 'admin_entreprise', statut: 'actif' },
-        attributes: ['id', 'email', 'prenom', 'nom'],
+        where: { entreprise_id: entreprise.id, role: { [Op.in]: ['admin_entreprise', 'manager'] }, statut: 'actif' },
+        attributes: ['id', 'email', 'prenom', 'nom', 'role', 'service', 'entreprise_id'],
       }),
     ]);
 
-    const absencesByType = new Map();
-    const scope = entreprise.parametres?.notifications?.admin_event_scopes?.monthly_report
-      || entreprise.parametres?.notifications?.admin_scope;
-    const scopedConges = filterAdministrativeRecords(entreprise.parametres?.notifications, { role: 'admin_entreprise' }, 'monthly_report', conges);
-    const scopedAbsences = filterAdministrativeRecords(entreprise.parametres?.notifications, { role: 'admin_entreprise' }, 'monthly_report', absences);
-    const scopedEmployees = scope?.mode === 'services' ? await Utilisateur.count({
-      where: {
-        entreprise_id: entreprise.id, statut: 'actif', role: { [Op.in]: ['employe', 'apprenti', 'manager'] },
-        service: { [Op.in]: scope.services },
-      },
-    }) : totalEmployes;
-    for (const absence of scopedAbsences) {
-      const label = absence.type_absence === 'maladie' ? 'Maladie' : 'Absence exceptionnelle';
-      absencesByType.set(label, (absencesByType.get(label) || 0) + 1);
-    }
-    const topAbsences = [...absencesByType]
-      .map(([label, count]) => ({ label, count }))
-      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'fr'))
-      .map(({ label, count }) => `${label} (${count})`);
-
-    const reportData = {
-      mois,
-      annee,
-      periode_debut: formatDateFR(startOfLastMonth),
-      periode_fin: formatDateFR(endOfLastMonth),
-      total_conges: scopedConges.length,
-      total_jours: Number(scopedConges.reduce((sum, conge) => sum + (Number(conge.jours_calcules) || 0), 0).toFixed(2)),
-      total_employes: scopedEmployees,
-      total_absences: scopedAbsences.length,
-      top_absences: topAbsences,
-    };
-
-    for (const admin of admins) {
+    for (const recipient of new Map(recipients.map(person => [person.id, person])).values()) {
+      if (!recipient.email || !receivesReport(entreprise, recipient, 'monthly_report')) continue;
       try {
+        const absencesByType = new Map();
+        const prefix = recipient.role === 'manager' ? 'manager' : 'admin';
+        const scope = entreprise.parametres?.notifications?.[`${prefix}_event_scopes`]?.monthly_report
+          || entreprise.parametres?.notifications?.[`${prefix}_scope`];
+        const scopedConges = reportRecords(entreprise, recipient, 'monthly_report', conges, 'conges');
+        const scopedAbsences = reportRecords(entreprise, recipient, 'monthly_report', absences);
+        let scopedEmployees = totalEmployes;
+        if (recipient.role === 'manager') {
+          const employees = await Utilisateur.findAll({
+            where: {
+              entreprise_id: entreprise.id, statut: 'actif',
+              role: { [Op.in]: ['employe', 'apprenti', 'manager'] },
+            },
+            attributes: ['id', 'service'],
+          });
+          scopedEmployees = reportRecords(entreprise, recipient, 'monthly_report',
+            employees.map(employee => ({ utilisateur: employee })), 'conges').length;
+        } else if (scope?.mode === 'services') {
+          scopedEmployees = await Utilisateur.count({
+            where: {
+              entreprise_id: entreprise.id, statut: 'actif', role: { [Op.in]: ['employe', 'apprenti', 'manager'] },
+              service: { [Op.in]: scope.services },
+            },
+          });
+        }
+        for (const absence of scopedAbsences) {
+          const label = absence.type_absence === 'maladie' ? 'Maladie' : 'Absence exceptionnelle';
+          absencesByType.set(label, (absencesByType.get(label) || 0) + 1);
+        }
+        const topAbsences = [...absencesByType]
+          .map(([label, count]) => ({ label, count }))
+          .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'fr'))
+          .map(({ label, count }) => `${label} (${count})`);
+
+        const reportData = {
+          mois,
+          annee,
+          periode_debut: formatDateFR(startOfLastMonth),
+          periode_fin: formatDateFR(endOfLastMonth),
+          total_conges: scopedConges.length,
+          total_jours: Number(scopedConges.reduce((sum, conge) => sum + (Number(conge.jours_calcules) || 0), 0).toFixed(2)),
+          total_employes: scopedEmployees,
+          total_absences: scopedAbsences.length,
+          top_absences: topAbsences,
+        };
+
         await withContext({
           kind: 'summary', entrepriseId: entreprise.id,
           operationId: `monthly:${entreprise.id}:${startOfLastMonth}`,
-        }, () => emailService.sendMonthlyReport(admin.email, reportData, entreprise));
-        logger.info(`[email-cron] Rapport mensuel envoyé à ${admin.email} (${entreprise.nom})`);
+        }, () => emailService.sendMonthlyReport(recipient.email, reportData, entreprise));
+        logger.info(`[email-cron] Rapport mensuel traité pour ${recipient.email} (${entreprise.nom})`);
       } catch (e) {
         logger.error('[email-cron] sendMonthlyReport error', { error: e.message, entrepriseId: entreprise.id });
       }
@@ -319,12 +350,13 @@ async function runWeeklyManagerSummary() {
       attributes: ['id', 'politique_conges', 'parametres'],
     })
     : [];
-  const leaveRulesByCompany = new Map(
-    companies.map(company => [company.id, getLeaveRules(company)])
-  );
+  const companiesById = new Map(companies.map(company => [company.id, company]));
 
-  for (const recipient of [...managers, ...admins]) {
+  for (const recipient of new Map([...managers, ...admins].map(person => [person.id, person])).values()) {
     try {
+      const company = companiesById.get(recipient.entreprise_id);
+      if (!company) throw new Error('Entreprise du destinataire introuvable pour le résumé hebdomadaire.');
+      if (!recipient.email || !receivesReport(company, recipient, 'weekly_summary')) continue;
       const [allConges, allAbsences] = await Promise.all([
         Conge.findAll({
           where: {
@@ -350,14 +382,8 @@ async function runWeeklyManagerSummary() {
           ],
         }),
       ]);
-      const includeInEmail = (item, category) => recipient.role !== 'manager'
-        || resolveManagerDelivery({
-          rules: leaveRulesByCompany.get(recipient.entreprise_id), manager: recipient,
-          targetService: item.utilisateur?.service, category,
-        }).email;
-      const preferences = companies.find(company => company.id === recipient.entreprise_id)?.parametres?.notifications;
-      const conges = filterAdministrativeRecords(preferences, recipient, 'weekly_summary', allConges.filter(item => includeInEmail(item, 'conges')));
-      const absences = filterAdministrativeRecords(preferences, recipient, 'weekly_summary', allAbsences.filter(item => includeInEmail(item, item.type_absence)));
+      const conges = reportRecords(company, recipient, 'weekly_summary', allConges, 'conges');
+      const absences = reportRecords(company, recipient, 'weekly_summary', allAbsences);
 
       await withContext({
         kind: 'summary', entrepriseId: recipient.entreprise_id,

@@ -9,7 +9,7 @@ const ROLES = ['super_admin', 'admin_entreprise', 'manager', 'employe', 'apprent
 const EVENT_RECIPIENT_ROLES = {
   leave_pending: ['admin_entreprise', 'manager'],
   weekly_summary: ['admin_entreprise', 'manager'],
-  monthly_report: ['admin_entreprise'],
+  monthly_report: ['admin_entreprise', 'manager'],
 };
 function getEventGroup(event) {
   if (['leave_created', 'leave_reservation', 'leave_activated', 'absence_created', 'sickness_created'].includes(event)) return 'creation';
@@ -87,8 +87,19 @@ function remapServicePreferences(preferences, currentName, nextName) {
 
 function validatePreferences(preferences, services, adminIds, managerIds = []) {
   if (!isObject(preferences) || preferences.version !== 1
-    || Object.keys(preferences).some(key => !['version', 'roles', 'service_roles', 'comment_reading', 'admin_scope', 'admin_event_scopes', 'manager_scope', 'manager_event_scopes'].includes(key))) {
+    || Object.keys(preferences).some(key => !['version', 'roles', 'service_roles', 'comment_reading', 'admin_scope', 'admin_event_scopes', 'manager_scope', 'manager_event_scopes', 'report_recipients'].includes(key))) {
     throw invalid('Configuration des notifications invalide.');
+  }
+  if (preferences.report_recipients !== undefined) {
+    if (!isObject(preferences.report_recipients)) throw invalid('Destinataires des résumés invalides.');
+    for (const [event, ids] of Object.entries(preferences.report_recipients)) {
+      const allowed = ['weekly_summary', 'monthly_report'].includes(event) ? [...adminIds, ...managerIds] : null;
+      if (!allowed || !Array.isArray(ids)
+        || ids.some(id => typeof id !== 'string' || !allowed.includes(id))
+        || new Set(ids).size !== ids.length) {
+        throw invalid('Les destinataires des résumés doivent être des responsables autorisés de cette entreprise.');
+      }
+    }
   }
   if (preferences.comment_reading !== undefined) {
     if (!isObject(preferences.comment_reading)) throw invalid('Droits de lecture des commentaires invalides.');
@@ -168,11 +179,17 @@ function validatePreferences(preferences, services, adminIds, managerIds = []) {
 }
 
 function resolvePreference({ preferences, recipient, event, mode = 'information', service, ownerId, legacy = true, channel, rules }) {
+  if (event === 'monthly_report' && recipient.role === 'manager'
+    && !preferences?.report_recipients?.monthly_report?.includes(recipient.id)
+    && preferences?.roles?.manager?.monthly_report?.workflow?.email !== true
+    && preferences?.roles?.manager?.monthly_report?.information?.email !== true) return false;
   const category = EVENTS.find(item => item.id === event)?.family;
   const route = recipient.id !== ownerId ? getNamedRoute(rules, service, category, recipient.id) : null;
   if (route?.events?.[getEventGroup(event)] === false) return false;
   if (route?.mode) return route.mode !== 'none' && route[channel] === true;
   if (!preferences || !event) return legacy;
+  const reportRecipients = preferences.report_recipients?.[event];
+  if (reportRecipients && !reportRecipients.includes(recipient.id)) return false;
   if (['admin_entreprise', 'manager'].includes(recipient.role) && recipient.id !== ownerId) {
     const prefix = recipient.role === 'manager' ? 'manager' : 'admin';
     const scope = preferences[`${prefix}_event_scopes`]?.[event] || preferences[`${prefix}_scope`];

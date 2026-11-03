@@ -53,7 +53,7 @@ test.each([null, [], { inconnu: { conges: true } }, { manager: { autre: false } 
 
 test.each([
   ['admin_entreprise', 21],
-  ['manager', 20],
+  ['manager', 21],
   ['employe', 18],
   ['apprenti', 18],
   ['super_admin', 0],
@@ -65,7 +65,7 @@ test('les relances et rapports correspondent aux destinataires des crons existan
   const roles = id => EVENTS.find(event => event.id === id).roles;
   expect(roles('leave_pending')).toEqual(['admin_entreprise', 'manager']);
   expect(roles('weekly_summary')).toEqual(['admin_entreprise', 'manager']);
-  expect(roles('monthly_report')).toEqual(['admin_entreprise']);
+  expect(roles('monthly_report')).toEqual(['admin_entreprise', 'manager']);
   for (const id of ['leave_reminder', 'leave_modify_requested', 'leave_cancel_requested', 'absence_created', 'sickness_created']) {
     expect(roles(id)).toEqual(['admin_entreprise', 'manager', 'employe', 'apprenti']);
   }
@@ -97,7 +97,7 @@ test('un périmètre manager accepte uniquement les managers actifs de la même 
   }
   expect(() => validatePreferences(preference({ mode: 'services', services: ['External'] }), ['RH'], [], [])).toThrow(/entreprise/);
   expect(() => validatePreferences(preference({ mode: 'users', user_ids: [] }), [], [], [])).toThrow(/au moins/);
-  expect(() => validatePreferences({ version: 1, manager_event_scopes: { monthly_report: { mode: 'company' } } }, [], [], [])).toThrow(/Événement manager/);
+  expect(() => validatePreferences({ version: 1, manager_event_scopes: { monthly_report: { mode: 'company' } } }, [], [], [])).not.toThrow();
 });
 
 test.each(['email', 'in_app'])('les restrictions nommées et de service filtrent %s sans activer les canaux historiques', channel => {

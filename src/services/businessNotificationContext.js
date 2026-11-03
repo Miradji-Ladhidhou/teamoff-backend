@@ -119,6 +119,7 @@ async function prepareRecipient({ recipientId, email, templateName, type, mode, 
     && !getServiceChannels(preferences, ctx.service, recipient.role, event, 'workflow')
     && !route
     && commentsAllowed
+    && !Object.hasOwn(preferences.report_recipients || {}, event)
     && !(scopePrefix && (preferences[`${scopePrefix}_scope`] || preferences[`${scopePrefix}_event_scopes`]?.[event]))) {
     return null;
   }

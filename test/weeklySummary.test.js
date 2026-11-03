@@ -132,7 +132,9 @@ test('le résumé hebdomadaire est envoyé même sans congé ni absence', async 
   jest.spyOn(Utilisateur, 'findAll')
     .mockResolvedValueOnce([])
     .mockResolvedValueOnce([admin]);
-  jest.spyOn(Entreprise, 'findAll').mockResolvedValue([]);
+  jest.spyOn(Entreprise, 'findAll').mockResolvedValue([{
+    id: admin.entreprise_id, politique_conges: {},
+  }]);
   jest.spyOn(Conge, 'findAll').mockResolvedValue([]);
   jest.spyOn(Absence, 'findAll').mockResolvedValue([]);
   const sendWeeklySummary = jest.spyOn(emailService, 'sendWeeklySummary').mockResolvedValue(undefined);
